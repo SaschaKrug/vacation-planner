@@ -44,6 +44,8 @@ const STRINGS = {
     // planner
     "toolbar.label": "Entry types",
     "toolbar.edit_types": "Edit types",
+    "toolbar.note": "Icon &amp; note",
+    "toolbar.note_title": "Add an icon or comment to the selected days (N)",
     "toolbar.skip_weekends": "Skip weekends",
     "toolbar.skip_weekends_title": "Weekends are left out when filling, pasting or toggling ranges",
     "toolbar.range": "Range select",
@@ -51,7 +53,7 @@ const STRINGS = {
     "readonly.banner": "View-only link – ask for the edit link to make changes.",
     "grid.label": "Year calendar",
     "status.hint":
-      "Then click a type or press <kbd>1</kbd>–<kbd>9</kbd> · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy/paste · drag the ▪ handle to fill · <kbd>Del</kbd> clear · <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo",
+      "Then click a type or press <kbd>1</kbd>–<kbd>9</kbd> · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy/paste · drag the ▪ handle to fill · <kbd>N</kbd> note · <kbd>Del</kbd> clear · <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo",
     "sel.none": "Click or drag over days to select them.",
     "sel.view_only": "View-only",
     "sel.info": ({ n, work, span }) =>
@@ -122,6 +124,18 @@ const STRINGS = {
         s(n, "day", "days")
       } in ${year} (and maybe other years). This can't be undone.`,
 
+    // note dialog
+    "note.title": "Icon &amp; note",
+    "note.days": ({ n, span }) => `${n} ${s(n, "day", "days")}: ${span}`,
+    "note.icon": "Icon",
+    "note.icon_other": "Or any other emoji",
+    "note.comment": "Comment",
+    "note.comment_placeholder": "e.g. Christmas",
+    "note.replace_hint": "The selected days have different notes – saving replaces them.",
+    "note.remove": "Remove",
+    "note.cancel": "Cancel",
+    "note.save": "Save",
+
     // share dialog
     "share.title": "Share &amp; subscribe",
     "share.edit": "Edit link",
@@ -133,6 +147,7 @@ const STRINGS = {
       "A read-only calendar feed. Apple Calendar checks it for changes regularly (choose “Every hour” or “Every 5 minutes” when subscribing on a Mac).",
     "share.include": "Include",
     "share.gaps": "“⚠ Not covered” warnings",
+    "share.notes": "Icons &amp; notes",
     "share.subscribe": "Subscribe on this device",
     "share.howto": "How to add it to iCloud",
     "share.howto_ios":
@@ -147,16 +162,18 @@ const STRINGS = {
     // API dialog
     "api.intro":
       "Fill entries from scripts, shortcuts or other tools. Types can be referenced by id or name. The session id in the URL is the access key.",
-    "api.read": "Read the planner (types + entries of a year)",
+    "api.read": "Read the planner (types, entries and notes of a year)",
     "api.add": "Add “{name}” from Aug 3 to Aug 14, skipping weekends",
     "api.ops": "Several operations at once (actions: add | remove | set | clear)",
+    "api.notes": "Icon and comment on days (set replaces a day's note, clear removes it)",
     "api.types": "Entry types",
-    "api.feed": "Calendar feed (read-only id works too). Optional: ?types=a,b&gaps=1",
+    "api.feed": "Calendar feed (read-only id works too). Optional: ?types=a,b&gaps=1&notes=1",
     "api.new": "New planner",
     "api.ex_vacation": "Vacation",
     "api.ex_needs": "Day care closed",
     "api.ex_rename": "Vacation Sascha",
     "api.ex_planner": "Family {year}",
+    "api.ex_note": "Christmas",
 
     // help dialog
     "help.title": "How it works",
@@ -179,6 +196,8 @@ const STRINGS = {
     "help.arrows_do": "Move (with <kbd>Shift</kbd>: extend the selection)",
     "help.undo": "<kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd>",
     "help.undo_do": "Undo / redo",
+    "help.note": "<kbd>N</kbd> / double-click",
+    "help.note_do": "Add an icon or comment to the selected days",
     "help.gap_do": "Jump to the next day that still needs cover",
     "help.esc": "<kbd>Esc</kbd>",
     "help.esc_do": "Clear the selection",
@@ -217,6 +236,8 @@ const STRINGS = {
 
     "toolbar.label": "Eintragsarten",
     "toolbar.edit_types": "Arten bearbeiten",
+    "toolbar.note": "Symbol &amp; Notiz",
+    "toolbar.note_title": "Den ausgewählten Tagen ein Symbol oder einen Kommentar geben (N)",
     "toolbar.skip_weekends": "Wochenenden auslassen",
     "toolbar.skip_weekends_title":
       "Wochenenden werden beim Füllen, Einfügen und Umschalten von Bereichen ausgelassen",
@@ -225,7 +246,7 @@ const STRINGS = {
     "readonly.banner": "Nur-Lese-Link – frag nach dem Bearbeitungslink, um etwas zu ändern.",
     "grid.label": "Jahreskalender",
     "status.hint":
-      "Dann eine Art anklicken oder <kbd>1</kbd>–<kbd>9</kbd> drücken · <kbd>Strg</kbd>+<kbd>C</kbd>/<kbd>V</kbd> kopieren/einfügen · ▪-Griff ziehen zum Füllen · <kbd>Entf</kbd> leeren · <kbd>Strg</kbd>+<kbd>Z</kbd> rückgängig",
+      "Dann eine Art anklicken oder <kbd>1</kbd>–<kbd>9</kbd> drücken · <kbd>Strg</kbd>+<kbd>C</kbd>/<kbd>V</kbd> kopieren/einfügen · ▪-Griff ziehen zum Füllen · <kbd>N</kbd> Notiz · <kbd>Entf</kbd> leeren · <kbd>Strg</kbd>+<kbd>Z</kbd> rückgängig",
     "sel.none": "Tage anklicken oder darüber ziehen, um sie auszuwählen.",
     "sel.view_only": "Nur ansehen",
     "sel.info": ({ n, work, span }) =>
@@ -298,6 +319,18 @@ const STRINGS = {
         s(n, "Tag", "Tagen")
       } in ${year} verwendet (und evtl. in anderen Jahren). Das kann nicht rückgängig gemacht werden.`,
 
+    "note.title": "Symbol &amp; Notiz",
+    "note.days": ({ n, span }) => `${n} ${s(n, "Tag", "Tage")}: ${span}`,
+    "note.icon": "Symbol",
+    "note.icon_other": "Oder ein beliebiges anderes Emoji",
+    "note.comment": "Kommentar",
+    "note.comment_placeholder": "z. B. Weihnachten",
+    "note.replace_hint":
+      "Die ausgewählten Tage haben unterschiedliche Notizen – beim Speichern werden sie ersetzt.",
+    "note.remove": "Entfernen",
+    "note.cancel": "Abbrechen",
+    "note.save": "Speichern",
+
     "share.title": "Teilen &amp; abonnieren",
     "share.edit": "Bearbeitungslink",
     "share.edit_help":
@@ -308,6 +341,7 @@ const STRINGS = {
       "Ein schreibgeschützter Kalender-Feed. Apple Kalender prüft ihn regelmäßig auf Änderungen (beim Abonnieren auf dem Mac „Jede Stunde“ oder „Alle 5 Minuten“ wählen).",
     "share.include": "Enthalten",
     "share.gaps": "„⚠ Nicht abgedeckt“-Warnungen",
+    "share.notes": "Symbole &amp; Notizen",
     "share.subscribe": "Auf diesem Gerät abonnieren",
     "share.howto": "So fügst du ihn zu iCloud hinzu",
     "share.howto_ios":
@@ -321,16 +355,20 @@ const STRINGS = {
 
     "api.intro":
       "Einträge aus Skripten, Kurzbefehlen oder anderen Tools füllen. Arten können über ID oder Namen angegeben werden. Die Session-ID in der URL ist der Zugangsschlüssel.",
-    "api.read": "Planer lesen (Arten + Einträge eines Jahres)",
+    "api.read": "Planer lesen (Arten, Einträge und Notizen eines Jahres)",
     "api.add": "„{name}“ vom 3. bis 14. Aug. eintragen, ohne Wochenenden",
     "api.ops": "Mehrere Operationen auf einmal (Aktionen: add | remove | set | clear)",
+    "api.notes":
+      "Symbol und Kommentar an Tagen (set ersetzt die Notiz eines Tages, clear entfernt sie)",
     "api.types": "Eintragsarten",
-    "api.feed": "Kalender-Feed (Nur-Lese-ID geht auch). Optional: ?types=a,b&gaps=1&lang=de",
+    "api.feed":
+      "Kalender-Feed (Nur-Lese-ID geht auch). Optional: ?types=a,b&gaps=1&notes=1&lang=de",
     "api.new": "Neuer Planer",
     "api.ex_vacation": "Urlaub",
     "api.ex_needs": "Kita geschlossen",
     "api.ex_rename": "Urlaub Sascha",
     "api.ex_planner": "Familie {year}",
+    "api.ex_note": "Weihnachten",
 
     "help.title": "So funktioniert's",
     "help.click": "Klicken / ziehen",
@@ -353,6 +391,8 @@ const STRINGS = {
     "help.arrows_do": "Bewegen (mit <kbd>Umschalt</kbd>: Auswahl erweitern)",
     "help.undo": "<kbd>Strg</kbd>+<kbd>Z</kbd> / <kbd>Strg</kbd>+<kbd>Y</kbd>",
     "help.undo_do": "Rückgängig / wiederholen",
+    "help.note": "<kbd>N</kbd> / Doppelklick",
+    "help.note_do": "Den ausgewählten Tagen ein Symbol oder einen Kommentar geben",
     "help.gap_do": "Zum nächsten Tag springen, der noch Betreuung braucht",
     "help.esc": "<kbd>Esc</kbd>",
     "help.esc_do": "Auswahl aufheben",

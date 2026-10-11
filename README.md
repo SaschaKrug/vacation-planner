@@ -8,6 +8,9 @@ closures, with a coverage check, a REST API and an iCloud / Apple Calendar feed.
 - All days of a year as 12 rows × 31 days; pick the year at the top.
 - Your own entry types (name + color). New planners start with *Holiday*, *Vacation* and *Sick*.
 - A day can hold **several entries**, e.g. *Day care closed* + *Vacation Sascha*.
+- **Icons & comments on days**, e.g. 🎄 *Christmas* or 🐣 *Easter*: shown in the grid and in
+  the tooltip, optionally in the calendar feed. They are independent of entries (no coverage,
+  no stats); one note per day.
 - **Coverage check:** types with the role *Needs cover* (e.g. “Day care closed”) are flagged on
   every weekday that has no *Covers* (e.g. “Vacation …”) or *Day off* (e.g. “Holiday”) entry.
 - Click/drag to select days (also across months), then click a type or press `1`–`9`.
@@ -25,7 +28,7 @@ closures, with a coverage check, a REST API and an iCloud / Apple Calendar feed.
 ## Architecture
 
 ```
-GitHub Pages (web/)  ──fetch──▶  Supabase Edge Function "api"  ──▶  Postgres (3 tables)
+GitHub Pages (web/)  ──fetch──▶  Supabase Edge Function "api"  ──▶  Postgres (4 tables)
 iCloud / Apple Calendar ──GET calendar.ics──┘
 ```
 
@@ -78,15 +81,17 @@ key; the view-only id can only read. Types can be referenced by id or by name
 | Method & path | Description |
 | --- | --- |
 | `POST /sessions` | Create a planner. Body (optional): `{"name": "...", "types": [{"name","color","role"}]}`; `"lang": "de"` gives German default types and name |
-| `GET /sessions/{id}?year=2026` | Planner, types and entries (`?from=&to=` also works; no filter = all) |
+| `GET /sessions/{id}?year=2026` | Planner, types, entries and notes (`?from=&to=` also works; no filter = all) |
 | `PATCH /sessions/{id}` | Rename: `{"name": "..."}` |
 | `GET /sessions/{id}/entries?year=2026` | `{"2026-08-03": ["vacation", "day-care-closed"], ...}` |
 | `POST /sessions/{id}/entries` | Change entries (see below) |
+| `GET /sessions/{id}/notes?year=2026` | `{"2026-12-25": {"icon": "🎄", "comment": "Christmas"}, ...}` |
+| `POST /sessions/{id}/notes` | Set or clear day notes (see below) |
 | `GET /sessions/{id}/types` | List entry types |
 | `POST /sessions/{id}/types` | Add a type: `{"name", "color": "#rrggbb", "role"}` |
 | `PATCH /sessions/{id}/types/{type}` | Change `name`, `color`, `role`, `position` |
 | `DELETE /sessions/{id}/types/{type}` | Delete a type and all its entries |
-| `GET /sessions/{id}/calendar.ics` | iCalendar feed. `?types=a,b` filters, `?gaps=1` adds “⚠ Not covered” events, `?name=` overrides the calendar name, `?lang=de` German event texts |
+| `GET /sessions/{id}/calendar.ics` | iCalendar feed. `?types=a,b` filters, `?gaps=1` adds “⚠ Not covered” events, `?notes=1` adds day notes as events, `?name=` overrides the calendar name, `?lang=de` German event texts |
 
 Roles: `none`, `needs_cover`, `covers`, `day_off`.
 
@@ -115,3 +120,21 @@ curl -X POST "$BASE/sessions/$SESSION/entries" -H "content-type: application/jso
 
 Days are given as `dates` (array), `date`, and/or an inclusive `from`/`to` range;
 `skipWeekends: true` drops Saturdays and Sundays.
+
+### Day notes
+
+```sh
+# 🎄 Christmas on Dec 24–26, and clear a note
+curl -X POST "$BASE/sessions/$SESSION/notes" -H "content-type: application/json" \
+  -d '{"ops":[
+        {"action":"set","icon":"🎄","comment":"Christmas","from":"2026-12-24","to":"2026-12-26"},
+        {"action":"clear","dates":["2026-12-31"]}
+      ]}'
+```
+
+| Action | Effect on the given days |
+| --- | --- |
+| `set` (default) | Replaces the note with `icon` (max. 16 characters) and/or `comment` (max. 500); a missing field is empty, both empty clears |
+| `clear` | Removes the note |
+
+Days work as for entries; `{"ops": [...]}` applies several operations in order.

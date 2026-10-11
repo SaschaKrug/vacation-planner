@@ -43,7 +43,7 @@ body {
   font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
-button, input, select { font: inherit; color: inherit; }
+button, input, select, textarea { font: inherit; color: inherit; }
 
 [hidden] { display: none !important; }
 
@@ -293,6 +293,37 @@ kbd {
   /* "needs cover" types are hatched so covered/uncovered is easy to tell apart */
   background-image: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.55) 0 3px, transparent 3px 7px);
 }
+/* Day note: the icon sits in the middle, clear of the weekday letter (top left)
+   and the gap badge / fill handle (bottom right). */
+.cell .note-icon {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -46%);
+  font-size: 16px;
+  line-height: 1;
+  white-space: nowrap;
+  z-index: 2;
+  pointer-events: none;
+  /* a soft shadow keeps the emoji readable on any fill color */
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.35));
+}
+.cell.gap .note-icon { transform: translate(-58%, -60%); } /* make room for the "!" badge */
+.cell .note-mark { display: none; }
+.cell.has-comment .note-mark {
+  /* Spreadsheet-style comment marker in the top right corner */
+  display: block;
+  position: absolute;
+  top: 0;
+  right: 0;
+  border-style: solid;
+  border-width: 0 7px 7px 0;
+  border-color: transparent currentColor transparent transparent;
+  color: var(--muted);
+  z-index: 3;
+  pointer-events: none;
+}
+.cell.has-fill.has-comment .note-mark { color: inherit; opacity: 0.85; }
 .cell.today::before {
   content: "";
   position: absolute;
@@ -398,6 +429,44 @@ details li { margin: 6px 0; }
   font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: pre;
 }
+.note-dialog { width: min(520px, calc(100vw - 32px)); }
+.emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 6px;
+  margin: 8px 0 12px;
+}
+.emoji-btn {
+  height: 40px;
+  min-width: 0;
+  padding: 0;
+  font-size: 20px;
+  line-height: 1;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  cursor: pointer;
+}
+.emoji-btn:hover { border-color: var(--muted); }
+.emoji-btn[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.field { display: flex; flex-direction: column; gap: 4px; margin: 0 0 12px; font-weight: 600; font-size: 13px; }
+.field-inline { flex-direction: row; align-items: center; gap: 10px; }
+.field input, .field textarea {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  background: var(--surface);
+  font-weight: normal;
+  font-size: 14px;
+}
+.field .note-icon-input { width: 5.5em; font-size: 18px; text-align: center; padding: 2px 6px; }
+.field textarea { resize: vertical; min-height: 64px; }
+.dialog-actions { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+.dialog-actions .spacer { flex: 1; }
 .keys { border-collapse: collapse; width: 100%; }
 .keys td { padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
 .keys td:first-child { white-space: nowrap; }
@@ -423,6 +492,9 @@ details li { margin: 6px 0; }
   .topbar { gap: 8px; }
   .statusbar .hint { display: none; }
   :root { --cell-w: 30px; --cell-h: 36px; }
+  .cell .note-icon { font-size: 15px; transform: translate(-50%, -40%); }
+  .emoji-grid { grid-template-columns: repeat(5, 1fr); }
+  .emoji-btn { height: 44px; }
 }
 .grid .head.corner { left: 0; z-index: 3; }
 

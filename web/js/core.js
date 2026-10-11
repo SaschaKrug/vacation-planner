@@ -1,5 +1,6 @@
 // Pure calendar logic (no DOM) – shared by the UI and the unit tests.
-// Dates are ISO strings "YYYY-MM-DD"; entries are Map<date, string[] typeIds>.
+// Dates are ISO strings "YYYY-MM-DD"; entries are Map<date, string[] typeIds>,
+// notes are Map<date, { icon, comment }>.
 
 const DAY_MS = 86_400_000;
 
@@ -187,6 +188,60 @@ export function applyDays(entries, next) {
   for (const [d, ids] of next) {
     if (ids.length) entries.set(d, [...ids]);
     else entries.delete(d);
+  }
+}
+
+// Day notes: Map<date, { icon, comment }>, at most one per day. A change map
+// uses null (or a note with neither icon nor comment) to remove a day's note.
+
+/** The note itself, or null if it has neither icon nor comment. */
+export function noteOrNull(note) {
+  if (!note || !(note.icon || note.comment)) return null;
+  return { icon: note.icon ?? "", comment: note.comment ?? "" };
+}
+
+export function sameNote(a, b) {
+  a = noteOrNull(a);
+  b = noteOrNull(b);
+  return a === b || (!!a && !!b && a.icon === b.icon && a.comment === b.comment);
+}
+
+/** Only keeps days whose note actually changes. */
+export function changedNotesOnly(notes, next) {
+  const out = new Map();
+  for (const [d, note] of next) {
+    if (!sameNote(notes.get(d), note)) out.set(d, noteOrNull(note));
+  }
+  return out;
+}
+
+/** Converts note changes into API ops: one "set" per distinct note, one "clear" for removals. */
+export function toNoteOps(next) {
+  const sets = new Map();
+  const clear = [];
+  for (const [d, note] of next) {
+    const n = noteOrNull(note);
+    if (!n) {
+      clear.push(d);
+      continue;
+    }
+    const key = JSON.stringify([n.icon, n.comment]);
+    (sets.get(key) ?? sets.set(key, { ...n, dates: [] }).get(key)).dates.push(d);
+  }
+  const ops = [];
+  if (clear.length) ops.push({ action: "clear", dates: clear.sort() });
+  for (const { icon, comment, dates } of sets.values()) {
+    ops.push({ action: "set", dates: dates.sort(), icon, comment });
+  }
+  return ops;
+}
+
+/** Applies note changes to a notes map (in place). */
+export function applyNotes(notes, next) {
+  for (const [d, note] of next) {
+    const n = noteOrNull(note);
+    if (n) notes.set(d, n);
+    else notes.delete(d);
   }
 }
 

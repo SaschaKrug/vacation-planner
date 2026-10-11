@@ -36,6 +36,7 @@ export const api = {
     request("PATCH", `/sessions/${enc(token)}/types/${enc(id)}`, patch),
   deleteType: (token, id) => request("DELETE", `/sessions/${enc(token)}/types/${enc(id)}`),
   applyOps: (token, ops) => request("POST", `/sessions/${enc(token)}/entries`, { ops }),
+  applyNoteOps: (token, ops) => request("POST", `/sessions/${enc(token)}/notes`, { ops }),
   calendarUrl: (readId, params) => {
     const qs = new URLSearchParams(params).toString();
     return `${apiBase()}/sessions/${enc(readId)}/calendar.ics${qs ? "?" + qs : ""}`;

@@ -1,6 +1,6 @@
 // Builds an iCalendar (RFC 5545) feed that Apple Calendar / iCloud can
-// subscribe to. Consecutive days of the same entry type become one
-// all-day event.
+// subscribe to. Consecutive days of the same entry type (or the same day
+// note) become one all-day event.
 
 import { addDays, consecutiveRuns, isWeekend } from "./dates.ts";
 import type { TypeRow } from "./store.ts";
@@ -15,6 +15,8 @@ export interface IcsInput {
   include?: Set<string>;
   /** Adds a warning event for weekdays that need cover but have none. */
   gaps?: boolean;
+  /** day -> note; each note (run of identical notes) becomes an event if set. */
+  notes?: Map<string, { icon: string; comment: string }>;
   /** Language of generated texts (gap summaries, descriptions). Default "en". */
   lang?: Lang;
   now?: Date;
@@ -97,9 +99,9 @@ export function buildIcs(input: IcsInput): string {
     "X-PUBLISHED-TTL:PT1H",
   ];
 
-  const event = (uid: string, run: string[], summary: string) => {
+  const event = (uid: string, run: string[], summary: string, detail = summary) => {
     const n = run.length;
-    const description = n === 1 ? summary : `${summary}: ${text.span(n, workdays(run))}`;
+    const description = n === 1 ? detail : `${detail}: ${text.span(n, workdays(run))}`;
     lines.push(
       "BEGIN:VEVENT",
       `UID:${uid}`,
@@ -127,6 +129,24 @@ export function buildIcs(input: IcsInput): string {
     const label = text.notCovered + (needs.length ? ": " + needs.join(", ") : "");
     for (const run of consecutiveRuns(gapDays(input.types, input.entries))) {
       event(`${input.uidPrefix}-gap-${run[0]}@vacation-planner`, run, label);
+    }
+  }
+
+  if (input.notes) {
+    // Group days by identical icon + comment, then merge consecutive days.
+    const groups = new Map<string, { icon: string; comment: string; days: string[] }>();
+    for (const [day, { icon, comment }] of input.notes) {
+      const key = icon + "\u0000" + comment;
+      const group = groups.get(key) ?? { icon, comment, days: [] };
+      group.days.push(day);
+      groups.set(key, group);
+    }
+    const runs = [...groups.values()].flatMap((g) =>
+      consecutiveRuns(g.days.sort()).map((run) => ({ ...g, run }))
+    ).sort((a, b) => a.run[0].localeCompare(b.run[0]));
+    for (const { icon, comment, run } of runs) {
+      const summary = `${icon} ${comment.split(/\r?\n/)[0]}`.trim();
+      event(`${input.uidPrefix}-note-${run[0]}@vacation-planner`, run, summary, comment || summary);
     }
   }
 

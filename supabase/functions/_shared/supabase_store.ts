@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
-import type { EntryRow, SessionRow, Store, TypeRow } from "./store.ts";
+import type { EntryRow, NoteRow, SessionRow, Store, TypeRow } from "./store.ts";
 
 const PAGE = 1000; // PostgREST default max rows per request
 const CHUNK = 200; // keeps `in (...)` filters well below URL length limits
@@ -90,6 +90,38 @@ export class SupabaseStore implements Store {
       let q = this.db.from("day_entries").delete().eq("session_id", sessionId).in("day", part);
       if (typeIds) q = q.in("type_id", typeIds);
       check(await q);
+    }
+  }
+
+  async listNotes(sessionId: string, from?: string, to?: string) {
+    const out: NoteRow[] = [];
+    for (let offset = 0;; offset += PAGE) {
+      let q = this.db.from("day_notes").select("day,icon,comment").eq("session_id", sessionId);
+      if (from) q = q.gte("day", from);
+      if (to) q = q.lte("day", to);
+      const rows = check(
+        await q.order("day").range(offset, offset + PAGE - 1),
+      ) as NoteRow[];
+      out.push(...rows);
+      if (rows.length < PAGE) return out;
+    }
+  }
+
+  async upsertNotes(sessionId: string, rows: NoteRow[]) {
+    // No ignoreDuplicates: setting a note replaces the existing one on that day.
+    for (const part of chunks(rows, 500)) {
+      check(
+        await this.db.from("day_notes").upsert(
+          part.map((r) => ({ session_id: sessionId, ...r })),
+          { onConflict: "session_id,day" },
+        ),
+      );
+    }
+  }
+
+  async removeNotes(sessionId: string, days: string[]) {
+    for (const part of chunks(days, CHUNK)) {
+      check(await this.db.from("day_notes").delete().eq("session_id", sessionId).in("day", part));
     }
   }
 }
