@@ -24,13 +24,14 @@ export class SupabaseStore implements Store {
   }
 
   async findSession(token: string) {
-    for (const column of ["id", "read_id"]) {
-      const row = check(
-        await this.db.from("sessions").select("*").eq(column, token).maybeSingle(),
-      );
-      if (row) return row as SessionRow;
-    }
-    return null;
+    // The token goes into the filter string unescaped. That is only safe because
+    // tokens are alphanumeric: the handler validates them, and so does this check.
+    if (!/^[A-Za-z0-9]+$/.test(token)) return null;
+    const rows = check(
+      await this.db.from("sessions").select("*").or(`id.eq.${token},read_id.eq.${token}`)
+        .limit(2),
+    ) as SessionRow[] | null;
+    return rows?.find((r) => r.id === token) ?? rows?.[0] ?? null;
   }
 
   async updateSession(id: string, patch: { name?: string }) {

@@ -23,7 +23,7 @@ const STRINGS = {
     "top.next_year": "Next year",
     "top.next_year_title": "Next year (PageDown)",
     "top.year": "Year",
-    "top.share": "Share &amp; iCloud",
+    "top.share": 'Share<span class="long-label"> &amp; iCloud</span>',
     "top.api": "API",
     "top.help": "Help",
     "top.help_title": "Keyboard shortcuts",
@@ -65,6 +65,8 @@ const STRINGS = {
     "chip.toggle_hint": "\nClick (or press {key}) to toggle on the selected days",
     "chip.count": "{n}d",
     "fill.handle": "Drag to repeat the selected days",
+    "fill.count": ({ n }) => `Fill ${n} ${s(n, "day", "days")}`,
+    "fill.drag_past": "Drag past the selection to repeat it",
     "coverage.gaps": ({ n, names }) =>
       `⚠ ${n} ${s(n, "weekday", "weekdays")} with “${names}” not covered yet`,
     "coverage.next": "Next gap →",
@@ -83,6 +85,7 @@ const STRINGS = {
     "sync.offline": "Offline",
     "sync.retrying": "Offline – retrying",
     "sync.loading": "Loading…",
+    "sync.updating": "Updating…",
     "toast.save_failed": "Couldn't save: {msg}",
     "toast.load_failed": "Couldn't load: {msg}",
     "toast.not_found": "This planner doesn't exist (anymore). Check the link.",
@@ -106,7 +109,7 @@ const STRINGS = {
     "types.intro": "Changes are saved immediately. The role decides how the coverage check works:",
     "types.help_needs":
       "<b>Needs cover</b> – e.g. “Day care closed”. A weekday with this entry and nothing that covers it is flagged as a gap.",
-    "types.help_covers": "<b>Covers</b> – e.g. “Vacation Sascha”. Covers a “needs cover” day.",
+    "types.help_covers": "<b>Covers</b> – e.g. “Vacation Dad”. Covers a “needs cover” day.",
     "types.help_day_off":
       "<b>Day off</b> – e.g. “Holiday”. Covers everything and doesn't count as a used vacation day.",
     "types.help_none": "<b>Normal</b> – just a color, no coverage logic.",
@@ -171,7 +174,7 @@ const STRINGS = {
     "api.new": "New planner",
     "api.ex_vacation": "Vacation",
     "api.ex_needs": "Day care closed",
-    "api.ex_rename": "Vacation Sascha",
+    "api.ex_rename": "Vacation Dad",
     "api.ex_planner": "Family {year}",
     "api.ex_note": "Christmas",
 
@@ -217,7 +220,7 @@ const STRINGS = {
     "top.next_year": "Nächstes Jahr",
     "top.next_year_title": "Nächstes Jahr (Bild ↓)",
     "top.year": "Jahr",
-    "top.share": "Teilen &amp; iCloud",
+    "top.share": 'Teilen<span class="long-label"> &amp; iCloud</span>',
     "top.api": "API",
     "top.help": "Hilfe",
     "top.help_title": "Tastenkürzel",
@@ -261,6 +264,8 @@ const STRINGS = {
       "\nKlicken (oder {key} drücken), um sie auf den ausgewählten Tagen umzuschalten",
     "chip.count": "{n} T",
     "fill.handle": "Ziehen, um die ausgewählten Tage zu wiederholen",
+    "fill.count": ({ n }) => `${n} ${s(n, "Tag", "Tage")} füllen`,
+    "fill.drag_past": "Über die Auswahl hinaus ziehen, um sie zu wiederholen",
     "coverage.gaps": ({ n, names }) =>
       `⚠ ${n} ${s(n, "Wochentag", "Wochentage")} mit „${names}“ noch nicht abgedeckt`,
     "coverage.next": "Nächste Lücke →",
@@ -277,6 +282,7 @@ const STRINGS = {
     "sync.offline": "Offline",
     "sync.retrying": "Offline – neuer Versuch",
     "sync.loading": "Lädt…",
+    "sync.updating": "Aktualisiert…",
     "toast.save_failed": "Speichern fehlgeschlagen: {msg}",
     "toast.load_failed": "Laden fehlgeschlagen: {msg}",
     "toast.not_found": "Diesen Planer gibt es nicht (mehr). Prüfe den Link.",
@@ -301,7 +307,7 @@ const STRINGS = {
     "types.help_needs":
       "<b>Braucht Betreuung</b> – z. B. „Kita geschlossen“. Ein Wochentag mit diesem Eintrag ohne Betreuung wird als Lücke markiert.",
     "types.help_covers":
-      "<b>Betreut</b> – z. B. „Urlaub Sascha“. Deckt einen Tag ab, der Betreuung braucht.",
+      "<b>Betreut</b> – z. B. „Urlaub Papa“. Deckt einen Tag ab, der Betreuung braucht.",
     "types.help_day_off":
       "<b>Frei</b> – z. B. „Feiertag“. Deckt alles ab und zählt nicht als genommener Urlaubstag.",
     "types.help_none": "<b>Normal</b> – nur eine Farbe, ohne Betreuungslogik.",
@@ -366,7 +372,7 @@ const STRINGS = {
     "api.new": "Neuer Planer",
     "api.ex_vacation": "Urlaub",
     "api.ex_needs": "Kita geschlossen",
-    "api.ex_rename": "Urlaub Sascha",
+    "api.ex_rename": "Urlaub Papa",
     "api.ex_planner": "Familie {year}",
     "api.ex_note": "Weihnachten",
 

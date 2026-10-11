@@ -7,7 +7,7 @@ closures, with a coverage check, a REST API and an iCloud / Apple Calendar feed.
 
 - All days of a year as 12 rows × 31 days; pick the year at the top.
 - Your own entry types (name + color). New planners start with *Holiday*, *Vacation* and *Sick*.
-- A day can hold **several entries**, e.g. *Day care closed* + *Vacation Sascha*.
+- A day can hold **several entries**, e.g. *Day care closed* + *Vacation Dad*.
 - **Icons & comments on days**, e.g. 🎄 *Christmas* or 🐣 *Easter*: shown in the grid and in
   the tooltip, optionally in the calendar feed. They are independent of entries (no coverage,
   no stats); one note per day.

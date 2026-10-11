@@ -34,6 +34,13 @@ import {
 const $ = (id) => document.getElementById(id);
 const POLL_MS = 15000;
 const RECENT_KEY = "vp-recent";
+const CACHE_KEY = "vp-cache";
+const CACHE_SIZE = 12;
+const MAX_DAYS_PER_REQUEST = 4000; // server limit
+const SHORT_DATE = { weekday: "short", day: "numeric", month: "short" };
+const LONG_DATE = { weekday: "long", day: "numeric", month: "long", year: "numeric" };
+// Narrow screens show months as columns and days as rows (see styles.css).
+const TRANSPOSED = matchMedia("(max-width: 820px)");
 const NOTE_ICONS = [
   "🎄",
   "🎅",
@@ -108,8 +115,12 @@ function storage(fn, fallback) {
   }
 }
 
-function fmtDate(d, opts = { weekday: "short", day: "numeric", month: "short" }) {
-  return new Date(d + "T00:00:00").toLocaleDateString(lang, opts);
+const formatters = new Map(); // Intl.DateTimeFormat is slow to create; reuse per language
+
+function fmtDate(d, opts = SHORT_DATE) {
+  const key = lang + JSON.stringify(opts);
+  if (!formatters.has(key)) formatters.set(key, new Intl.DateTimeFormat(lang, opts));
+  return formatters.get(key).format(new Date(d + "T00:00:00"));
 }
 
 function typeById(id) {
@@ -136,11 +147,52 @@ function rememberSession() {
   storage(() => localStorage.setItem(RECENT_KEY, JSON.stringify(next)));
 }
 
+// Last responses per planner + year (most recent first), shown instantly while refreshing.
+function readCache() {
+  const list = storage(() => JSON.parse(localStorage.getItem(CACHE_KEY)), null);
+  return Array.isArray(list)
+    ? list.filter((e) => Array.isArray(e) && e[1]?.session && e[1].types && e[1].entries)
+    : [];
+}
+
+function writeCache(list) {
+  storage(() => localStorage.setItem(CACHE_KEY, JSON.stringify(list)));
+}
+
+function cachedResponse(token, year) {
+  return readCache().find(([key]) => key === `${token}|${year}`)?.[1] ?? null;
+}
+
+function cacheResponse(token, year, data) {
+  const key = `${token}|${year}`;
+  writeCache([[key, data], ...readCache().filter(([k]) => k !== key)].slice(0, CACHE_SIZE));
+}
+
+/** Caches what is shown now, so local edits appear instantly next time too. */
+function cacheState() {
+  if (!state.session) return;
+  const { session, types, entries, notes } = state;
+  cacheResponse(state.token, state.year, {
+    session,
+    types,
+    entries: Object.fromEntries(entries),
+    notes: Object.fromEntries(notes),
+  });
+}
+
+function uncache(token) {
+  writeCache(readCache().filter(([key]) => !key.startsWith(token + "|")));
+}
+
 // ---------------------------------------------------------------- sync
 
 const queue = []; // { kind: "entries" | "notes", ops }
 let flushing = false;
 let retryDelay = 2000;
+let wake = null; // ends the retry backoff early
+let lastResponse = null; // JSON of the last applied response...
+let appliedVersion = -1; // ...and state.version right after applying it
+let reloadAfterSave = false; // a load was dropped because of local changes
 
 const send = {
   entries: (token, ops) => api.applyOps(token, ops),
@@ -158,58 +210,109 @@ async function flush() {
   flushing = true;
   while (queue.length) {
     setSync("sync.saving");
+    // Send queued batches as one request; ops are applied in order, so this is equivalent.
+    // Entries and notes go to different endpoints, so a batch holds only one kind.
+    const kind = queue[0].kind;
+    const ops = [];
+    let n = 0;
+    let days = 0;
+    for (; n < queue.length && queue[n].kind === kind; n++) {
+      const size = queue[n].ops.reduce((sum, op) => sum + op.dates.length, 0);
+      if (n && days + size > MAX_DAYS_PER_REQUEST) break;
+      days += size;
+      ops.push(...queue[n].ops);
+    }
     try {
-      await send[queue[0].kind](state.token, queue[0].ops);
-      queue.shift();
+      await send[kind](state.token, ops);
+      queue.splice(0, n);
       retryDelay = 2000;
     } catch (err) {
       if (err.status && err.status < 500) {
         // The server rejected it (e.g. a type was deleted elsewhere): drop and resync.
-        queue.shift();
+        queue.splice(0, n);
         toast(t("toast.save_failed", { msg: err.message }));
         await load();
         continue;
       }
       setSync("sync.retrying", true);
-      await new Promise((r) => setTimeout(r, retryDelay));
+      await new Promise((r) => {
+        wake = r;
+        setTimeout(r, retryDelay);
+      });
+      wake = null;
       retryDelay = Math.min(retryDelay * 2, 30000);
     }
   }
   flushing = false;
   setSync("sync.saved");
+  cacheState();
+  if (reloadAfterSave) load({ quiet: true });
 }
 
-async function load({ quiet = false } = {}) {
+function applyResponse(data, json = JSON.stringify(data)) {
+  state.session = data.session;
+  state.readOnly = data.session.readOnly;
+  state.types = data.types;
+  state.entries = new Map(Object.entries(data.entries));
+  state.notes = new Map(Object.entries(data.notes ?? {}));
+  lastResponse = json;
+  appliedVersion = state.version;
+}
+
+/** Shows the cached response for the current year, if any. */
+function applyCached() {
+  const data = cachedResponse(state.token, state.year);
+  if (data) applyResponse(data);
+  return !!data;
+}
+
+/** Fetches and shows the planner; resolves to false if it doesn't exist. */
+async function load({ quiet = false, pending = null } = {}) {
   const version = state.version;
   const year = state.year;
+  const token = state.token;
   try {
-    const data = await api.getSession(state.token, year);
+    const data = await (pending ?? api.getSession(token, year));
     // Ignore if the user changed something meanwhile or switched years.
-    if (version !== state.version || year !== state.year || queue.length) return;
-    state.session = data.session;
-    state.readOnly = data.session.readOnly;
-    state.types = data.types;
-    state.entries = new Map(Object.entries(data.entries));
-    state.notes = new Map(Object.entries(data.notes ?? {}));
-    render();
-    if (!quiet) setSync("sync.saved");
+    if (version !== state.version || year !== state.year || queue.length) {
+      reloadAfterSave = true; // catch up once the queued changes are saved
+      return true;
+    }
+    reloadAfterSave = false;
+    const json = JSON.stringify(data);
+    // Skip identical responses unless something changed locally since the last one.
+    const changed = json !== lastResponse || appliedVersion !== state.version;
+    if (changed || !quiet) cacheResponse(token, year, data);
+    if (changed) {
+      applyResponse(data, json);
+      render();
+    }
+    if (!quiet || syncState[1]) setSync("sync.saved");
   } catch (err) {
     if (err.status === 404) {
+      uncache(token);
       showLanding(t("toast.not_found"));
-      return;
+      return false;
     }
     if (!quiet) toast(t("toast.load_failed", { msg: err.message }));
     setSync("sync.offline", true);
   }
+  return true;
+}
+
+// No refresh while a dialog is open, so it can't overwrite edits in progress.
+function isIdle() {
+  return document.visibilityState === "visible" && !$("planner").hidden && !drag &&
+    !queue.length && !document.querySelector("dialog[open]");
 }
 
 function startPolling() {
-  // No refresh while a dialog is open, so it can't overwrite edits in progress.
-  const idle = () =>
-    document.visibilityState === "visible" && !drag && !queue.length &&
-    !document.querySelector("dialog[open]");
-  setInterval(() => idle() && load({ quiet: true }), POLL_MS);
-  document.addEventListener("visibilitychange", () => idle() && load({ quiet: true }));
+  setInterval(() => isIdle() && load({ quiet: true }), POLL_MS);
+  document.addEventListener("visibilitychange", () => isIdle() && load({ quiet: true }));
+  window.addEventListener("online", () => {
+    if (wake) wake();
+    else if (isIdle()) load({ quiet: true });
+  });
 }
 
 // ---------------------------------------------------------------- editing
@@ -356,6 +459,13 @@ function jumpToNextGap() {
 // ---------------------------------------------------------------- rendering
 
 let cells = new Map();
+let cellSigs = new WeakMap(); // cell -> rendered type ids + note; new cells are rendered in full
+let cellTypesSig = null;
+let shownSel = new Set();
+let shownFocus = null;
+let previewed = new Set();
+let chipsSig = null;
+const fillHandle = Object.assign(document.createElement("i"), { className: "fill-handle" });
 
 function cellFor(date) {
   return cells.get(date);
@@ -365,6 +475,10 @@ function buildGrid() {
   const grid = $("grid");
   grid.textContent = "";
   cells = new Map();
+  fillHandle.title = t("fill.handle");
+  shownSel = new Set();
+  shownFocus = null;
+  previewed = new Set();
   const frag = document.createDocumentFragment();
   const corner = document.createElement("div");
   corner.className = "head corner";
@@ -413,31 +527,44 @@ function buildGrid() {
   grid.dataset.year = state.year;
 }
 
+/** Everything about the types that shows up in cells and chips. */
+function typesSig() {
+  return JSON.stringify(state.types.map((t) => [t.id, t.name, t.color, t.role]));
+}
+
 function renderCells() {
+  const sig = typesSig();
+  if (sig !== cellTypesSig) {
+    cellSigs = new WeakMap();
+    cellTypesSig = sig;
+  }
   const roles = roleMap(state.types);
+  const byId = new Map(state.types.map((t) => [t.id, t]));
   const order = new Map(state.types.map((t, i) => [t.id, i]));
   for (const [date, cell] of cells) {
     const ids = (state.entries.get(date) ?? []).filter((id) => order.has(id))
       .sort((a, b) => order.get(a) - order.get(b));
+    const note = state.notes.get(date);
+    const key = ids.join(",") + (note ? "|" + note.icon + "|" + note.comment : "");
+    if (cellSigs.get(cell) === key) continue;
+    cellSigs.set(cell, key);
     const fills = cell.firstChild;
     fills.textContent = "";
     for (const id of ids) {
-      const t = typeById(id);
+      const t = byId.get(id);
       const s = document.createElement("span");
       s.style.backgroundColor = t.color;
       if (t.role === "needs_cover") s.className = "needs";
       fills.append(s);
     }
     cell.classList.toggle("has-fill", ids.length > 0);
-    cell.style.color = ids.length ? contrastText(typeById(ids[0]).color) : "";
+    cell.style.color = ids.length ? contrastText(byId.get(ids[0]).color) : "";
     cell.classList.toggle("gap", isGap(date, ids, roles));
-    const note = state.notes.get(date);
     cell.querySelector(".note-icon").textContent = note?.icon ?? "";
     cell.classList.toggle("has-comment", !!note?.comment);
-    const names = ids.map((id) => typeById(id).name).join(", ");
-    cell.title =
-      fmtDate(date, { weekday: "long", day: "numeric", month: "long", year: "numeric" }) +
-      (names ? "\n" + names : "") + (note ? "\n" + noteText(note) : "");
+    const names = ids.map((id) => byId.get(id).name).join(", ");
+    cell.title = fmtDate(date, LONG_DATE) + (names ? "\n" + names : "") +
+      (note ? "\n" + noteText(note) : "");
   }
 }
 
@@ -446,18 +573,21 @@ function noteText(note) {
 }
 
 function renderSelection() {
-  document.querySelectorAll(".fill-handle").forEach((h) => h.remove());
-  for (const [date, cell] of cells) {
-    cell.classList.toggle("sel", state.selection.has(date));
-    cell.classList.toggle("focus", date === state.focus && state.selection.has(date));
+  // Only touch cells whose state changed since the last call.
+  const sel = state.selection;
+  for (const d of shownSel) if (!sel.has(d)) cellFor(d)?.classList.remove("sel");
+  for (const d of sel) if (!shownSel.has(d)) cellFor(d)?.classList.add("sel");
+  const focus = sel.has(state.focus) ? state.focus : null;
+  if (focus !== shownFocus) {
+    cellFor(shownFocus)?.classList.remove("focus");
+    cellFor(focus)?.classList.add("focus");
   }
+  shownSel = new Set(sel);
+  shownFocus = focus;
   const days = selectedDays();
-  if (!state.readOnly && isContiguous(days)) {
-    const handle = document.createElement("i");
-    handle.className = "fill-handle";
-    handle.title = t("fill.handle");
-    cellFor(days[days.length - 1])?.append(handle);
-  }
+  const last = !state.readOnly && isContiguous(days) && cellFor(days[days.length - 1]);
+  if (last) last.append(fillHandle);
+  else fillHandle.remove();
   renderSelectionInfo(days);
   renderChipsActive(days);
 }
@@ -486,23 +616,39 @@ function renderChipsActive(days) {
   }
 }
 
+function chipTitle(type, i, st) {
+  return t("chip.title", {
+    name: type.name,
+    role: t("role." + type.role),
+    days: st.days,
+    workdays: st.workdays,
+    year: state.year,
+  }) + (state.readOnly ? "" : t("chip.toggle_hint", { key: i + 1 }));
+}
+
 function renderTypes() {
   const box = $("types");
-  box.textContent = "";
   const s = stats(state.entries, state.types, state.year);
+  const sig = typesSig() + state.readOnly + lang;
+  if (sig === chipsSig) {
+    // Same chips: update the numbers in place (keeps keyboard focus on them).
+    state.types.forEach((type, i) => {
+      const chip = box.children[i];
+      const st = s.get(type.id);
+      chip.title = chipTitle(type, i, st);
+      chip.querySelector(".count").textContent = t("chip.count", { n: st.workdays });
+    });
+    return;
+  }
+  chipsSig = sig;
+  box.textContent = "";
   state.types.forEach((type, i) => {
     const chip = document.createElement("button");
     chip.className = "chip";
     chip.dataset.type = type.id;
     chip.disabled = state.readOnly;
     const st = s.get(type.id);
-    chip.title = t("chip.title", {
-      name: type.name,
-      role: t("role." + type.role),
-      days: st.days,
-      workdays: st.workdays,
-      year: state.year,
-    }) + (state.readOnly ? "" : t("chip.toggle_hint", { key: i + 1 }));
+    chip.title = chipTitle(type, i, st);
     const sw = document.createElement("span");
     sw.className = "swatch";
     sw.style.background = type.color;
@@ -590,10 +736,16 @@ function renderYearSelect() {
 
 function setYear(y) {
   if (y < 1900 || y > 2200 || y === state.year) return;
+  cacheState();
   state.year = y;
   state.selection.clear();
   state.anchor = state.focus = null;
   state.version++;
+  if (applyCached()) setSync("sync.updating");
+  else {
+    state.entries = new Map();
+    state.notes = new Map();
+  }
   history.replaceState(null, "", pageUrl({ s: state.token, y }));
   renderYearSelect();
   render();
@@ -618,7 +770,24 @@ function fillTargets(src, hover) {
 }
 
 function showFillPreview(days) {
-  for (const [date, cell] of cells) cell.classList.toggle("fill-preview", days.includes(date));
+  const next = new Set(days);
+  for (const d of previewed) if (!next.has(d)) cellFor(d)?.classList.remove("fill-preview");
+  for (const d of next) if (!previewed.has(d)) cellFor(d)?.classList.add("fill-preview");
+  previewed = next;
+  if (drag?.mode !== "fill") return;
+  const n = days.length;
+  $("selection-info").textContent = n ? t("fill.count", { n }) : t("fill.drag_past");
+}
+
+/** Aborts a fill drag in progress; returns whether there was one. */
+function cancelFill() {
+  if (drag?.mode !== "fill") return false;
+  const grid = $("grid");
+  if (grid.hasPointerCapture(drag.pointerId)) grid.releasePointerCapture(drag.pointerId);
+  drag = null;
+  showFillPreview([]);
+  renderSelectionInfo(selectedDays());
+  return true;
 }
 
 function onPointerDown(e) {
@@ -630,8 +799,9 @@ function onPointerDown(e) {
 
   if (handle && !state.readOnly) {
     e.preventDefault();
-    drag = { mode: "fill", src: selectedDays(), targets: [] };
+    drag = { mode: "fill", src: selectedDays(), targets: [], pointerId: e.pointerId };
     $("grid").setPointerCapture(e.pointerId);
+    showFillPreview([]);
     return;
   }
 
@@ -644,7 +814,7 @@ function onPointerDown(e) {
   e.preventDefault();
   if (e.shiftKey && state.anchor) {
     select(state.anchor, date);
-    drag = { mode: "select", anchor: state.anchor, base: new Set() };
+    drag = { mode: "select", anchor: state.anchor, base: new Set(), last: date };
   } else if (e.ctrlKey || e.metaKey) {
     const base = new Set(state.selection);
     if (base.has(date)) {
@@ -655,11 +825,11 @@ function onPointerDown(e) {
       drag = null;
       return;
     }
-    drag = { mode: "select", anchor: date, base };
+    drag = { mode: "select", anchor: date, base, last: date };
     state.selection = new Set(base);
     select(date, date, { add: true });
   } else {
-    drag = { mode: "select", anchor: date, base: new Set() };
+    drag = { mode: "select", anchor: date, base: new Set(), last: date };
     select(date);
   }
   $("grid").setPointerCapture(e.pointerId);
@@ -668,7 +838,8 @@ function onPointerDown(e) {
 function onPointerMove(e) {
   if (!drag || drag.mode === "tap") return;
   const date = dateAt(e.clientX, e.clientY);
-  if (!date) return;
+  if (!date || date === drag.last) return;
+  drag.last = date;
   if (drag.mode === "select") {
     state.selection = new Set(drag.base);
     select(drag.anchor, date, { add: true });
@@ -697,7 +868,7 @@ function onPointerUp(e) {
   }
   if (d.mode === "fill") {
     showFillPreview([]);
-    if (!d.targets.length) return;
+    if (!d.targets.length) return renderSelectionInfo(selectedDays());
     let pattern = patternOf(state.entries, targetDays(d.src));
     if (d.backwards) {
       // Align the repeating pattern so that it ends right before the source.
@@ -722,12 +893,15 @@ function inEditable(e) {
 function onKeyDown(e) {
   if ($("planner").hidden || inEditable(e)) return;
   const mod = e.ctrlKey || e.metaKey;
-  const arrows = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -31, ArrowDown: 31 };
+  const arrows = TRANSPOSED.matches
+    ? { ArrowUp: -1, ArrowDown: 1, ArrowLeft: -31, ArrowRight: 31 }
+    : { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -31, ArrowDown: 31 };
 
   if (e.key in arrows) {
     e.preventDefault();
     moveFocus(arrows[e.key], e.shiftKey);
   } else if (e.key === "Escape") {
+    if (cancelFill()) return;
     state.selection.clear();
     renderSelection();
   } else if (e.key === "PageUp") {
@@ -1147,6 +1321,7 @@ async function createPlanner() {
 async function openPlanner(token, year) {
   state.token = token;
   if (year) state.year = year;
+  const pending = api.getSession(token, state.year); // start fetching before building the grid
   $("landing").hidden = true;
   $("planner").hidden = false;
   $("year-nav").hidden = false;
@@ -1155,11 +1330,13 @@ async function openPlanner(token, year) {
   $("home-link").hidden = true;
   renderYearSelect();
   buildGrid();
-  setSync("sync.loading");
-  await load();
-  if (!state.session) return;
+  if (applyCached()) {
+    render();
+    setSync("sync.updating");
+  } else setSync("sync.loading");
+  if (!(await load({ pending }))) return;
   rememberSession();
-  if (!state.selection.size && String(state.year) === today.slice(0, 4)) {
+  if (!state.selection.size && !TRANSPOSED.matches && String(state.year) === today.slice(0, 4)) {
     cellFor(today)?.scrollIntoView({ block: "nearest", inline: "center" });
   }
   startPolling();
@@ -1190,15 +1367,25 @@ function bind() {
   $("next-year").addEventListener("click", () => setYear(state.year + 1));
 
   $("session-name").addEventListener("change", async (e) => {
-    const name = e.target.value.trim();
-    if (!name || state.readOnly) return;
+    const input = e.target;
+    const name = input.value.trim();
+    if (state.readOnly || !state.session) return;
+    const old = state.session.name;
+    if (!name) {
+      input.value = old;
+      return;
+    }
+    setSync("sync.saving");
     try {
       await api.renameSession(state.token, name);
       state.session.name = name;
       document.title = `${name} ${state.year}`;
       rememberSession();
+      if (!flushing) setSync("sync.saved");
     } catch (err) {
+      if (input.value.trim() === name) input.value = old;
       toast(t("toast.rename_failed", { msg: err.message }));
+      if (!flushing) setSync(err.status ? "sync.saved" : "sync.offline", !err.status);
     }
   });
   $("session-name").addEventListener("keydown", (e) => e.key === "Enter" && e.target.blur());
@@ -1258,8 +1445,7 @@ function bind() {
   grid.addEventListener("pointermove", onPointerMove);
   grid.addEventListener("pointerup", onPointerUp);
   grid.addEventListener("pointercancel", () => {
-    drag = null;
-    showFillPreview([]);
+    if (!cancelFill()) drag = null;
   });
   grid.addEventListener("dblclick", (e) => {
     // The target is the grid itself after a pointer capture, so look the day up by position.

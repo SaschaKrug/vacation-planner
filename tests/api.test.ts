@@ -123,14 +123,50 @@ Deno.test("skipWeekends leaves Saturday and Sunday out", async () => {
 Deno.test("read-only id can read but not write", async () => {
   const { call } = setup();
   const s = await newSession(call);
-  const state = (await call("GET", `/sessions/${s.readId}`)).data;
+  await call("POST", `/sessions/${s.id}/entries`, { type: "vacation", dates: ["2026-01-05"] });
+  await call("POST", `/sessions/${s.id}/types`, { name: "Remote", color: "#123456" });
+
+  const state = (await call("GET", `/sessions/${s.readId}?year=2026`)).data;
   assertEquals(state.session.readOnly, true);
   assertEquals(state.session.id, undefined);
-  const res = await call("POST", `/sessions/${s.readId}/entries`, {
-    type: "vacation",
-    dates: ["2026-01-02"],
+  assertEquals(state.session.readId, s.readId);
+  assertEquals(state.types.map((t: any) => t.id), ["holiday", "vacation", "sick", "remote"]);
+  assertEquals(state.entries, { "2026-01-05": ["vacation"] });
+  assertEquals((await call("GET", `/sessions/${s.readId}/entries`)).data, {
+    "2026-01-05": ["vacation"],
   });
-  assertEquals(res.status, 403);
+  assertEquals((await call("GET", `/sessions/${s.readId}/types`)).data.length, 4);
+
+  const writes: [string, string, unknown?][] = [
+    ["POST", "/entries", { type: "vacation", dates: ["2026-01-02"] }],
+    ["PATCH", "", { name: "Hijacked" }],
+    ["POST", "/types", { name: "X", color: "#000000" }],
+    ["PATCH", "/types/vacation", { name: "X" }],
+    ["DELETE", "/types/vacation"],
+  ];
+  for (const [method, path, body] of writes) {
+    assertEquals((await call(method, `/sessions/${s.readId}${path}`, body)).status, 403);
+  }
+  const after = (await call("GET", `/sessions/${s.id}?year=2026`)).data;
+  assertEquals(after.session.name, "Family");
+  assertEquals(after.types.length, 4);
+  assertEquals(after.entries, { "2026-01-05": ["vacation"] });
+});
+
+Deno.test("rejects malformed tokens as not found", async () => {
+  const { call } = setup();
+  const s = await newSession(call);
+  for (const token of ["abc,def.ghij", "aaaaaaaaaa)", `${s.id},read_id.eq.x`, "short"]) {
+    const t = encodeURIComponent(token);
+    assertEquals((await call("GET", `/sessions/${t}`)).status, 404);
+    assertEquals((await call("GET", `/sessions/${t}/entries`)).status, 404);
+    assertEquals((await call("PATCH", `/sessions/${t}`, { name: "X" })).status, 404);
+    assertEquals(
+      (await call("POST", `/sessions/${t}/entries`, { type: "vacation", dates: ["2026-01-02"] }))
+        .status,
+      404,
+    );
+  }
 });
 
 Deno.test("validates input", async () => {
@@ -161,12 +197,12 @@ Deno.test("manages entry types", async () => {
   assertEquals(created.data.position, 3);
 
   const renamed = await call("PATCH", `/sessions/${s.id}/types/vacation`, {
-    name: "Vacation Sascha",
+    name: "Vacation Dad",
   });
-  assertEquals(renamed.data.name, "Vacation Sascha");
+  assertEquals(renamed.data.name, "Vacation Dad");
   // Names work as references too.
   await call("POST", `/sessions/${s.id}/entries`, {
-    type: "vacation sascha",
+    type: "vacation dad",
     dates: ["2026-03-02"],
   });
 
@@ -179,8 +215,13 @@ Deno.test("manages entry types", async () => {
 Deno.test("renames a session", async () => {
   const { call } = setup();
   const s = await newSession(call);
-  const res = await call("PATCH", `/sessions/${s.id}`, { name: "Krug family" });
-  assertEquals(res.data.session.name, "Krug family");
+  const res = await call("PATCH", `/sessions/${s.id}`, { name: "Our family" });
+  assertEquals(res.status, 200);
+  assertEquals(res.data.session.name, "Our family");
+  assertEquals(res.data.session.id, s.id);
+  assertEquals(res.data.session.readOnly, false);
+  assertEquals(res.data.types.length, 3);
+  assertEquals((await call("GET", `/sessions/${s.readId}`)).data.session.name, "Our family");
 });
 
 Deno.test("serves an iCalendar feed with merged ranges and gaps", async () => {
