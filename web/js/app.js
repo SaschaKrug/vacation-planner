@@ -34,6 +34,8 @@ const CACHE_SIZE = 12;
 const MAX_DAYS_PER_REQUEST = 4000; // server limit
 const SHORT_DATE = { weekday: "short", day: "numeric", month: "short" };
 const LONG_DATE = { weekday: "long", day: "numeric", month: "long", year: "numeric" };
+// Narrow screens show months as columns and days as rows (see styles.css).
+const TRANSPOSED = matchMedia("(max-width: 820px)");
 
 const state = {
   token: null, // id from the URL (edit id or read-only id)
@@ -810,7 +812,9 @@ function inEditable(e) {
 function onKeyDown(e) {
   if ($("planner").hidden || inEditable(e)) return;
   const mod = e.ctrlKey || e.metaKey;
-  const arrows = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -31, ArrowDown: 31 };
+  const arrows = TRANSPOSED.matches
+    ? { ArrowUp: -1, ArrowDown: 1, ArrowLeft: -31, ArrowRight: 31 }
+    : { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -31, ArrowDown: 31 };
 
   if (e.key in arrows) {
     e.preventDefault();
@@ -1176,7 +1180,7 @@ async function openPlanner(token, year) {
   } else setSync("sync.loading");
   if (!(await load({ pending }))) return;
   rememberSession();
-  if (!state.selection.size && String(state.year) === today.slice(0, 4)) {
+  if (!state.selection.size && !TRANSPOSED.matches && String(state.year) === today.slice(0, 4)) {
     cellFor(today)?.scrollIntoView({ block: "nearest", inline: "center" });
   }
   startPolling();

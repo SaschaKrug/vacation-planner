@@ -433,12 +433,106 @@ details li { margin: 6px 0; }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 @media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
 
-@media (max-width: 640px) {
-  .topbar { gap: 8px; }
-  .statusbar .hint { display: none; }
-  :root { --cell-w: 30px; --cell-h: 36px; }
-}
 .grid .head.corner { left: 0; z-index: 3; }
+
+/* ---------- narrow screens ---------- */
+/* The year turns sideways: months become columns and days rows, so all 12 months fit the
+   width and the page scrolls vertically. The DOM order (corner, 31 day heads, then each month
+   label + its 31 cells) flows column by column. Must match TRANSPOSED in app.js. */
+@media (max-width: 820px) {
+  .topbar { position: static; }
+  .planner { display: flex; flex-direction: column; padding-bottom: 0; }
+  .grid-wrap { overflow: visible; overflow: clip; } /* not a scroll container: month labels stick to the viewport */
+  .grid {
+    grid-template-columns: 26px repeat(12, minmax(0, 1fr));
+    grid-template-rows: auto repeat(31, var(--cell-h));
+    grid-auto-flow: column;
+    min-width: 0;
+  }
+  .grid .head {
+    position: static;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+  }
+  .grid .head.corner, .grid .month { position: sticky; top: 0; z-index: 3; }
+  .grid .month { justify-content: center; padding: 6px 0; font-size: 11px; }
+  .cell { scroll-margin: 40px 0 140px; }
+
+  /* Entry types stay within thumb reach while scrolling through the year. */
+  .toolbar {
+    order: 1;
+    position: sticky;
+    bottom: 0;
+    z-index: 10;
+    flex-direction: column;
+    flex-wrap: nowrap; /* a wrapping column would size its line to the widest chip row */
+    align-items: stretch;
+    gap: 8px;
+    margin: 10px -16px 0;
+    padding: 8px 16px max(8px, env(safe-area-inset-bottom));
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.12);
+  }
+  .statusbar { margin-bottom: 4px; }
+  .toast { bottom: 140px; }
+}
+
+@media (max-width: 640px) {
+  :root { --cell-h: 44px; } /* comfortable tap targets; the page scrolls vertically anyway */
+  .statusbar .hint { display: none; }
+
+  /* Two compact rows: name + save status + language, then year + actions.
+     The ::after item takes a full line to force the break between them. */
+  .topbar { gap: 4px 6px; padding: 8px 10px; }
+  .topbar::after { content: ""; flex-basis: 100%; order: 3; }
+  .actions { display: contents; }
+  .brand { flex: 1 1 0; order: 0; }
+  #sync-status { order: 1; min-width: 0; }
+  .topbar .lang-select { /* beats the base .lang-select rules further down */
+    order: 2;
+    font-size: 13px;
+    padding: 4px 24px 4px 8px;
+    background-position: right 7px center;
+  }
+  .year-nav { order: 4; margin-right: auto; }
+  .year-nav select { font-size: 16px; }
+  #btn-share, #btn-api, #btn-help { order: 5; }
+  .long-label { display: none; }
+
+  .planner { padding: 8px 8px 0; }
+  /* The calendar runs edge to edge so the 12 month columns get every pixel. */
+  .grid-wrap { margin: 0 -8px; border-left: 0; border-right: 0; border-radius: 0; }
+  .grid { grid-template-columns: 26px repeat(12, minmax(0, 1fr)); }
+  .grid .head { font-size: 13px; font-weight: 600; color: var(--text); }
+  .grid .month { padding: 8px 0; font-size: 13px; }
+  .cell .wd { top: 3px; left: 3px; font-size: 11px; }
+
+  .toolbar { margin: 8px -8px 0; padding-left: 8px; padding-right: 8px; }
+  /* One swipeable row of type chips instead of several wrapped rows. */
+  .types {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    margin: -3px -8px;
+    padding: 3px 8px;
+    scroll-padding: 0 8px;
+  }
+  .types::-webkit-scrollbar { display: none; }
+  .chip { flex: none; }
+  .toolbar-right { justify-content: space-between; gap: 8px; font-size: 13px; }
+
+  .coverage { font-size: 13px; padding: 6px 8px; }
+
+  /* Type editor: color + name on one line, role + buttons on the next. */
+  .types-editor { gap: 10px; }
+  .type-row { flex-wrap: wrap; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+  .type-row input[type="text"] { flex-basis: calc(100% - 42px); }
+  .type-row select { flex: 1; min-width: 0; }
+  .dialog, .dialog.wide { padding: 14px 14px 16px; width: calc(100vw - 16px); max-height: calc(100vh - 16px); }
+}
 
 /* Custom caret with breathing room instead of the browser's edge-hugging arrow */
 .lang-select {
