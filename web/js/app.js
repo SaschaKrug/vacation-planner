@@ -483,15 +483,19 @@ function buildGrid() {
   const corner = document.createElement("div");
   corner.className = "head corner";
   frag.append(corner);
+  const [ty, tm, td] = today.split("-").map(Number);
+  const thisYear = ty === state.year;
   for (let d = 1; d <= 31; d++) {
     const h = document.createElement("div");
     h.className = "head";
+    h.classList.toggle("is-today", thisYear && d === td);
     h.textContent = d;
     frag.append(h);
   }
   for (let m = 0; m < 12; m++) {
     const label = document.createElement("div");
     label.className = "month";
+    label.classList.toggle("is-today", thisYear && m === tm - 1);
     label.textContent = t("months")[m];
     frag.append(label);
     const n = daysInMonth(state.year, m);
@@ -646,6 +650,7 @@ function renderTypes() {
     const chip = document.createElement("button");
     chip.className = "chip";
     chip.dataset.type = type.id;
+    chip.style.setProperty("--c", type.color);
     chip.disabled = state.readOnly;
     const st = s.get(type.id);
     chip.title = chipTitle(type, i, st);
@@ -657,6 +662,7 @@ function renderTypes() {
         "repeating-linear-gradient(135deg, rgba(255,255,255,.55) 0 3px, transparent 3px 7px)";
     }
     const name = document.createElement("span");
+    name.className = "name";
     name.textContent = type.name;
     const count = document.createElement("span");
     count.className = "count";
@@ -671,7 +677,21 @@ function renderTypes() {
     chip.addEventListener("click", () => toggleOnSelection(type.id));
     box.append(chip);
   });
+  balanceChips();
 }
+
+/** Wide screens: spread the chips over as few rows as fit, evenly (6 types: 3 + 3, not 4 + 2). */
+function balanceChips() {
+  const box = $("types");
+  const n = box.children.length;
+  if (!n) return;
+  const style = getComputedStyle(box);
+  const min = parseFloat(style.getPropertyValue("--chip-min")) || 210;
+  const gap = parseFloat(style.columnGap) || 0;
+  const perRow = Math.max(1, Math.floor((box.clientWidth + gap) / (min + gap)));
+  box.style.setProperty("--cols", Math.ceil(n / Math.ceil(n / perRow)));
+}
+new ResizeObserver(balanceChips).observe($("types"));
 
 function renderCoverage() {
   const el = $("coverage");
