@@ -167,12 +167,12 @@ async function load({ quiet = false } = {}) {
 }
 
 function startPolling() {
-  setInterval(() => {
-    if (document.visibilityState === "visible" && !drag && !queue.length) load({ quiet: true });
-  }, POLL_MS);
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && !queue.length) load({ quiet: true });
-  });
+  // No refresh while a dialog is open, so it can't overwrite edits in progress.
+  const idle = () =>
+    document.visibilityState === "visible" && !drag && !queue.length &&
+    !document.querySelector("dialog[open]");
+  setInterval(() => idle() && load({ quiet: true }), POLL_MS);
+  document.addEventListener("visibilitychange", () => idle() && load({ quiet: true }));
 }
 
 // ---------------------------------------------------------------- editing
@@ -772,7 +772,10 @@ function renderTypesEditor() {
 }
 
 async function updateType(t, patch) {
-  Object.assign(t, patch);
+  // Look the type up again: a refresh may have replaced the objects the editor rows hold.
+  const current = typeById(t.id);
+  if (current) Object.assign(current, patch);
+  state.version++;
   render();
   try {
     await api.updateType(state.token, t.id, patch);
@@ -787,6 +790,7 @@ async function moveType(i, dir) {
   const j = i + dir;
   [state.types[i], state.types[j]] = [state.types[j], state.types[i]];
   state.types.forEach((t, k) => (t.position = k));
+  state.version++;
   renderTypesEditor();
   render();
   try {
@@ -809,7 +813,7 @@ async function deleteType(t) {
   if (!confirm(msg)) return;
   try {
     await api.deleteType(state.token, t.id);
-    state.types = state.types.filter((x) => x !== t);
+    state.types = state.types.filter((x) => x.id !== t.id);
     for (const [d, ids] of state.entries) {
       const rest = ids.filter((id) => id !== t.id);
       rest.length ? state.entries.set(d, rest) : state.entries.delete(d);
@@ -833,6 +837,7 @@ async function addType() {
       role: "none",
     });
     state.types.push(t);
+    state.version++;
     renderTypesEditor();
     render();
     const inputs = $("types-editor").querySelectorAll('input[type="text"]');
