@@ -197,12 +197,12 @@ Deno.test("manages entry types", async () => {
   assertEquals(created.data.position, 3);
 
   const renamed = await call("PATCH", `/sessions/${s.id}/types/vacation`, {
-    name: "Vacation Sascha",
+    name: "Vacation Dad",
   });
-  assertEquals(renamed.data.name, "Vacation Sascha");
+  assertEquals(renamed.data.name, "Vacation Dad");
   // Names work as references too.
   await call("POST", `/sessions/${s.id}/entries`, {
-    type: "vacation sascha",
+    type: "vacation dad",
     dates: ["2026-03-02"],
   });
 
@@ -215,13 +215,13 @@ Deno.test("manages entry types", async () => {
 Deno.test("renames a session", async () => {
   const { call } = setup();
   const s = await newSession(call);
-  const res = await call("PATCH", `/sessions/${s.id}`, { name: "Krug family" });
+  const res = await call("PATCH", `/sessions/${s.id}`, { name: "Our family" });
   assertEquals(res.status, 200);
-  assertEquals(res.data.session.name, "Krug family");
+  assertEquals(res.data.session.name, "Our family");
   assertEquals(res.data.session.id, s.id);
   assertEquals(res.data.session.readOnly, false);
   assertEquals(res.data.types.length, 3);
-  assertEquals((await call("GET", `/sessions/${s.readId}`)).data.session.name, "Krug family");
+  assertEquals((await call("GET", `/sessions/${s.readId}`)).data.session.name, "Our family");
 });
 
 Deno.test("serves an iCalendar feed with merged ranges and gaps", async () => {

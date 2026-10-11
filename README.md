@@ -7,7 +7,7 @@ closures, with a coverage check, a REST API and an iCloud / Apple Calendar feed.
 
 - All days of a year as 12 rows × 31 days; pick the year at the top.
 - Your own entry types (name + color). New planners start with *Holiday*, *Vacation* and *Sick*.
-- A day can hold **several entries**, e.g. *Day care closed* + *Vacation Sascha*.
+- A day can hold **several entries**, e.g. *Day care closed* + *Vacation Dad*.
 - **Coverage check:** types with the role *Needs cover* (e.g. “Day care closed”) are flagged on
   every weekday that has no *Covers* (e.g. “Vacation …”) or *Day off* (e.g. “Holiday”) entry.
 - Click/drag to select days (also across months), then click a type or press `1`–`9`.
