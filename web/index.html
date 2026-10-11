@@ -59,6 +59,7 @@
       <div id="types" class="types"></div>
       <div class="toolbar-right">
         <button id="btn-edit-types" class="btn small" data-i18n="toolbar.edit_types">Edit types</button>
+        <button id="btn-note" class="btn small" title="Add an icon or comment to the selected days (N)" data-i18n-title="toolbar.note_title" data-i18n="toolbar.note">Icon &amp; note</button>
         <label class="check" title="Weekends are left out when filling, pasting or toggling ranges" data-i18n-title="toolbar.skip_weekends_title">
           <input type="checkbox" id="skip-weekends"> <span data-i18n="toolbar.skip_weekends">Skip weekends</span>
         </label>
@@ -75,7 +76,7 @@
       <span id="selection-info">Click or drag over days to select them.</span>
       <span class="hint" data-i18n="status.hint">Then click a type or press <kbd>1</kbd>–<kbd>9</kbd> ·
         <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy/paste · drag the ▪ handle to fill ·
-        <kbd>Del</kbd> clear · <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo</span>
+        <kbd>N</kbd> note · <kbd>Del</kbd> clear · <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo</span>
     </footer>
   </main>
 
@@ -94,6 +95,31 @@
     </ul>
     <div id="types-editor" class="types-editor"></div>
     <button id="btn-add-type" class="btn" data-i18n="types.add">+ Add type</button>
+  </dialog>
+
+  <!-- Icon + comment on days -->
+  <dialog id="dlg-note" class="dialog note-dialog">
+    <form method="dialog" class="dialog-head">
+      <h2 data-i18n="note.title">Icon &amp; note</h2>
+      <button class="icon-btn" aria-label="Close" data-i18n-aria-label="close">✕</button>
+    </form>
+    <p id="note-days" class="muted"></p>
+    <div id="note-presets" class="emoji-grid" role="group" aria-label="Icon" data-i18n-aria-label="note.icon"></div>
+    <label class="field field-inline">
+      <span data-i18n="note.icon_other">Or any other emoji</span>
+      <input id="note-icon" class="note-icon-input" maxlength="16" autocomplete="off">
+    </label>
+    <label class="field">
+      <span data-i18n="note.comment">Comment</span>
+      <textarea id="note-comment" rows="3" maxlength="500" placeholder="e.g. Christmas" data-i18n-placeholder="note.comment_placeholder"></textarea>
+    </label>
+    <p id="note-replace" class="muted" hidden data-i18n="note.replace_hint">The selected days have different notes – saving replaces them.</p>
+    <div class="dialog-actions">
+      <button id="note-remove" class="btn" data-i18n="note.remove">Remove</button>
+      <span class="spacer"></span>
+      <button id="note-cancel" class="btn" data-i18n="note.cancel">Cancel</button>
+      <button id="note-save" class="btn primary" title="Ctrl/⌘ + Enter" data-i18n="note.save">Save</button>
+    </div>
   </dialog>
 
   <!-- Share + iCloud -->
@@ -119,6 +145,7 @@
         <legend data-i18n="share.include">Include</legend>
         <div id="feed-types" class="feed-types"></div>
         <label class="check"><input type="checkbox" id="feed-gaps"> <span data-i18n="share.gaps">“⚠ Not covered” warnings</span></label>
+        <label class="check"><input type="checkbox" id="feed-notes" checked> <span data-i18n="share.notes">Icons &amp; notes</span></label>
       </fieldset>
       <div class="copy-row"><input id="link-feed" readonly><button class="btn" data-i18n="copy" data-copy="link-feed">Copy</button></div>
       <p><a id="link-webcal" class="btn primary" href="#" data-i18n="share.subscribe">Subscribe on this device</a></p>
@@ -163,6 +190,7 @@
       <tr><td data-i18n="help.handle">Drag the ▪ handle</td><td data-i18n="help.handle_do">Repeat the selected days forwards or backwards</td></tr>
       <tr><td data-i18n="help.arrows">Arrow keys</td><td data-i18n="help.arrows_do">Move (with <kbd>Shift</kbd>: extend the selection)</td></tr>
       <tr><td data-i18n="help.undo"><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td data-i18n="help.undo_do">Undo / redo</td></tr>
+      <tr><td data-i18n="help.note"><kbd>N</kbd> / double-click</td><td data-i18n="help.note_do">Add an icon or comment to the selected days</td></tr>
       <tr><td><kbd>G</kbd></td><td data-i18n="help.gap_do">Jump to the next day that still needs cover</td></tr>
       <tr><td data-i18n="help.esc"><kbd>Esc</kbd></td><td data-i18n="help.esc_do">Clear the selection</td></tr>
     </table>

@@ -26,6 +26,13 @@ export interface EntryRow {
   type_id: string;
 }
 
+/** Icon and/or comment on a day; independent of entries (no role, no coverage). */
+export interface NoteRow {
+  day: string;
+  icon: string;
+  comment: string;
+}
+
 export interface Store {
   createSession(session: SessionRow, types: TypeRow[]): Promise<void>;
   /** Looks a session up by its edit id or its read-only id. */
@@ -39,17 +46,23 @@ export interface Store {
   addEntries(sessionId: string, rows: EntryRow[]): Promise<void>;
   /** Removes entries on `days`; only the given types if `typeIds` is set. */
   removeEntries(sessionId: string, days: string[], typeIds?: string[]): Promise<void>;
+  listNotes(sessionId: string, from?: string, to?: string): Promise<NoteRow[]>;
+  /** Inserts or replaces the note on each row's day. */
+  upsertNotes(sessionId: string, rows: NoteRow[]): Promise<void>;
+  removeNotes(sessionId: string, days: string[]): Promise<void>;
 }
 
 export class MemoryStore implements Store {
   sessions = new Map<string, SessionRow>();
   types = new Map<string, TypeRow[]>();
   entries = new Map<string, Set<string>>(); // sessionId -> "day|type"
+  notes = new Map<string, Map<string, NoteRow>>(); // sessionId -> day -> note
 
   createSession(session: SessionRow, types: TypeRow[]) {
     this.sessions.set(session.id, { ...session });
     this.types.set(session.id, types.map((t) => ({ ...t })));
     this.entries.set(session.id, new Set());
+    this.notes.set(session.id, new Map());
     return Promise.resolve();
   }
 
@@ -117,6 +130,26 @@ export class MemoryStore implements Store {
       const [day, type] = key.split("|");
       if (daySet.has(day) && (!typeIds || typeIds.includes(type))) set.delete(key);
     }
+    return Promise.resolve();
+  }
+
+  listNotes(sessionId: string, from?: string, to?: string) {
+    const rows = [...(this.notes.get(sessionId)?.values() ?? [])]
+      .filter((n) => !(from && n.day < from) && !(to && n.day > to))
+      .map((n) => ({ ...n }));
+    rows.sort((a, b) => a.day.localeCompare(b.day));
+    return Promise.resolve(rows);
+  }
+
+  upsertNotes(sessionId: string, rows: NoteRow[]) {
+    const map = this.notes.get(sessionId);
+    if (map) { for (const r of rows) map.set(r.day, { ...r }); }
+    return Promise.resolve();
+  }
+
+  removeNotes(sessionId: string, days: string[]) {
+    const map = this.notes.get(sessionId);
+    if (map) { for (const d of days) map.delete(d); }
     return Promise.resolve();
   }
 }

@@ -279,6 +279,175 @@ Deno.test("serves a German iCalendar feed with ?lang=de", async () => {
   assert(fallback.data.includes("DESCRIPTION:Vacation: 3 days (1 workdays)\r\n"));
 });
 
+Deno.test("sets, replaces and clears day notes", async () => {
+  const { call } = setup();
+  const s = await newSession(call);
+  const post = (body: unknown) => call("POST", `/sessions/${s.id}/notes`, body);
+
+  let res = await post({
+    icon: " 🎄 ",
+    comment: " Christmas ",
+    from: "2026-12-24",
+    to: "2026-12-26",
+  });
+  assertEquals(res.status, 200);
+  assertEquals(res.data, { ok: true, ops: 1, days: 3 });
+  assertEquals((await call("GET", `/sessions/${s.id}/notes?year=2026`)).data, {
+    "2026-12-24": { icon: "🎄", comment: "Christmas" },
+    "2026-12-25": { icon: "🎄", comment: "Christmas" },
+    "2026-12-26": { icon: "🎄", comment: "Christmas" },
+  });
+
+  res = await post({
+    ops: [
+      // "set" replaces the whole note: no comment given means "".
+      { action: "set", icon: "🎁", dates: ["2026-12-24"] },
+      { action: "clear", date: "2026-12-26" },
+      // Both empty after trimming behaves like "clear".
+      { icon: " ", comment: "", date: "2026-12-25" },
+      { comment: "Easter", from: "2026-04-03", to: "2026-04-06" },
+    ],
+  });
+  assertEquals(res.data, { ok: true, ops: 4, days: 7 });
+  const notes = (await call("GET", `/sessions/${s.id}/notes?from=2026-12-01&to=2026-12-31`)).data;
+  assertEquals(notes, { "2026-12-24": { icon: "🎁", comment: "" } });
+  assertEquals(
+    Object.keys((await call("GET", `/sessions/${s.id}/notes?year=2026`)).data).length,
+    5,
+  );
+  assertEquals((await call("GET", `/sessions/${s.id}/notes?year=2025`)).data, {});
+});
+
+Deno.test("note ops skip weekends like entry ops", async () => {
+  const { call } = setup();
+  const s = await newSession(call);
+  const res = await call("POST", `/sessions/${s.id}/notes`, {
+    icon: "🏖",
+    from: "2026-08-03",
+    to: "2026-08-16",
+    skipWeekends: true,
+  });
+  assertEquals(res.data.days, 10);
+  const notes = (await call("GET", `/sessions/${s.id}/notes`)).data;
+  assertEquals(Object.keys(notes).length, 10);
+  assertEquals(notes["2026-08-08"], undefined);
+});
+
+Deno.test("session state includes notes for the requested range", async () => {
+  const { call } = setup();
+  const s = await newSession(call);
+  await call("POST", `/sessions/${s.id}/notes`, {
+    ops: [
+      { icon: "🎄", comment: "Christmas", date: "2026-12-25" },
+      { icon: "🎆", date: "2025-12-31" },
+    ],
+  });
+  const state = (await call("GET", `/sessions/${s.id}?year=2026`)).data;
+  assertEquals(state.notes, { "2026-12-25": { icon: "🎄", comment: "Christmas" } });
+  // The view-only id reads notes too.
+  const view = (await call("GET", `/sessions/${s.readId}?from=2025-12-01&to=2025-12-31`)).data;
+  assertEquals(view.notes, { "2025-12-31": { icon: "🎆", comment: "" } });
+  assertEquals(
+    Object.keys((await call("GET", `/sessions/${s.readId}/notes`)).data),
+    ["2025-12-31", "2026-12-25"],
+  );
+  assertEquals((await call("POST", "/sessions", {})).data.notes, {});
+});
+
+Deno.test("notes and entries are independent", async () => {
+  const { call } = setup();
+  const s = await newSession(call);
+  await call("POST", `/sessions/${s.id}/entries`, { type: "holiday", date: "2026-12-25" });
+  await call("POST", `/sessions/${s.id}/notes`, { comment: "Christmas", date: "2026-12-25" });
+
+  await call("POST", `/sessions/${s.id}/entries`, { action: "clear", date: "2026-12-25" });
+  let state = (await call("GET", `/sessions/${s.id}?year=2026`)).data;
+  assertEquals(state.entries, {});
+  assertEquals(state.notes, { "2026-12-25": { icon: "", comment: "Christmas" } });
+
+  await call("POST", `/sessions/${s.id}/entries`, { type: "holiday", date: "2026-12-25" });
+  await call("POST", `/sessions/${s.id}/notes`, { action: "clear", date: "2026-12-25" });
+  state = (await call("GET", `/sessions/${s.id}?year=2026`)).data;
+  assertEquals(state.entries, { "2026-12-25": ["holiday"] });
+  assertEquals(state.notes, {});
+});
+
+Deno.test("read-only id cannot change notes", async () => {
+  const { call } = setup();
+  const s = await newSession(call);
+  const res = await call("POST", `/sessions/${s.readId}/notes`, {
+    icon: "🎄",
+    date: "2026-12-25",
+  });
+  assertEquals(res.status, 403);
+  assertEquals(res.data.error, "This is a read-only link");
+});
+
+Deno.test("validates note ops", async () => {
+  const { call } = setup();
+  const s = await newSession(call);
+  const post = (body: unknown) => call("POST", `/sessions/${s.id}/notes`, body);
+  const cases: [unknown, string][] = [
+    [{ action: "add", icon: "🎄", date: "2026-12-25" }, "action must be set or clear"],
+    [{ date: "2026-12-25" }, '"set" needs "icon" or "comment"'],
+    [{ icon: 1, date: "2026-12-25" }, "icon must be a string"],
+    [{ comment: null, date: "2026-12-25" }, "comment must be a string"],
+    [{ icon: "🎄".repeat(9), date: "2026-12-25" }, "icon is too long (max. 16)"],
+    [{ comment: "x".repeat(501), date: "2026-12-25" }, "comment is too long (max. 500)"],
+    [{ icon: "🎄", dates: ["2026-02-30"] }, 'Invalid date "2026-02-30" (use YYYY-MM-DD)'],
+    [{ icon: "🎄", dates: "2026-12-25" }, "dates must be an array"],
+    [{ icon: "🎄", from: "2026-12-25", to: "nope" }, "from/to must be YYYY-MM-DD"],
+    [{ icon: "🎄" }, 'Op needs "dates" or "from"/"to"'],
+    [{ ops: [1] }, "Each op must be an object"],
+    [{ icon: "🎄", from: "2020-01-01", to: "2026-12-31" }, "Range is too long"],
+    [
+      {
+        ops: [1, 2, 3, 4].map((y) => ({
+          icon: "🎄",
+          from: `202${y}-01-01`,
+          to: `202${y + 2}-12-31`,
+        })),
+      },
+      "Too many days in one request",
+    ],
+  ];
+  for (const [body, error] of cases) {
+    const res = await post(body);
+    assertEquals([res.status, res.data.error], [400, error]);
+  }
+  // Limits are inclusive; a flag (2 code points, 4 UTF-16 units) fits easily.
+  const ok = await post({ icon: "🇩🇪", comment: "x".repeat(500), date: "2026-10-03" });
+  assertEquals(ok.status, 200);
+  // Nothing was written by the failed requests.
+  assertEquals(Object.keys((await call("GET", `/sessions/${s.id}/notes`)).data), ["2026-10-03"]);
+});
+
+Deno.test("adds notes to the iCalendar feed only with ?notes=1", async () => {
+  const { call } = setup();
+  const s = await newSession(call);
+  await call("POST", `/sessions/${s.id}/entries`, { type: "holiday", date: "2026-12-25" });
+  await call("POST", `/sessions/${s.id}/notes`, {
+    ops: [
+      { icon: "🎄", comment: "Christmas", from: "2026-12-24", to: "2026-12-26" },
+      { icon: "🎆", comment: "New Year's Eve, party", date: "2026-12-31" },
+    ],
+  });
+  const plain: string = (await call("GET", `/sessions/${s.readId}/calendar.ics`)).data;
+  assertEquals(plain.match(/BEGIN:VEVENT/g)!.length, 1);
+  assert(!plain.includes("Christmas"));
+
+  const ics: string = (await call("GET", `/sessions/${s.readId}/calendar.ics?notes=1`)).data;
+  assertEquals(ics.match(/BEGIN:VEVENT/g)!.length, 3);
+  assert(ics.includes("SUMMARY:🎄 Christmas\r\n"));
+  assert(ics.includes("DTSTART;VALUE=DATE:20261224\r\nDTEND;VALUE=DATE:20261227"));
+  assert(ics.includes(`UID:${s.readId}-note-2026-12-24@vacation-planner`));
+  assert(ics.includes("SUMMARY:🎆 New Year's Eve\\, party\r\n"));
+  // Type filters don't hide notes.
+  const filtered: string =
+    (await call("GET", `/sessions/${s.readId}/calendar.ics?types=sick&notes=1`)).data;
+  assertEquals(filtered.match(/BEGIN:VEVENT/g)!.length, 2);
+});
+
 Deno.test("answers CORS preflight", async () => {
   const handler = createHandler(new MemoryStore());
   const res = await handler(new Request(BASE + "/sessions", { method: "OPTIONS" }));

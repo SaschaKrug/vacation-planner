@@ -1,5 +1,7 @@
 import { assertEquals } from "jsr:@std/assert@1";
 import {
+  applyNotes,
+  changedNotesOnly,
   fillWith,
   gapDays,
   parseClipboardText,
@@ -9,6 +11,7 @@ import {
   stats,
   toClipboardText,
   toggleType,
+  toNoteOps,
   toOps,
   yearDays,
 } from "../web/js/core.js";
@@ -99,4 +102,36 @@ Deno.test("clipboard text round trip and spreadsheet columns", () => {
   const parsed = parseClipboardText("vacation b\nHoliday; Vacation A\nfoo\n", types);
   assertEquals(parsed.pattern, [["vac-b"], ["holiday", "vac-a"], []]);
   assertEquals(parsed.unknown, ["foo"]);
+});
+
+Deno.test("notes: only changed days, empty notes count as removal", () => {
+  const xmas = { icon: "🎄", comment: "Christmas" };
+  const notes = new Map([["2026-12-25", xmas], ["2026-12-26", { icon: "🎁", comment: "" }]]);
+  const next = new Map([
+    ["2026-12-25", { icon: "🎄", comment: "Christmas" }], // unchanged
+    ["2026-12-26", { icon: "", comment: "" }], // removed
+    ["2026-12-27", null], // had no note – unchanged
+    ["2026-12-31", { icon: "🎆", comment: "" }], // new
+  ]);
+  const changes = changedNotesOnly(notes, next);
+  assertEquals([...changes], [["2026-12-26", null], ["2026-12-31", { icon: "🎆", comment: "" }]]);
+  applyNotes(notes, changes);
+  assertEquals([...notes], [["2026-12-25", xmas], ["2026-12-31", { icon: "🎆", comment: "" }]]);
+});
+
+Deno.test("note ops: identical notes are grouped, removals cleared at once", () => {
+  const easter = { icon: "🐣", comment: "Easter" };
+  const next = new Map([
+    ["2026-04-06", easter],
+    ["2026-01-01", null],
+    ["2026-04-05", { ...easter }],
+    ["2026-04-03", { icon: "🐣", comment: "Good Friday" }],
+    ["2025-12-31", { icon: "", comment: "" }],
+  ]);
+  assertEquals(toNoteOps(next), [
+    { action: "clear", dates: ["2025-12-31", "2026-01-01"] },
+    { action: "set", dates: ["2026-04-05", "2026-04-06"], icon: "🐣", comment: "Easter" },
+    { action: "set", dates: ["2026-04-03"], icon: "🐣", comment: "Good Friday" },
+  ]);
+  assertEquals(toNoteOps(new Map()), []);
 });

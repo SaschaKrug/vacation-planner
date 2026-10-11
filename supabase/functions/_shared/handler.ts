@@ -6,6 +6,7 @@ import { dateRange, isValidDate, isWeekend } from "./dates.ts";
 import { buildIcs, type Lang } from "./ics.ts";
 import {
   type EntryRow,
+  type NoteRow,
   type Role,
   ROLES,
   type SessionRow,
@@ -33,6 +34,8 @@ const PRESET_NAMES: Record<Lang, Record<string, string>> = {
 const MAX_TYPES = 50;
 const MAX_DAYS_PER_REQUEST = 4000;
 const MAX_RANGE_DAYS = 3 * 366;
+const MAX_ICON = 16; // UTF-16 code units: enough for flags and ZWJ emoji
+const MAX_COMMENT = 500;
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 // Tokens come from randomToken(); the Supabase store relies on them being alphanumeric.
 const TOKEN_RE = /^[A-Za-z0-9]{10,64}$/;
@@ -150,7 +153,17 @@ function groupEntries(rows: EntryRow[]): Record<string, string[]> {
   return entries;
 }
 
-function sessionState(session: SessionRow, token: string, types: TypeRow[], rows: EntryRow[]) {
+function notesMap(rows: NoteRow[]): Record<string, { icon: string; comment: string }> {
+  return Object.fromEntries(rows.map((n) => [n.day, { icon: n.icon, comment: n.comment }]));
+}
+
+function sessionState(
+  session: SessionRow,
+  token: string,
+  types: TypeRow[],
+  rows: EntryRow[],
+  notes: NoteRow[],
+) {
   const readOnly = session.id !== token;
   return {
     session: {
@@ -162,33 +175,17 @@ function sessionState(session: SessionRow, token: string, types: TypeRow[], rows
     },
     types: types.map(publicType),
     entries: groupEntries(rows),
+    notes: notesMap(notes),
   };
 }
 
-type Op = {
-  action: "add" | "remove" | "set" | "clear";
-  types: string[];
-  days: string[];
-};
-
-function parseOp(raw: unknown, types: TypeRow[]): Op {
+function opObject(raw: unknown): Record<string, unknown> {
   if (!raw || typeof raw !== "object") throw new HttpError(400, "Each op must be an object");
-  const o = raw as Record<string, unknown>;
-  const action = o.action ?? "add";
-  if (!["add", "remove", "set", "clear"].includes(action as string)) {
-    throw new HttpError(400, "action must be add, remove, set or clear");
-  }
+  return raw as Record<string, unknown>;
+}
 
-  let refs: unknown[] = [];
-  if (o.types !== undefined) {
-    if (!Array.isArray(o.types)) throw new HttpError(400, "types must be an array");
-    refs = o.types;
-  } else if (o.type !== undefined) refs = [o.type];
-  if ((action === "add" || action === "remove") && refs.length === 0) {
-    throw new HttpError(400, `"${action}" needs "type" or "types"`);
-  }
-  const typeIds = [...new Set(refs.map((r) => resolveType(types, r).id))];
-
+/** Days of an entry or note op: `dates`, `date` and/or `from`/`to`, minus weekends if asked. */
+function parseDays(o: Record<string, unknown>): string[] {
   const days = new Set<string>();
   const dates = o.dates ?? (o.date !== undefined ? [o.date] : []);
   if (!Array.isArray(dates)) throw new HttpError(400, "dates must be an array");
@@ -209,7 +206,72 @@ function parseOp(raw: unknown, types: TypeRow[]): Op {
   let list = [...days].sort();
   if (o.skipWeekends === true) list = list.filter((d) => !isWeekend(d));
   if (list.length === 0) throw new HttpError(400, 'Op needs "dates" or "from"/"to"');
-  return { action: action as Op["action"], types: typeIds, days: list };
+  return list;
+}
+
+type Op = {
+  action: "add" | "remove" | "set" | "clear";
+  types: string[];
+  days: string[];
+};
+
+function parseOp(raw: unknown, types: TypeRow[]): Op {
+  const o = opObject(raw);
+  const action = o.action ?? "add";
+  if (!["add", "remove", "set", "clear"].includes(action as string)) {
+    throw new HttpError(400, "action must be add, remove, set or clear");
+  }
+
+  let refs: unknown[] = [];
+  if (o.types !== undefined) {
+    if (!Array.isArray(o.types)) throw new HttpError(400, "types must be an array");
+    refs = o.types;
+  } else if (o.type !== undefined) refs = [o.type];
+  if ((action === "add" || action === "remove") && refs.length === 0) {
+    throw new HttpError(400, `"${action}" needs "type" or "types"`);
+  }
+  const typeIds = [...new Set(refs.map((r) => resolveType(types, r).id))];
+  return { action: action as Op["action"], types: typeIds, days: parseDays(o) };
+}
+
+type NoteOp = { icon: string; comment: string; days: string[] };
+
+function cleanNoteText(v: unknown, field: string, max: number): string {
+  if (v === undefined) return "";
+  if (typeof v !== "string") throw new HttpError(400, `${field} must be a string`);
+  const s = v.trim();
+  if (s.length > max) throw new HttpError(400, `${field} is too long (max. ${max})`);
+  return s;
+}
+
+/** A note op; "clear" (or a "set" with nothing left after trimming) has empty icon + comment. */
+function parseNoteOp(raw: unknown): NoteOp {
+  const o = opObject(raw);
+  const action = o.action ?? "set";
+  if (action !== "set" && action !== "clear") {
+    throw new HttpError(400, "action must be set or clear");
+  }
+  if (action === "clear") return { icon: "", comment: "", days: parseDays(o) };
+  if (o.icon === undefined && o.comment === undefined) {
+    throw new HttpError(400, '"set" needs "icon" or "comment"');
+  }
+  return {
+    icon: cleanNoteText(o.icon, "icon", MAX_ICON),
+    comment: cleanNoteText(o.comment, "comment", MAX_COMMENT),
+    days: parseDays(o),
+  };
+}
+
+/** Parses `{ops: [...]}` or a single op and enforces the per-request day limit. */
+function parseOps<T extends { days: string[] }>(
+  body: Record<string, unknown>,
+  parse: (raw: unknown) => T,
+): { ops: T[]; total: number } {
+  const rawOps = Array.isArray(body.ops) ? body.ops : [body];
+  const ops = rawOps.map(parse);
+  const total = ops.reduce((n, o) => n + o.days.length, 0);
+  if (total > MAX_DAYS_PER_REQUEST) throw new HttpError(400, "Too many days in one request");
+  return { ops, total };
 }
 
 export function createHandler(store: Store) {
@@ -245,7 +307,11 @@ export function createHandler(store: Store) {
   }
 
   function listAll(sessionId: string, { from, to }: Range) {
-    return Promise.all([store.listTypes(sessionId), store.listEntries(sessionId, from, to)]);
+    return Promise.all([
+      store.listTypes(sessionId),
+      store.listEntries(sessionId, from, to),
+      store.listNotes(sessionId, from, to),
+    ]);
   }
 
   async function route(req: Request): Promise<Response> {
@@ -291,7 +357,7 @@ export function createHandler(store: Store) {
       }
       const types = presets.map((t, i) => ({ ...t, session_id: session.id, position: i }));
       await store.createSession(session, types);
-      return json(sessionState(session, session.id, types, []), 201);
+      return json(sessionState(session, session.id, types, [], []), 201);
     }
 
     const token = parts[1];
@@ -300,24 +366,34 @@ export function createHandler(store: Store) {
     if (parts.length === 2) {
       const range = rangeFromQuery(url);
       if (method === "GET") {
-        const [session, [types, rows]] = await loadWith(token, false, (id) => listAll(id, range));
-        return json(sessionState(session, token, types, rows));
+        const [session, [types, rows, notes]] = await loadWith(
+          token,
+          false,
+          (id) => listAll(id, range),
+        );
+        return json(sessionState(session, token, types, rows, notes));
       }
       if (method === "PATCH") {
-        const [session, [types, rows]] = await loadWith(token, true, (id) => listAll(id, range));
+        const [session, [types, rows, notes]] = await loadWith(
+          token,
+          true,
+          (id) => listAll(id, range),
+        );
         const name = cleanName((await readBody(req)).name);
         await store.updateSession(session.id, { name });
         const updated = { ...session, name, updated_at: new Date().toISOString() };
-        return json(sessionState(updated, token, types, rows));
+        return json(sessionState(updated, token, types, rows, notes));
       }
       throw new HttpError(405, "Method not allowed");
     }
 
     if (sub === "calendar.ics" && parts.length === 3 && method === "GET") {
       const session = await loadSession(token, false);
-      const [types, rows] = await Promise.all([
+      const withNotes = url.searchParams.get("notes") === "1";
+      const [types, rows, notes] = await Promise.all([
         store.listTypes(session.id),
         store.listEntries(session.id),
+        withNotes ? store.listNotes(session.id) : undefined,
       ]);
       const entries = new Map<string, string[]>();
       for (const r of rows) {
@@ -338,6 +414,7 @@ export function createHandler(store: Store) {
         entries,
         include,
         gaps: url.searchParams.get("gaps") === "1",
+        notes: notes && new Map(notes.map((n) => [n.day, n])),
         lang: url.searchParams.get("lang") === "de" ? "de" : "en",
       });
       return new Response(ics, {
@@ -404,11 +481,7 @@ export function createHandler(store: Store) {
       }
       if (method === "POST") {
         const [session, types] = await loadWith(token, true, (id) => store.listTypes(id));
-        const body = await readBody(req);
-        const rawOps = Array.isArray(body.ops) ? body.ops : [body];
-        const ops = rawOps.map((o) => parseOp(o, types));
-        const total = ops.reduce((n, o) => n + o.days.length, 0);
-        if (total > MAX_DAYS_PER_REQUEST) throw new HttpError(400, "Too many days in one request");
+        const { ops, total } = parseOps(await readBody(req), (o) => parseOp(o, types));
 
         for (const op of ops) {
           if (op.action === "clear" || op.action === "set") {
@@ -421,6 +494,26 @@ export function createHandler(store: Store) {
               session.id,
               op.days.flatMap((day) => op.types.map((type_id) => ({ day, type_id }))),
             );
+          }
+        }
+        return json({ ok: true, ops: ops.length, days: total });
+      }
+    }
+
+    if (sub === "notes" && parts.length === 3) {
+      if (method === "GET") {
+        const { from, to } = rangeFromQuery(url);
+        const [, rows] = await loadWith(token, false, (id) => store.listNotes(id, from, to));
+        return json(notesMap(rows));
+      }
+      if (method === "POST") {
+        const session = await loadSession(token, true);
+        const { ops, total } = parseOps(await readBody(req), parseNoteOp);
+        for (const { icon, comment, days } of ops) {
+          if (icon || comment) {
+            await store.upsertNotes(session.id, days.map((day) => ({ day, icon, comment })));
+          } else {
+            await store.removeNotes(session.id, days);
           }
         }
         return json({ ok: true, ops: ops.length, days: total });

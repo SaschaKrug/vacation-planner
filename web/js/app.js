@@ -3,6 +3,8 @@ import { applyStatic, lang, LANGS, setLang, t } from "./i18n.js";
 import {
   addDays,
   applyDays,
+  applyNotes,
+  changedNotesOnly,
   changedOnly,
   clearDays,
   contrastText,
@@ -13,15 +15,18 @@ import {
   iso,
   isWeekend,
   nextColor,
+  noteOrNull,
   parseClipboardText,
   pasteTargets,
   patternOf,
   range,
   roleMap,
   ROLES,
+  sameNote,
   stats,
   toClipboardText,
   toggleType,
+  toNoteOps,
   toOps,
   weekday,
 } from "./core.js";
@@ -36,19 +41,42 @@ const SHORT_DATE = { weekday: "short", day: "numeric", month: "short" };
 const LONG_DATE = { weekday: "long", day: "numeric", month: "long", year: "numeric" };
 // Narrow screens show months as columns and days as rows (see styles.css).
 const TRANSPOSED = matchMedia("(max-width: 820px)");
+const NOTE_ICONS = [
+  "🎄",
+  "🎅",
+  "🎁",
+  "🎆",
+  "🐣",
+  "🐰",
+  "🎃",
+  "🎂",
+  "🎉",
+  "❤️",
+  "⭐",
+  "📌",
+  "✈️",
+  "🏖️",
+  "⛷️",
+  "🏫",
+  "🏥",
+  "🎓",
+  "💼",
+  "⚽",
+];
 
 const state = {
   token: null, // id from the URL (edit id or read-only id)
   session: null,
   types: [],
   entries: new Map(),
+  notes: new Map(), // date -> { icon, comment }
   year: new Date().getFullYear(),
   readOnly: true,
   selection: new Set(),
   anchor: null,
   focus: null,
   clipboard: null, // { pattern, text }
-  undo: [],
+  undo: [], // { kind: "entries" | "notes", before, after }
   redo: [],
   version: 0, // bumps on every local change; stale poll responses are dropped
   rangeMode: false,
@@ -143,8 +171,13 @@ function cacheResponse(token, year, data) {
 /** Caches what is shown now, so local edits appear instantly next time too. */
 function cacheState() {
   if (!state.session) return;
-  const { session, types, entries } = state;
-  cacheResponse(state.token, state.year, { session, types, entries: Object.fromEntries(entries) });
+  const { session, types, entries, notes } = state;
+  cacheResponse(state.token, state.year, {
+    session,
+    types,
+    entries: Object.fromEntries(entries),
+    notes: Object.fromEntries(notes),
+  });
 }
 
 function uncache(token) {
@@ -153,7 +186,7 @@ function uncache(token) {
 
 // ---------------------------------------------------------------- sync
 
-const queue = [];
+const queue = []; // { kind: "entries" | "notes", ops }
 let flushing = false;
 let retryDelay = 2000;
 let wake = null; // ends the retry backoff early
@@ -161,9 +194,14 @@ let lastResponse = null; // JSON of the last applied response...
 let appliedVersion = -1; // ...and state.version right after applying it
 let reloadAfterSave = false; // a load was dropped because of local changes
 
-function enqueue(ops) {
+const send = {
+  entries: (token, ops) => api.applyOps(token, ops),
+  notes: (token, ops) => api.applyNoteOps(token, ops),
+};
+
+function enqueue(kind, ops) {
   if (!ops.length) return;
-  queue.push(ops);
+  queue.push({ kind, ops });
   flush();
 }
 
@@ -173,17 +211,19 @@ async function flush() {
   while (queue.length) {
     setSync("sync.saving");
     // Send queued batches as one request; ops are applied in order, so this is equivalent.
+    // Entries and notes go to different endpoints, so a batch holds only one kind.
+    const kind = queue[0].kind;
     const ops = [];
     let n = 0;
     let days = 0;
-    for (; n < queue.length; n++) {
-      const size = queue[n].reduce((sum, op) => sum + op.dates.length, 0);
+    for (; n < queue.length && queue[n].kind === kind; n++) {
+      const size = queue[n].ops.reduce((sum, op) => sum + op.dates.length, 0);
       if (n && days + size > MAX_DAYS_PER_REQUEST) break;
       days += size;
-      ops.push(...queue[n]);
+      ops.push(...queue[n].ops);
     }
     try {
-      await api.applyOps(state.token, ops);
+      await send[kind](state.token, ops);
       queue.splice(0, n);
       retryDelay = 2000;
     } catch (err) {
@@ -214,6 +254,7 @@ function applyResponse(data, json = JSON.stringify(data)) {
   state.readOnly = data.session.readOnly;
   state.types = data.types;
   state.entries = new Map(Object.entries(data.entries));
+  state.notes = new Map(Object.entries(data.notes ?? {}));
   lastResponse = json;
   appliedVersion = state.version;
 }
@@ -285,26 +326,47 @@ function commit(next, { record = true } = {}) {
   const ops = toOps(state.entries, changes);
   applyDays(state.entries, changes);
   state.version++;
-  if (record) {
-    state.undo.push({ before, after: changes });
-    if (state.undo.length > 200) state.undo.shift();
-    state.redo = [];
-  }
-  enqueue(ops);
+  if (record) recordStep({ kind: "entries", before, after: changes });
+  enqueue("entries", ops);
   render();
+}
+
+/** Same as commit() for day notes (next: Map<date, note | null>). */
+function commitNotes(next, { record = true } = {}) {
+  if (state.readOnly) return;
+  const changes = changedNotesOnly(state.notes, next);
+  if (!changes.size) return;
+  const before = new Map([...changes.keys()].map((d) => [d, state.notes.get(d) ?? null]));
+  const ops = toNoteOps(changes);
+  applyNotes(state.notes, changes);
+  state.version++;
+  if (record) recordStep({ kind: "notes", before, after: changes });
+  enqueue("notes", ops);
+  render();
+}
+
+function recordStep(step) {
+  state.undo.push(step);
+  if (state.undo.length > 200) state.undo.shift();
+  state.redo = [];
+}
+
+function applyStep(step, values) {
+  if (step.kind === "notes") commitNotes(values, { record: false });
+  else commit(values, { record: false });
 }
 
 function undo() {
   const step = state.undo.pop();
   if (!step) return toast(t("toast.nothing_undo"));
-  commit(step.before, { record: false });
+  applyStep(step, step.before);
   state.redo.push(step);
 }
 
 function redo() {
   const step = state.redo.pop();
   if (!step) return toast(t("toast.nothing_redo"));
-  commit(step.after, { record: false });
+  applyStep(step, step.after);
   state.undo.push(step);
 }
 
@@ -397,7 +459,7 @@ function jumpToNextGap() {
 // ---------------------------------------------------------------- rendering
 
 let cells = new Map();
-let cellSigs = new WeakMap(); // cell -> rendered type ids; new cells are rendered in full
+let cellSigs = new WeakMap(); // cell -> rendered type ids + note; new cells are rendered in full
 let cellTypesSig = null;
 let shownSel = new Set();
 let shownFocus = null;
@@ -447,9 +509,13 @@ function buildGrid() {
         wd.textContent = t("weekdays")[weekday(date)];
         const fills = document.createElement("div");
         fills.className = "fills";
+        const icon = document.createElement("span");
+        icon.className = "note-icon";
+        const mark = document.createElement("span");
+        mark.className = "note-mark";
         const overlay = document.createElement("div");
         overlay.className = "sel-overlay";
-        cell.append(fills, wd, overlay);
+        cell.append(fills, wd, icon, mark, overlay);
         if (isWeekend(date)) cell.classList.add("weekend");
         if (date === today) cell.classList.add("today");
         cells.set(date, cell);
@@ -478,7 +544,8 @@ function renderCells() {
   for (const [date, cell] of cells) {
     const ids = (state.entries.get(date) ?? []).filter((id) => order.has(id))
       .sort((a, b) => order.get(a) - order.get(b));
-    const key = ids.join(",");
+    const note = state.notes.get(date);
+    const key = ids.join(",") + (note ? "|" + note.icon + "|" + note.comment : "");
     if (cellSigs.get(cell) === key) continue;
     cellSigs.set(cell, key);
     const fills = cell.firstChild;
@@ -493,9 +560,16 @@ function renderCells() {
     cell.classList.toggle("has-fill", ids.length > 0);
     cell.style.color = ids.length ? contrastText(byId.get(ids[0]).color) : "";
     cell.classList.toggle("gap", isGap(date, ids, roles));
+    cell.querySelector(".note-icon").textContent = note?.icon ?? "";
+    cell.classList.toggle("has-comment", !!note?.comment);
     const names = ids.map((id) => byId.get(id).name).join(", ");
-    cell.title = fmtDate(date, LONG_DATE) + (names ? "\n" + names : "");
+    cell.title = fmtDate(date, LONG_DATE) + (names ? "\n" + names : "") +
+      (note ? "\n" + noteText(note) : "");
   }
+}
+
+function noteText(note) {
+  return [note.icon, note.comment].filter(Boolean).join(" ");
 }
 
 function renderSelection() {
@@ -528,7 +602,10 @@ function renderSelectionInfo(days) {
   const span = days.length === 1
     ? fmtDate(days[0])
     : `${fmtDate(days[0])} – ${fmtDate(days[days.length - 1])}`;
-  el.textContent = t("sel.info", { n: days.length, work, span });
+  // Touch devices have no tooltips, so a single day's note is shown here.
+  const note = days.length === 1 && state.notes.get(days[0]);
+  el.textContent = t("sel.info", { n: days.length, work, span }) +
+    (note ? " · " + noteText(note) : "");
 }
 
 function renderChipsActive(days) {
@@ -630,6 +707,7 @@ function render() {
   $("planner").classList.toggle("readonly", state.readOnly);
   $("readonly-banner").hidden = !state.readOnly;
   $("btn-edit-types").hidden = state.readOnly;
+  $("btn-note").hidden = state.readOnly;
   const nameInput = $("session-name");
   if (document.activeElement !== nameInput) nameInput.value = state.session?.name ?? "";
   nameInput.readOnly = state.readOnly;
@@ -664,7 +742,10 @@ function setYear(y) {
   state.anchor = state.focus = null;
   state.version++;
   if (applyCached()) setSync("sync.updating");
-  else state.entries = new Map();
+  else {
+    state.entries = new Map();
+    state.notes = new Map();
+  }
   history.replaceState(null, "", pageUrl({ s: state.token, y }));
   renderYearSelect();
   render();
@@ -848,6 +929,9 @@ function onKeyDown(e) {
     if (t) toggleOnSelection(t.id);
   } else if (e.key.toLowerCase() === "g") {
     jumpToNextGap();
+  } else if (e.key.toLowerCase() === "n" && !e.altKey && !e.shiftKey) {
+    e.preventDefault();
+    openNoteDialog();
   }
 }
 
@@ -1014,12 +1098,75 @@ async function addType() {
   }
 }
 
+let noteDays = []; // the days the open note dialog edits
+
+function openNoteDialog() {
+  if (state.readOnly) return;
+  const days = targetDays();
+  if (!days.length) return toast(t("toast.select_first"));
+  noteDays = days;
+  const notes = days.map((d) => state.notes.get(d) ?? null);
+  // Prefill only if every day has the same note; otherwise saving replaces them.
+  const same = notes.every((n) => sameNote(n, notes[0]));
+  const note = same ? noteOrNull(notes[0]) : null;
+  $("note-days").textContent = days.length === 1
+    ? fmtDate(days[0], { weekday: "long", day: "numeric", month: "long", year: "numeric" })
+    : t("note.days", {
+      n: days.length,
+      span: `${fmtDate(days[0])} – ${fmtDate(days[days.length - 1])}`,
+    });
+  $("note-icon").value = note?.icon ?? "";
+  $("note-comment").value = note?.comment ?? "";
+  $("note-replace").hidden = same;
+  $("note-remove").hidden = !notes.some(Boolean);
+  renderNotePresets();
+  $("dlg-note").showModal();
+  // On touch screens the keyboard would cover the icons, so only focus with a mouse.
+  if (matchMedia("(pointer: fine)").matches) $("note-comment").focus();
+}
+
+function renderNotePresets() {
+  const box = $("note-presets");
+  if (!box.childElementCount) {
+    for (const icon of NOTE_ICONS) {
+      const btn = Object.assign(document.createElement("button"), {
+        type: "button",
+        className: "emoji-btn",
+        textContent: icon,
+      });
+      btn.addEventListener("click", () => {
+        // Clicking the picked icon again unpicks it.
+        $("note-icon").value = $("note-icon").value === icon ? "" : icon;
+        renderNotePresets();
+      });
+      box.append(btn);
+    }
+  }
+  const picked = $("note-icon").value.trim();
+  for (const btn of box.children) {
+    btn.setAttribute("aria-pressed", String(btn.textContent === picked));
+  }
+}
+
+function saveNote() {
+  const icon = $("note-icon").value.trim();
+  const comment = $("note-comment").value.trim();
+  commitNotes(new Map(noteDays.map((d) => [d, icon || comment ? { icon, comment } : null])));
+  $("dlg-note").close();
+}
+
+function removeNote() {
+  commitNotes(new Map(noteDays.map((d) => [d, null])));
+  $("dlg-note").close();
+}
+
 function feedUrl() {
   const boxes = [...$("feed-types").querySelectorAll("input")];
   const checked = boxes.filter((b) => b.checked).map((b) => b.value);
   const params = {};
   if (checked.length !== boxes.length) params.types = checked.join(",");
   if ($("feed-gaps").checked) params.gaps = "1";
+  if ($("feed-notes").checked) params.notes = "1";
   if (lang !== "en") params.lang = lang;
   return api.calendarUrl(state.session.readId, params);
 }
@@ -1050,6 +1197,7 @@ function openShareDialog() {
     box.append(label);
   }
   $("feed-gaps").checked = state.types.some((t) => t.role === "needs_cover");
+  $("feed-notes").checked = true;
   updateFeedLinks();
   $("dlg-share").showModal();
 }
@@ -1078,6 +1226,14 @@ curl -X POST "$BASE/sessions/$SESSION/entries" \\
         {"action":"remove","type":"${typeRef}","dates":["${y}-08-07"]},
         {"action":"set","types":["${typeRef}"],"dates":["${y}-12-24","${y}-12-31"]},
         {"action":"clear","from":"${y}-01-01","to":"${y}-01-06"}
+      ]}'
+
+# ${t("api.notes")}
+curl -X POST "$BASE/sessions/$SESSION/notes" \\
+  -H "content-type: application/json" \\
+  -d '{"ops":[
+        {"action":"set","dates":["${y}-12-25"],"icon":"🎄","comment":"${t("api.ex_note")}"},
+        {"action":"clear","dates":["${y}-12-31"]}
       ]}'
 
 # ${t("api.types")}
@@ -1238,8 +1394,26 @@ function bind() {
   $("btn-api").addEventListener("click", openApiDialog);
   $("btn-help").addEventListener("click", () => $("dlg-help").showModal());
   $("btn-edit-types").addEventListener("click", openTypesDialog);
+  $("btn-note").addEventListener("click", openNoteDialog);
+  $("note-save").addEventListener("click", saveNote);
+  $("note-remove").addEventListener("click", removeNote);
+  $("note-cancel").addEventListener("click", () => $("dlg-note").close());
+  $("note-icon").addEventListener("input", renderNotePresets);
+  $("note-icon").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.isComposing) {
+      e.preventDefault();
+      saveNote();
+    }
+  });
+  $("note-comment").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.isComposing) {
+      e.preventDefault();
+      saveNote();
+    }
+  });
   $("btn-add-type").addEventListener("click", addType);
   $("feed-gaps").addEventListener("change", updateFeedLinks);
+  $("feed-notes").addEventListener("change", updateFeedLinks);
   $("btn-range").addEventListener("click", (e) => {
     state.rangeMode = !state.rangeMode;
     e.currentTarget.setAttribute("aria-pressed", String(state.rangeMode));
@@ -1272,6 +1446,13 @@ function bind() {
   grid.addEventListener("pointerup", onPointerUp);
   grid.addEventListener("pointercancel", () => {
     if (!cancelFill()) drag = null;
+  });
+  grid.addEventListener("dblclick", (e) => {
+    // The target is the grid itself after a pointer capture, so look the day up by position.
+    const date = dateAt(e.clientX, e.clientY);
+    if (!date || state.readOnly) return;
+    select(date);
+    openNoteDialog();
   });
   document.addEventListener("keydown", onKeyDown);
   document.addEventListener("copy", (e) => onCopy(e));
