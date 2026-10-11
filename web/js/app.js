@@ -30,6 +30,8 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 const WD = ["S", "M", "T", "W", "T", "F", "S"];
 const POLL_MS = 15000;
 const RECENT_KEY = "vp-recent";
+// Narrow screens show months as columns and days as rows (see styles.css).
+const TRANSPOSED = matchMedia("(max-width: 820px)");
 
 const state = {
   token: null, // id from the URL (edit id or read-only id)
@@ -651,7 +653,9 @@ function inEditable(e) {
 function onKeyDown(e) {
   if ($("planner").hidden || inEditable(e)) return;
   const mod = e.ctrlKey || e.metaKey;
-  const arrows = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -31, ArrowDown: 31 };
+  const arrows = TRANSPOSED.matches
+    ? { ArrowUp: -1, ArrowDown: 1, ArrowLeft: -31, ArrowRight: 31 }
+    : { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -31, ArrowDown: 31 };
 
   if (e.key in arrows) {
     e.preventDefault();
@@ -986,7 +990,7 @@ async function openPlanner(token, year) {
   await load();
   if (!state.session) return;
   rememberSession();
-  if (!state.selection.size && String(state.year) === today.slice(0, 4)) {
+  if (!state.selection.size && !TRANSPOSED.matches && String(state.year) === today.slice(0, 4)) {
     cellFor(today)?.scrollIntoView({ block: "nearest", inline: "center" });
   }
   startPolling();
