@@ -107,7 +107,7 @@ const STRINGS = {
     "types.intro": "Changes are saved immediately. The role decides how the coverage check works:",
     "types.help_needs":
       "<b>Needs cover</b> – e.g. “Day care closed”. A weekday with this entry and nothing that covers it is flagged as a gap.",
-    "types.help_covers": "<b>Covers</b> – e.g. “Vacation Sascha”. Covers a “needs cover” day.",
+    "types.help_covers": "<b>Covers</b> – e.g. “Vacation Dad”. Covers a “needs cover” day.",
     "types.help_day_off":
       "<b>Day off</b> – e.g. “Holiday”. Covers everything and doesn't count as a used vacation day.",
     "types.help_none": "<b>Normal</b> – just a color, no coverage logic.",
@@ -158,7 +158,7 @@ const STRINGS = {
     "api.new": "New planner",
     "api.ex_vacation": "Vacation",
     "api.ex_needs": "Day care closed",
-    "api.ex_rename": "Vacation Sascha",
+    "api.ex_rename": "Vacation Dad",
     "api.ex_planner": "Family {year}",
 
     // help dialog
@@ -286,7 +286,7 @@ const STRINGS = {
     "types.help_needs":
       "<b>Braucht Betreuung</b> – z. B. „Kita geschlossen“. Ein Wochentag mit diesem Eintrag ohne Betreuung wird als Lücke markiert.",
     "types.help_covers":
-      "<b>Betreut</b> – z. B. „Urlaub Sascha“. Deckt einen Tag ab, der Betreuung braucht.",
+      "<b>Betreut</b> – z. B. „Urlaub Papa“. Deckt einen Tag ab, der Betreuung braucht.",
     "types.help_day_off":
       "<b>Frei</b> – z. B. „Feiertag“. Deckt alles ab und zählt nicht als genommener Urlaubstag.",
     "types.help_none": "<b>Normal</b> – nur eine Farbe, ohne Betreuungslogik.",
@@ -335,7 +335,7 @@ const STRINGS = {
     "api.new": "Neuer Planer",
     "api.ex_vacation": "Urlaub",
     "api.ex_needs": "Kita geschlossen",
-    "api.ex_rename": "Urlaub Sascha",
+    "api.ex_rename": "Urlaub Papa",
     "api.ex_planner": "Familie {year}",
 
     "help.title": "So funktioniert's",
