@@ -1,0 +1,122 @@
+// Storage abstraction so the API handler can run against Supabase in
+// production and an in-memory store in tests / local development.
+
+export type Role = "none" | "needs_cover" | "covers" | "day_off";
+export const ROLES: Role[] = ["none", "needs_cover", "covers", "day_off"];
+
+export interface SessionRow {
+  id: string; // secret edit token (in the share URL)
+  read_id: string; // read-only token (view link + calendar feed)
+  name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TypeRow {
+  session_id: string;
+  id: string;
+  name: string;
+  color: string;
+  role: Role;
+  position: number;
+}
+
+export interface EntryRow {
+  day: string;
+  type_id: string;
+}
+
+export interface Store {
+  createSession(session: SessionRow, types: TypeRow[]): Promise<void>;
+  /** Looks a session up by its edit id or its read-only id. */
+  findSession(token: string): Promise<SessionRow | null>;
+  updateSession(id: string, patch: { name?: string }): Promise<void>;
+  listTypes(sessionId: string): Promise<TypeRow[]>;
+  upsertType(type: TypeRow): Promise<void>;
+  /** Deletes the type and all of its day entries. */
+  deleteType(sessionId: string, typeId: string): Promise<void>;
+  listEntries(sessionId: string, from?: string, to?: string): Promise<EntryRow[]>;
+  addEntries(sessionId: string, rows: EntryRow[]): Promise<void>;
+  /** Removes entries on `days`; only the given types if `typeIds` is set. */
+  removeEntries(sessionId: string, days: string[], typeIds?: string[]): Promise<void>;
+}
+
+export class MemoryStore implements Store {
+  sessions = new Map<string, SessionRow>();
+  types = new Map<string, TypeRow[]>();
+  entries = new Map<string, Set<string>>(); // sessionId -> "day|type"
+
+  createSession(session: SessionRow, types: TypeRow[]) {
+    this.sessions.set(session.id, { ...session });
+    this.types.set(session.id, types.map((t) => ({ ...t })));
+    this.entries.set(session.id, new Set());
+    return Promise.resolve();
+  }
+
+  findSession(token: string) {
+    const direct = this.sessions.get(token);
+    if (direct) return Promise.resolve({ ...direct });
+    for (const s of this.sessions.values()) {
+      if (s.read_id === token) return Promise.resolve({ ...s });
+    }
+    return Promise.resolve(null);
+  }
+
+  updateSession(id: string, patch: { name?: string }) {
+    const s = this.sessions.get(id);
+    if (s) Object.assign(s, patch, { updated_at: new Date().toISOString() });
+    return Promise.resolve();
+  }
+
+  listTypes(sessionId: string) {
+    const list = (this.types.get(sessionId) ?? []).map((t) => ({ ...t }));
+    return Promise.resolve(list.sort((a, b) => a.position - b.position));
+  }
+
+  upsertType(type: TypeRow) {
+    const list = this.types.get(type.session_id) ?? [];
+    const i = list.findIndex((t) => t.id === type.id);
+    if (i >= 0) list[i] = { ...type };
+    else list.push({ ...type });
+    this.types.set(type.session_id, list);
+    return Promise.resolve();
+  }
+
+  deleteType(sessionId: string, typeId: string) {
+    const list = this.types.get(sessionId) ?? [];
+    this.types.set(sessionId, list.filter((t) => t.id !== typeId));
+    const set = this.entries.get(sessionId);
+    if (set) {
+      for (const key of [...set]) if (key.endsWith("|" + typeId)) set.delete(key);
+    }
+    return Promise.resolve();
+  }
+
+  listEntries(sessionId: string, from?: string, to?: string) {
+    const rows: EntryRow[] = [];
+    for (const key of this.entries.get(sessionId) ?? []) {
+      const [day, type_id] = key.split("|");
+      if ((from && day < from) || (to && day > to)) continue;
+      rows.push({ day, type_id });
+    }
+    rows.sort((a, b) => a.day.localeCompare(b.day));
+    return Promise.resolve(rows);
+  }
+
+  addEntries(sessionId: string, rows: EntryRow[]) {
+    const set = this.entries.get(sessionId);
+    if (set) { for (const r of rows) set.add(r.day + "|" + r.type_id); }
+    return Promise.resolve();
+  }
+
+  removeEntries(sessionId: string, days: string[], typeIds?: string[]) {
+    const set = this.entries.get(sessionId);
+    if (!set) return Promise.resolve();
+    const daySet = new Set(days);
+    for (const key of [...set]) {
+      const [day, type] = key.split("|");
+      if (daySet.has(day) && (!typeIds || typeIds.includes(type))) set.delete(key);
+    }
+    return Promise.resolve();
+  }
+}

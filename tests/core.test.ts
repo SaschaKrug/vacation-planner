@@ -1,0 +1,102 @@
+import { assertEquals } from "jsr:@std/assert@1";
+import {
+  fillWith,
+  gapDays,
+  parseClipboardText,
+  pasteTargets,
+  patternOf,
+  range,
+  stats,
+  toClipboardText,
+  toggleType,
+  toOps,
+  yearDays,
+} from "../web/js/core.js";
+
+const types = [
+  { id: "holiday", name: "Holiday", color: "#f59e0b", role: "day_off" },
+  { id: "vac-a", name: "Vacation A", color: "#22c55e", role: "covers" },
+  { id: "vac-b", name: "Vacation B", color: "#3b82f6", role: "covers" },
+  { id: "daycare", name: "Day care closed", color: "#8b5cf6", role: "needs_cover" },
+];
+
+Deno.test("year days", () => {
+  assertEquals(yearDays(2024).length, 366);
+  assertEquals(yearDays(2026).length, 365);
+  assertEquals(range("2026-03-02", "2026-02-27"), [
+    "2026-02-27",
+    "2026-02-28",
+    "2026-03-01",
+    "2026-03-02",
+  ]);
+});
+
+Deno.test("toggle adds to all, or removes when all have it", () => {
+  const entries = new Map([["2026-08-03", ["vac-a"]]]);
+  const days = ["2026-08-03", "2026-08-04"];
+  const added = toggleType(entries, days, "vac-a");
+  assertEquals([...added], [["2026-08-03", ["vac-a"]], ["2026-08-04", ["vac-a"]]]);
+  const both = new Map(added);
+  assertEquals([...toggleType(both, days, "vac-a").values()], [[], []]);
+  // A second type is added next to the existing one.
+  assertEquals(toggleType(entries, ["2026-08-03"], "daycare").get("2026-08-03"), [
+    "vac-a",
+    "daycare",
+  ]);
+});
+
+Deno.test("gaps: needs cover on weekdays without covers/day off", () => {
+  const entries = new Map([
+    ["2026-08-03", ["daycare"]], // Mon – gap
+    ["2026-08-04", ["daycare", "vac-a"]], // covered
+    ["2026-08-05", ["daycare", "holiday"]], // holiday covers
+    ["2026-08-08", ["daycare"]], // Saturday – ignored
+  ]);
+  assertEquals(gapDays(entries, types, 2026), ["2026-08-03"]);
+});
+
+Deno.test("stats count workdays without weekends and holidays", () => {
+  const entries = new Map([
+    ["2026-08-07", ["vac-a"]], // Fri
+    ["2026-08-08", ["vac-a"]], // Sat
+    ["2026-08-10", ["vac-a", "holiday"]], // Mon, holiday
+    ["2026-08-11", ["vac-a", "vac-b"]],
+  ]);
+  const s = stats(entries, types, 2026);
+  assertEquals(s.get("vac-a"), { days: 4, workdays: 2 });
+  assertEquals(s.get("vac-b"), { days: 1, workdays: 1 });
+  assertEquals(s.get("holiday"), { days: 1, workdays: 1 });
+});
+
+Deno.test("paste: single day gets the whole pattern, bigger selections repeat it", () => {
+  assertEquals(pasteTargets(["2026-12-30"], 5, "2026-12-31", false), ["2026-12-30", "2026-12-31"]);
+  assertEquals(pasteTargets(["2026-08-07"], 2, "2026-12-31", true), ["2026-08-07", "2026-08-10"]);
+  const sel = ["2026-01-05", "2026-01-06", "2026-01-07"];
+  assertEquals(pasteTargets(sel, 1, "2026-12-31", false), sel);
+  assertEquals(
+    [...fillWith(sel, [["vac-a"], []]).values()],
+    [["vac-a"], [], ["vac-a"]],
+  );
+});
+
+Deno.test("ops are grouped add/remove per type", () => {
+  const entries = new Map([["2026-01-05", ["vac-a"]], ["2026-01-06", ["vac-a"]]]);
+  const next = new Map([["2026-01-05", ["vac-b"]], ["2026-01-06", ["vac-a", "vac-b"]]]);
+  assertEquals(toOps(entries, next), [
+    { action: "remove", type: "vac-a", dates: ["2026-01-05"] },
+    { action: "add", type: "vac-b", dates: ["2026-01-05", "2026-01-06"] },
+  ]);
+});
+
+Deno.test("clipboard text round trip and spreadsheet columns", () => {
+  const days = ["2026-01-05", "2026-01-06"];
+  const entries = new Map([["2026-01-05", ["vac-a", "daycare"]]]);
+  const pattern = patternOf(entries, days);
+  const text = toClipboardText(days, pattern, types);
+  assertEquals(text, "2026-01-05\tVacation A, Day care closed\n2026-01-06\t");
+  assertEquals(parseClipboardText(text, types).pattern, pattern);
+
+  const parsed = parseClipboardText("vacation b\nHoliday; Vacation A\nfoo\n", types);
+  assertEquals(parsed.pattern, [["vac-b"], ["holiday", "vac-a"], []]);
+  assertEquals(parsed.unknown, ["foo"]);
+});
