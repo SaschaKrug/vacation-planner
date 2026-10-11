@@ -15,8 +15,23 @@ export interface IcsInput {
   include?: Set<string>;
   /** Adds a warning event for weekdays that need cover but have none. */
   gaps?: boolean;
+  /** Language of generated texts (gap summaries, descriptions). Default "en". */
+  lang?: Lang;
   now?: Date;
 }
+
+export type Lang = "en" | "de";
+
+const TEXT: Record<Lang, { notCovered: string; span: (days: number, work: number) => string }> = {
+  en: {
+    notCovered: "⚠ Not covered",
+    span: (days, work) => `${days} days (${work} workdays)`,
+  },
+  de: {
+    notCovered: "⚠ Nicht abgedeckt",
+    span: (days, work) => `${days} Tage (${work} ${work === 1 ? "Arbeitstag" : "Arbeitstage"})`,
+  },
+};
 
 export function escapeText(s: string): string {
   return s.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,")
@@ -70,6 +85,7 @@ function workdays(days: string[]): number {
 
 export function buildIcs(input: IcsInput): string {
   const now = input.now ?? new Date();
+  const text = TEXT[input.lang ?? "en"];
   const lines = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
@@ -83,7 +99,7 @@ export function buildIcs(input: IcsInput): string {
 
   const event = (uid: string, run: string[], summary: string) => {
     const n = run.length;
-    const description = n === 1 ? summary : `${summary}: ${n} days (${workdays(run)} workdays)`;
+    const description = n === 1 ? summary : `${summary}: ${text.span(n, workdays(run))}`;
     lines.push(
       "BEGIN:VEVENT",
       `UID:${uid}`,
@@ -108,7 +124,7 @@ export function buildIcs(input: IcsInput): string {
 
   if (input.gaps) {
     const needs = input.types.filter((t) => t.role === "needs_cover").map((t) => t.name);
-    const label = "⚠ Not covered" + (needs.length ? ": " + needs.join(", ") : "");
+    const label = text.notCovered + (needs.length ? ": " + needs.join(", ") : "");
     for (const run of consecutiveRuns(gapDays(input.types, input.entries))) {
       event(`${input.uidPrefix}-gap-${run[0]}@vacation-planner`, run, label);
     }

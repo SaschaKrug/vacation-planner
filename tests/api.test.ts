@@ -40,6 +40,44 @@ Deno.test("creates a session with preset types", async () => {
   assert(res.data.session.id !== res.data.session.readId);
 });
 
+Deno.test("creates a German session with localized presets", async () => {
+  const { call } = setup();
+  const res = await call("POST", "/sessions", { lang: "de" });
+  assertEquals(res.status, 201);
+  assertEquals(res.data.session.name, "Urlaubsplaner");
+  assertEquals(res.data.types.map((t: any) => [t.id, t.name]), [
+    ["holiday", "Feiertag"],
+    ["vacation", "Urlaub"],
+    ["sick", "Krank"],
+  ]);
+  assertEquals(res.data.types.map((t: any) => t.role), ["day_off", "covers", "none"]);
+  // Ids stay stable, so API references keep working.
+  const entry = await call("POST", `/sessions/${res.data.session.id}/entries`, {
+    type: "vacation",
+    dates: ["2026-08-03"],
+  });
+  assertEquals(entry.status, 200);
+
+  const en = await call("POST", "/sessions", {});
+  assertEquals(en.data.session.name, "Vacation planner");
+
+  const custom = await call("POST", "/sessions", {
+    lang: "de",
+    types: [{ name: "Kita zu", color: "#8b5cf6", role: "needs_cover" }],
+  });
+  assertEquals(custom.data.session.name, "Urlaubsplaner");
+  assertEquals(custom.data.types.map((t: any) => t.name), ["Kita zu"]);
+});
+
+Deno.test("rejects an unknown lang", async () => {
+  const { call } = setup();
+  for (const lang of ["fr", "DE", 1, null]) {
+    const res = await call("POST", "/sessions", { lang });
+    assertEquals(res.status, 400);
+    assertEquals(res.data.error, "lang must be en or de");
+  }
+});
+
 Deno.test("adds, removes, sets and clears entries", async () => {
   const { call } = setup();
   const s = await newSession(call);
@@ -172,6 +210,32 @@ Deno.test("serves an iCalendar feed with merged ranges and gaps", async () => {
     (await call("GET", `/sessions/${s.readId}/calendar.ics?types=vacation`)).data;
   assert(!onlyVacation.includes("Day care closed"));
   assertEquals(onlyVacation.match(/BEGIN:VEVENT/g).length, 1);
+});
+
+Deno.test("serves a German iCalendar feed with ?lang=de", async () => {
+  const { call } = setup();
+  const s = await newSession(call);
+  await call("POST", `/sessions/${s.id}/types`, {
+    name: "Kita zu",
+    color: "#8b5cf6",
+    role: "needs_cover",
+  });
+  await call("POST", `/sessions/${s.id}/entries`, {
+    ops: [
+      { action: "add", type: "kita-zu", from: "2026-08-06", to: "2026-08-07" },
+      { action: "add", type: "vacation", from: "2026-08-07", to: "2026-08-09" },
+    ],
+  });
+  const de: string = (await call("GET", `/sessions/${s.readId}/calendar.ics?gaps=1&lang=de`))
+    .data;
+  assert(de.includes("SUMMARY:⚠ Nicht abgedeckt: Kita zu\r\n"));
+  assert(de.includes("DESCRIPTION:Vacation: 3 Tage (1 Arbeitstag)\r\n"));
+
+  // Unknown languages fall back to English instead of breaking the feed.
+  const fallback = await call("GET", `/sessions/${s.readId}/calendar.ics?gaps=1&lang=xx`);
+  assertEquals(fallback.status, 200);
+  assert(fallback.data.includes("SUMMARY:⚠ Not covered: Kita zu\r\n"));
+  assert(fallback.data.includes("DESCRIPTION:Vacation: 3 days (1 workdays)\r\n"));
 });
 
 Deno.test("answers CORS preflight", async () => {

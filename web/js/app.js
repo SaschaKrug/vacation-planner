@@ -1,4 +1,5 @@
 import { api, isConfigured } from "./api.js";
+import { applyStatic, lang, LANGS, setLang, t } from "./i18n.js";
 import {
   addDays,
   applyDays,
@@ -16,8 +17,8 @@ import {
   pasteTargets,
   patternOf,
   range,
-  ROLE_LABELS,
   roleMap,
+  ROLES,
   stats,
   toClipboardText,
   toggleType,
@@ -26,8 +27,6 @@ import {
 } from "./core.js";
 
 const $ = (id) => document.getElementById(id);
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const WD = ["S", "M", "T", "W", "T", "F", "S"];
 const POLL_MS = 15000;
 const RECENT_KEY = "vp-recent";
 
@@ -63,9 +62,13 @@ function toast(msg, ms = 2600) {
   toast.t = setTimeout(() => el.classList.remove("show"), ms);
 }
 
-function setSync(text, error = false) {
+let syncState = ["", false];
+
+/** Shows a "sync.*" status; kept so it can be re-translated on a language switch. */
+function setSync(key, error = false) {
+  syncState = [key, error];
   const el = $("sync-status");
-  el.textContent = text;
+  el.textContent = key ? t(key) : "";
   el.classList.toggle("error", error);
 }
 
@@ -78,7 +81,7 @@ function storage(fn, fallback) {
 }
 
 function fmtDate(d, opts = { weekday: "short", day: "numeric", month: "short" }) {
-  return new Date(d + "T00:00:00").toLocaleDateString(undefined, opts);
+  return new Date(d + "T00:00:00").toLocaleDateString(lang, opts);
 }
 
 function typeById(id) {
@@ -121,7 +124,7 @@ async function flush() {
   if (flushing) return;
   flushing = true;
   while (queue.length) {
-    setSync("Saving…");
+    setSync("sync.saving");
     try {
       await api.applyOps(state.token, queue[0]);
       queue.shift();
@@ -130,17 +133,17 @@ async function flush() {
       if (err.status && err.status < 500) {
         // The server rejected it (e.g. a type was deleted elsewhere): drop and resync.
         queue.shift();
-        toast("Couldn't save: " + err.message);
+        toast(t("toast.save_failed", { msg: err.message }));
         await load();
         continue;
       }
-      setSync("Offline – retrying", true);
+      setSync("sync.retrying", true);
       await new Promise((r) => setTimeout(r, retryDelay));
       retryDelay = Math.min(retryDelay * 2, 30000);
     }
   }
   flushing = false;
-  setSync("Saved");
+  setSync("sync.saved");
 }
 
 async function load({ quiet = false } = {}) {
@@ -155,14 +158,14 @@ async function load({ quiet = false } = {}) {
     state.types = data.types;
     state.entries = new Map(Object.entries(data.entries));
     render();
-    if (!quiet) setSync("Saved");
+    if (!quiet) setSync("sync.saved");
   } catch (err) {
     if (err.status === 404) {
-      showLanding("This planner doesn't exist (anymore). Check the link.");
+      showLanding(t("toast.not_found"));
       return;
     }
-    if (!quiet) toast("Couldn't load: " + err.message);
-    setSync("Offline", true);
+    if (!quiet) toast(t("toast.load_failed", { msg: err.message }));
+    setSync("sync.offline", true);
   }
 }
 
@@ -197,14 +200,14 @@ function commit(next, { record = true } = {}) {
 
 function undo() {
   const step = state.undo.pop();
-  if (!step) return toast("Nothing to undo");
+  if (!step) return toast(t("toast.nothing_undo"));
   commit(step.before, { record: false });
   state.redo.push(step);
 }
 
 function redo() {
   const step = state.redo.pop();
-  if (!step) return toast("Nothing to redo");
+  if (!step) return toast(t("toast.nothing_redo"));
   commit(step.after, { record: false });
   state.undo.push(step);
 }
@@ -222,7 +225,7 @@ function targetDays(days = selectedDays()) {
 function toggleOnSelection(typeId) {
   if (state.readOnly) return;
   const days = targetDays();
-  if (!days.length) return toast("Select some days first");
+  if (!days.length) return toast(t("toast.select_first"));
   commit(toggleType(state.entries, days, typeId));
 }
 
@@ -239,14 +242,14 @@ function copySelection() {
   const pattern = patternOf(state.entries, span);
   const text = toClipboardText(span, pattern, state.types);
   state.clipboard = { pattern, text };
-  toast(`Copied ${span.length} day${span.length > 1 ? "s" : ""}`);
+  toast(t("toast.copied_days", { n: span.length }));
   return text;
 }
 
 function pastePattern(pattern) {
   if (state.readOnly) return;
   const days = selectedDays();
-  if (!days.length) return toast("Select where to paste first");
+  if (!days.length) return toast(t("toast.select_paste"));
   if (!pattern.length) return;
   const skip = $("skip-weekends").checked;
   const targets = days.length === 1
@@ -289,7 +292,7 @@ function moveFocus(delta, extend) {
 
 function jumpToNextGap() {
   const gaps = gapDays(state.entries, state.types, state.year);
-  if (!gaps.length) return toast("No uncovered days in " + state.year);
+  if (!gaps.length) return toast(t("toast.no_gaps", { year: state.year }));
   const after = gaps.find((d) => d > (state.focus ?? "")) ?? gaps[0];
   select(after);
   cellFor(after)?.scrollIntoView({ block: "nearest", inline: "center" });
@@ -320,7 +323,7 @@ function buildGrid() {
   for (let m = 0; m < 12; m++) {
     const label = document.createElement("div");
     label.className = "month";
-    label.textContent = MONTHS[m];
+    label.textContent = t("months")[m];
     frag.append(label);
     const n = daysInMonth(state.year, m);
     for (let d = 1; d <= 31; d++) {
@@ -334,7 +337,7 @@ function buildGrid() {
         cell.dataset.date = date;
         const wd = document.createElement("span");
         wd.className = "wd";
-        wd.textContent = WD[weekday(date)];
+        wd.textContent = t("weekdays")[weekday(date)];
         const fills = document.createElement("div");
         fills.className = "fills";
         const overlay = document.createElement("div");
@@ -386,7 +389,7 @@ function renderSelection() {
   if (!state.readOnly && isContiguous(days)) {
     const handle = document.createElement("i");
     handle.className = "fill-handle";
-    handle.title = "Drag to repeat the selected days";
+    handle.title = t("fill.handle");
     cellFor(days[days.length - 1])?.append(handle);
   }
   renderSelectionInfo(days);
@@ -396,16 +399,14 @@ function renderSelection() {
 function renderSelectionInfo(days) {
   const el = $("selection-info");
   if (!days.length) {
-    el.textContent = state.readOnly ? "View-only" : "Click or drag over days to select them.";
+    el.textContent = state.readOnly ? t("sel.view_only") : t("sel.none");
     return;
   }
   const work = days.filter((d) => !isWeekend(d)).length;
   const span = days.length === 1
     ? fmtDate(days[0])
     : `${fmtDate(days[0])} – ${fmtDate(days[days.length - 1])}`;
-  el.textContent = `${days.length} day${
-    days.length > 1 ? "s" : ""
-  } selected (${work} weekdays): ${span}`;
+  el.textContent = t("sel.info", { n: days.length, work, span });
 }
 
 function renderChipsActive(days) {
@@ -420,29 +421,31 @@ function renderTypes() {
   const box = $("types");
   box.textContent = "";
   const s = stats(state.entries, state.types, state.year);
-  state.types.forEach((t, i) => {
+  state.types.forEach((type, i) => {
     const chip = document.createElement("button");
     chip.className = "chip";
-    chip.dataset.type = t.id;
+    chip.dataset.type = type.id;
     chip.disabled = state.readOnly;
-    const st = s.get(t.id);
-    chip.title =
-      `${t.name} – ${
-        ROLE_LABELS[t.role]
-      }\n${st.days} days in ${state.year}, ${st.workdays} workdays` +
-      (state.readOnly ? "" : `\nClick (or press ${i + 1}) to toggle on the selected days`);
+    const st = s.get(type.id);
+    chip.title = t("chip.title", {
+      name: type.name,
+      role: t("role." + type.role),
+      days: st.days,
+      workdays: st.workdays,
+      year: state.year,
+    }) + (state.readOnly ? "" : t("chip.toggle_hint", { key: i + 1 }));
     const sw = document.createElement("span");
     sw.className = "swatch";
-    sw.style.background = t.color;
-    if (t.role === "needs_cover") {
+    sw.style.background = type.color;
+    if (type.role === "needs_cover") {
       sw.style.backgroundImage =
         "repeating-linear-gradient(135deg, rgba(255,255,255,.55) 0 3px, transparent 3px 7px)";
     }
     const name = document.createElement("span");
-    name.textContent = t.name;
+    name.textContent = type.name;
     const count = document.createElement("span");
     count.className = "count";
-    count.textContent = `${st.workdays}d`;
+    count.textContent = t("chip.count", { n: st.workdays });
     chip.append(sw, name, count);
     if (i < 9 && !state.readOnly) {
       const key = document.createElement("span");
@@ -450,7 +453,7 @@ function renderTypes() {
       key.textContent = i + 1;
       chip.append(key);
     }
-    chip.addEventListener("click", () => toggleOnSelection(t.id));
+    chip.addEventListener("click", () => toggleOnSelection(type.id));
     box.append(chip);
   });
 }
@@ -470,18 +473,16 @@ function renderCoverage() {
   const names = needs.map((t) => t.name).join(" / ");
   if (gaps.length) {
     msg.className = "bad";
-    msg.textContent = `⚠ ${gaps.length} weekday${
-      gaps.length > 1 ? "s" : ""
-    } with “${names}” not covered yet`;
+    msg.textContent = t("coverage.gaps", { n: gaps.length, names });
     const btn = document.createElement("button");
     btn.className = "btn small";
-    btn.textContent = "Next gap →";
-    btn.title = "Jump to the next uncovered day (G)";
+    btn.textContent = t("coverage.next");
+    btn.title = t("coverage.next_title");
     btn.addEventListener("click", jumpToNextGap);
     el.append(msg, btn);
   } else {
     msg.className = "ok";
-    msg.textContent = `✓ All “${names}” days in ${state.year} are covered`;
+    msg.textContent = t("coverage.ok", { names, year: state.year });
     el.append(msg);
   }
 }
@@ -494,7 +495,7 @@ function render() {
   const nameInput = $("session-name");
   if (document.activeElement !== nameInput) nameInput.value = state.session?.name ?? "";
   nameInput.readOnly = state.readOnly;
-  document.title = (state.session?.name ?? "Vacation Planner") + ` ${state.year}`;
+  document.title = (state.session?.name ?? t("app.title")) + ` ${state.year}`;
   renderTypes();
   renderCells();
   renderSelection();
@@ -709,7 +710,9 @@ function onPaste(e) {
     return;
   }
   const { pattern, unknown } = parseClipboardText(text, state.types);
-  if (unknown.length) toast(`Unknown type${unknown.length > 1 ? "s" : ""}: ${unknown.join(", ")}`);
+  if (unknown.length) {
+    toast(t("toast.unknown_types", { n: unknown.length, names: unknown.join(", ") }));
+  }
   pastePattern(pattern);
 }
 
@@ -723,64 +726,67 @@ function openTypesDialog() {
 function renderTypesEditor() {
   const box = $("types-editor");
   box.textContent = "";
-  state.types.forEach((t, i) => {
+  state.types.forEach((type, i) => {
     const row = document.createElement("div");
     row.className = "type-row";
-    const color = Object.assign(document.createElement("input"), { type: "color", value: t.color });
-    color.title = "Color";
+    const color = Object.assign(document.createElement("input"), {
+      type: "color",
+      value: type.color,
+    });
+    color.title = t("types.color");
     const name = Object.assign(document.createElement("input"), {
       type: "text",
-      value: t.name,
+      value: type.name,
       maxLength: 80,
     });
-    name.setAttribute("aria-label", "Name");
+    name.setAttribute("aria-label", t("types.name"));
     const role = document.createElement("select");
-    role.setAttribute("aria-label", "Role");
-    for (const [value, label] of Object.entries(ROLE_LABELS)) {
-      role.append(new Option(label, value, false, value === t.role));
+    role.setAttribute("aria-label", t("types.role"));
+    for (const value of ROLES) {
+      role.append(new Option(t("role." + value), value, false, value === type.role));
     }
     const up = Object.assign(document.createElement("button"), {
       className: "icon-btn",
       textContent: "↑",
-      title: "Move up",
+      title: t("types.up"),
     });
     const down = Object.assign(document.createElement("button"), {
       className: "icon-btn",
       textContent: "↓",
-      title: "Move down",
+      title: t("types.down"),
     });
     const del = Object.assign(document.createElement("button"), {
       className: "icon-btn",
       textContent: "🗑",
-      title: "Delete",
+      title: t("types.delete"),
     });
     up.disabled = i === 0;
     down.disabled = i === state.types.length - 1;
 
-    color.addEventListener("change", () => updateType(t, { color: color.value }));
+    color.addEventListener("change", () => updateType(type, { color: color.value }));
     name.addEventListener(
       "change",
-      () => name.value.trim() && updateType(t, { name: name.value.trim() }),
+      () => name.value.trim() && updateType(type, { name: name.value.trim() }),
     );
-    role.addEventListener("change", () => updateType(t, { role: role.value }));
+    role.addEventListener("change", () => updateType(type, { role: role.value }));
     up.addEventListener("click", () => moveType(i, -1));
     down.addEventListener("click", () => moveType(i, 1));
-    del.addEventListener("click", () => deleteType(t));
+    del.addEventListener("click", () => deleteType(type));
     row.append(color, name, role, up, down, del);
     box.append(row);
   });
 }
 
-async function updateType(t, patch) {
+async function updateType(type, patch) {
   // Look the type up again: a refresh may have replaced the objects the editor rows hold.
-  const current = typeById(t.id);
+  const current = typeById(type.id);
   if (current) Object.assign(current, patch);
   state.version++;
   render();
   try {
-    await api.updateType(state.token, t.id, patch);
+    await api.updateType(state.token, type.id, patch);
   } catch (err) {
-    toast("Couldn't save type: " + err.message);
+    toast(t("toast.type_save_failed", { msg: err.message }));
     await load();
     renderTypesEditor();
   }
@@ -799,23 +805,21 @@ async function moveType(i, dir) {
       api.updateType(state.token, state.types[j].id, { position: j }),
     ]);
   } catch (err) {
-    toast("Couldn't reorder: " + err.message);
+    toast(t("toast.reorder_failed", { msg: err.message }));
   }
 }
 
-async function deleteType(t) {
-  const used = [...state.entries.values()].filter((ids) => ids.includes(t.id)).length;
+async function deleteType(type) {
+  const used = [...state.entries.values()].filter((ids) => ids.includes(type.id)).length;
   const msg = used
-    ? `Delete “${t.name}”? It is used on ${used} day${
-      used > 1 ? "s" : ""
-    } in ${state.year} (and maybe other years). This can't be undone.`
-    : `Delete “${t.name}”?`;
+    ? t("types.confirm_delete_used", { name: type.name, n: used, year: state.year })
+    : t("types.confirm_delete", { name: type.name });
   if (!confirm(msg)) return;
   try {
-    await api.deleteType(state.token, t.id);
-    state.types = state.types.filter((x) => x.id !== t.id);
+    await api.deleteType(state.token, type.id);
+    state.types = state.types.filter((x) => x.id !== type.id);
     for (const [d, ids] of state.entries) {
-      const rest = ids.filter((id) => id !== t.id);
+      const rest = ids.filter((id) => id !== type.id);
       rest.length ? state.entries.set(d, rest) : state.entries.delete(d);
     }
     state.undo = [];
@@ -824,26 +828,26 @@ async function deleteType(t) {
     renderTypesEditor();
     render();
   } catch (err) {
-    toast("Couldn't delete: " + err.message);
+    toast(t("toast.delete_failed", { msg: err.message }));
   }
 }
 
 async function addType() {
   const n = state.types.length + 1;
   try {
-    const t = await api.addType(state.token, {
-      name: `New type ${n}`,
+    const type = await api.addType(state.token, {
+      name: t("types.new_name", { n }),
       color: nextColor(state.types),
       role: "none",
     });
-    state.types.push(t);
+    state.types.push(type);
     state.version++;
     renderTypesEditor();
     render();
     const inputs = $("types-editor").querySelectorAll('input[type="text"]');
     inputs[inputs.length - 1]?.select();
   } catch (err) {
-    toast("Couldn't add type: " + err.message);
+    toast(t("toast.add_type_failed", { msg: err.message }));
   }
 }
 
@@ -853,6 +857,7 @@ function feedUrl() {
   const params = {};
   if (checked.length !== boxes.length) params.types = checked.join(",");
   if ($("feed-gaps").checked) params.gaps = "1";
+  if (lang !== "en") params.lang = lang;
   return api.calendarUrl(state.session.readId, params);
 }
 
@@ -869,16 +874,16 @@ function openShareDialog() {
   $("link-view").value = pageUrl({ s: s.readId });
   const box = $("feed-types");
   box.textContent = "";
-  for (const t of state.types) {
+  for (const type of state.types) {
     const label = document.createElement("label");
     label.className = "check";
     const cb = Object.assign(document.createElement("input"), {
       type: "checkbox",
-      value: t.id,
+      value: type.id,
       checked: true,
     });
     cb.addEventListener("change", updateFeedLinks);
-    label.append(cb, " " + t.name);
+    label.append(cb, " " + type.name);
     box.append(label);
   }
   $("feed-gaps").checked = state.types.some((t) => t.role === "needs_cover");
@@ -889,21 +894,21 @@ function openShareDialog() {
 function openApiDialog() {
   const base = api.calendarUrl("x").replace(/\/sessions\/x\/calendar\.ics$/, "");
   const id = state.readOnly ? "<edit-id>" : state.session.id;
-  const t = state.types.find((x) => x.role === "covers") ?? state.types[0];
-  const typeRef = t?.id ?? "vacation";
+  const type = state.types.find((x) => x.role === "covers") ?? state.types[0];
+  const typeRef = type?.id ?? "vacation";
   const y = state.year;
   $("api-docs").textContent = `BASE=${base}
 SESSION=${id}
 
-# Read the planner (types + entries of a year)
+# ${t("api.read")}
 curl "$BASE/sessions/$SESSION?year=${y}"
 
-# Add "${t?.name ?? "Vacation"}" from Aug 3 to Aug 14, skipping weekends
+# ${t("api.add", { name: type?.name ?? t("api.ex_vacation") })}
 curl -X POST "$BASE/sessions/$SESSION/entries" \\
   -H "content-type: application/json" \\
   -d '{"action":"add","type":"${typeRef}","from":"${y}-08-03","to":"${y}-08-14","skipWeekends":true}'
 
-# Several operations at once (actions: add | remove | set | clear)
+# ${t("api.ops")}
 curl -X POST "$BASE/sessions/$SESSION/entries" \\
   -H "content-type: application/json" \\
   -d '{"ops":[
@@ -912,20 +917,43 @@ curl -X POST "$BASE/sessions/$SESSION/entries" \\
         {"action":"clear","from":"${y}-01-01","to":"${y}-01-06"}
       ]}'
 
-# Entry types
+# ${t("api.types")}
 curl "$BASE/sessions/$SESSION/types"
 curl -X POST "$BASE/sessions/$SESSION/types" -H "content-type: application/json" \\
-  -d '{"name":"Day care closed","color":"#8b5cf6","role":"needs_cover"}'
+  -d '{"name":"${t("api.ex_needs")}","color":"#8b5cf6","role":"needs_cover"}'
 curl -X PATCH "$BASE/sessions/$SESSION/types/${typeRef}" -H "content-type: application/json" \\
-  -d '{"name":"Vacation Sascha","color":"#22c55e"}'
+  -d '{"name":"${t("api.ex_rename")}","color":"#22c55e"}'
 curl -X DELETE "$BASE/sessions/$SESSION/types/<type-id>"
 
-# Calendar feed (read-only id works too). Optional: ?types=a,b&gaps=1
+# ${t("api.feed")}
 curl "$BASE/sessions/${state.session.readId}/calendar.ics"
 
-# New planner
-curl -X POST "$BASE/sessions" -H "content-type: application/json" -d '{"name":"Family ${y}"}'`;
+# ${t("api.new")}
+curl -X POST "$BASE/sessions" -H "content-type: application/json" \\
+  -d '{"name":"${t("api.ex_planner", { year: y })}"${lang === "en" ? "" : `,"lang":"${lang}"`}}'`;
   $("dlg-api").showModal();
+}
+
+// ---------------------------------------------------------------- language
+
+function renderLangSelect() {
+  const sel = $("lang");
+  sel.textContent = "";
+  for (const [code, name] of Object.entries(LANGS)) {
+    sel.append(new Option(name, code, false, code === lang));
+  }
+}
+
+/** Re-translates everything on screen after a language switch. */
+function relocalize() {
+  applyStatic();
+  setSync(...syncState);
+  if (!$("planner").hidden) {
+    buildGrid();
+    render();
+  } else if (!$("landing").hidden) {
+    showLanding();
+  }
 }
 
 // ---------------------------------------------------------------- landing / boot
@@ -937,7 +965,7 @@ function showLanding(message) {
   $("session-name").hidden = true;
   $("home-link").hidden = false;
   $("landing").hidden = false;
-  document.title = "Vacation Planner";
+  document.title = t("app.title");
   if (message) toast(message, 5000);
   $("config-warning").hidden = isConfigured();
 
@@ -950,9 +978,9 @@ function showLanding(message) {
     const a = document.createElement("a");
     a.href = pageUrl({ s: e.token });
     const name = document.createElement("span");
-    name.textContent = e.name + (e.readOnly ? " (view only)" : "");
+    name.textContent = e.name + (e.readOnly ? t("landing.view_only") : "");
     const when = document.createElement("small");
-    when.textContent = new Date(e.at).toLocaleDateString();
+    when.textContent = new Date(e.at).toLocaleDateString(lang);
     a.append(name, when);
     li.append(a);
     ul.append(li);
@@ -963,10 +991,10 @@ async function createPlanner() {
   const btn = $("btn-create");
   btn.disabled = true;
   try {
-    const data = await api.createSession();
+    const data = await api.createSession({ lang });
     location.href = pageUrl({ s: data.session.id });
   } catch (err) {
-    toast("Couldn't create a planner: " + err.message, 5000);
+    toast(t("toast.create_failed", { msg: err.message }), 5000);
     btn.disabled = false;
   }
 }
@@ -982,7 +1010,7 @@ async function openPlanner(token, year) {
   $("home-link").hidden = true;
   renderYearSelect();
   buildGrid();
-  setSync("Loading…");
+  setSync("sync.loading");
   await load();
   if (!state.session) return;
   rememberSession();
@@ -993,6 +1021,11 @@ async function openPlanner(token, year) {
 }
 
 function bind() {
+  renderLangSelect();
+  $("lang").addEventListener("change", (e) => {
+    setLang(e.target.value);
+    relocalize();
+  });
   $("btn-create").addEventListener("click", createPlanner);
   $("open-form").addEventListener("submit", (e) => {
     e.preventDefault();
@@ -1020,7 +1053,7 @@ function bind() {
       document.title = `${name} ${state.year}`;
       rememberSession();
     } catch (err) {
-      toast("Couldn't rename: " + err.message);
+      toast(t("toast.rename_failed", { msg: err.message }));
     }
   });
   $("session-name").addEventListener("keydown", (e) => e.key === "Enter" && e.target.blur());
@@ -1046,7 +1079,7 @@ function bind() {
         input.select();
         document.execCommand("copy");
       }
-      toast("Copied to clipboard");
+      toast(t("toast.copied"));
     });
   }
 
@@ -1075,6 +1108,7 @@ function bind() {
 }
 
 function boot() {
+  applyStatic();
   bind();
   const params = new URLSearchParams(location.search);
   const token = params.get("s");

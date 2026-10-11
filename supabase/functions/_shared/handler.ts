@@ -3,7 +3,7 @@
 // local dev server with an in-memory store.
 
 import { dateRange, isValidDate, isWeekend } from "./dates.ts";
-import { buildIcs } from "./ics.ts";
+import { buildIcs, type Lang } from "./ics.ts";
 import { type Role, ROLES, type SessionRow, type Store, type TypeRow } from "./store.ts";
 
 export const PRESET_TYPES: { id: string; name: string; color: string; role: Role }[] = [
@@ -11,6 +11,17 @@ export const PRESET_TYPES: { id: string; name: string; color: string; role: Role
   { id: "vacation", name: "Vacation", color: "#22c55e", role: "covers" },
   { id: "sick", name: "Sick", color: "#ef4444", role: "none" },
 ];
+
+const LANGS: Lang[] = ["en", "de"];
+const DEFAULT_SESSION_NAME: Record<Lang, string> = {
+  en: "Vacation planner",
+  de: "Urlaubsplaner",
+};
+/** Localized preset names by type id; ids, colors and roles stay the same. */
+const PRESET_NAMES: Record<Lang, Record<string, string>> = {
+  en: Object.fromEntries(PRESET_TYPES.map((t) => [t.id, t.name])),
+  de: { holiday: "Feiertag", vacation: "Urlaub", sick: "Krank" },
+};
 
 const MAX_TYPES = 50;
 const MAX_DAYS_PER_REQUEST = 4000;
@@ -75,6 +86,12 @@ function cleanRole(v: unknown): Role {
     throw new HttpError(400, `role must be one of ${ROLES.join(", ")}`);
   }
   return v as Role;
+}
+
+function cleanLang(v: unknown): Lang {
+  if (v === undefined) return "en";
+  if (!LANGS.includes(v as Lang)) throw new HttpError(400, "lang must be en or de");
+  return v as Lang;
 }
 
 function slug(name: string): string {
@@ -214,7 +231,8 @@ export function createHandler(store: Store) {
     if (parts.length === 1) {
       if (method !== "POST") throw new HttpError(405, "Method not allowed");
       const body = await readBody(req);
-      const name = body.name === undefined ? "Vacation planner" : cleanName(body.name);
+      const lang = cleanLang(body.lang);
+      const name = body.name === undefined ? DEFAULT_SESSION_NAME[lang] : cleanName(body.name);
       const now = new Date().toISOString();
       const session: SessionRow = {
         id: randomToken(20),
@@ -223,7 +241,7 @@ export function createHandler(store: Store) {
         created_at: now,
         updated_at: now,
       };
-      let presets = PRESET_TYPES;
+      let presets = PRESET_TYPES.map((t) => ({ ...t, name: PRESET_NAMES[lang][t.id] }));
       if (body.types !== undefined) {
         if (!Array.isArray(body.types)) throw new HttpError(400, "types must be an array");
         const taken = new Set<string>();
@@ -282,6 +300,7 @@ export function createHandler(store: Store) {
         entries,
         include,
         gaps: url.searchParams.get("gaps") === "1",
+        lang: url.searchParams.get("lang") === "de" ? "de" : "en",
       });
       return new Response(ics, {
         headers: {

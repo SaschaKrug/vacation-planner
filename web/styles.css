@@ -427,7 +427,12 @@ details li { margin: 6px 0; }
 .grid .head.corner { left: 0; z-index: 3; }
 
 /* Custom caret with breathing room instead of the browser's edge-hugging arrow */
-.year-nav select, .type-row select {
+.lang-select {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 12px;
+}
+.year-nav select, .type-row select, .lang-select {
   appearance: none;
   -webkit-appearance: none;
   background-color: var(--surface);
@@ -440,3 +445,4 @@ details li { margin: 6px 0; }
 }
 .year-nav select { padding-left: 10px; }
 .type-row select { padding-left: 10px; }
+.lang-select { padding-right: 30px; background-position: right 10px center; }
