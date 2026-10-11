@@ -14,65 +14,66 @@
   <header class="topbar">
     <div class="brand">
       <span class="logo" aria-hidden="true">📅</span>
-      <input id="session-name" class="session-name" aria-label="Planner name" maxlength="80" hidden>
-      <a id="home-link" class="home-link" href="./">Vacation Planner</a>
+      <input id="session-name" class="session-name" aria-label="Planner name" data-i18n-aria-label="top.planner_name" maxlength="80" hidden>
+      <a id="home-link" class="home-link" href="./" data-i18n="app.title">Vacation Planner</a>
     </div>
     <div class="year-nav" id="year-nav" hidden>
-      <button id="prev-year" class="icon-btn" title="Previous year (PageUp)" aria-label="Previous year">‹</button>
-      <select id="year" aria-label="Year"></select>
-      <button id="next-year" class="icon-btn" title="Next year (PageDown)" aria-label="Next year">›</button>
+      <button id="prev-year" class="icon-btn" title="Previous year (PageUp)" aria-label="Previous year" data-i18n-title="top.prev_year_title" data-i18n-aria-label="top.prev_year">‹</button>
+      <select id="year" aria-label="Year" data-i18n-aria-label="top.year"></select>
+      <button id="next-year" class="icon-btn" title="Next year (PageDown)" aria-label="Next year" data-i18n-title="top.next_year_title" data-i18n-aria-label="top.next_year">›</button>
     </div>
     <div class="actions" id="actions" hidden>
       <span id="sync-status" class="sync-status" aria-live="polite"></span>
-      <button id="btn-share" class="btn primary">Share<span class="long-label"> &amp; iCloud</span></button>
-      <button id="btn-api" class="btn">API</button>
-      <button id="btn-help" class="icon-btn" title="Keyboard shortcuts" aria-label="Help">?</button>
+      <button id="btn-share" class="btn primary" data-i18n="top.share">Share<span class="long-label"> &amp; iCloud</span></button>
+      <button id="btn-api" class="btn" data-i18n="top.api">API</button>
+      <button id="btn-help" class="icon-btn" title="Keyboard shortcuts" aria-label="Help" data-i18n-title="top.help_title" data-i18n-aria-label="top.help">?</button>
     </div>
+    <select id="lang" class="lang-select" aria-label="Language" data-i18n-aria-label="lang.label"></select>
   </header>
 
   <main id="landing" class="landing" hidden>
-    <h1>Plan the whole year at a glance</h1>
-    <p class="lead">Mark day-care closures, holidays and everybody's vacation in one shared year
+    <h1 data-i18n="landing.title">Plan the whole year at a glance</h1>
+    <p class="lead" data-i18n="landing.lead">Mark day-care closures, holidays and everybody's vacation in one shared year
       calendar, see which days still need cover, and subscribe to it from iCloud.
       No login – the link is the key.</p>
     <div class="landing-actions">
-      <button id="btn-create" class="btn primary big">Create a new planner</button>
+      <button id="btn-create" class="btn primary big" data-i18n="landing.create">Create a new planner</button>
     </div>
-    <p id="config-warning" class="warning" hidden>The backend isn't configured yet. Add the
+    <p id="config-warning" class="warning" hidden data-i18n="landing.config_warning">The backend isn't configured yet. Add the
       Supabase secrets to the repository and re-run the deploy workflow (see README).</p>
     <section id="recent" class="recent" hidden>
-      <h2>Recently opened on this device</h2>
+      <h2 data-i18n="landing.recent">Recently opened on this device</h2>
       <ul id="recent-list"></ul>
     </section>
     <form id="open-form" class="open-form">
-      <label for="open-input">Open an existing planner</label>
+      <label for="open-input" data-i18n="landing.open_label">Open an existing planner</label>
       <div class="row">
-        <input id="open-input" placeholder="Paste a planner link or id" autocomplete="off">
-        <button class="btn" type="submit">Open</button>
+        <input id="open-input" placeholder="Paste a planner link or id" data-i18n-placeholder="landing.open_placeholder" autocomplete="off">
+        <button class="btn" type="submit" data-i18n="landing.open">Open</button>
       </div>
     </form>
   </main>
 
   <main id="planner" class="planner" hidden>
-    <section class="toolbar" aria-label="Entry types">
+    <section class="toolbar" aria-label="Entry types" data-i18n-aria-label="toolbar.label">
       <div id="types" class="types"></div>
       <div class="toolbar-right">
-        <button id="btn-edit-types" class="btn small">Edit types</button>
-        <label class="check" title="Weekends are left out when filling, pasting or toggling ranges">
-          <input type="checkbox" id="skip-weekends"> Skip weekends
+        <button id="btn-edit-types" class="btn small" data-i18n="toolbar.edit_types">Edit types</button>
+        <label class="check" title="Weekends are left out when filling, pasting or toggling ranges" data-i18n-title="toolbar.skip_weekends_title">
+          <input type="checkbox" id="skip-weekends"> <span data-i18n="toolbar.skip_weekends">Skip weekends</span>
         </label>
         <button id="btn-range" class="btn small touch-only" aria-pressed="false"
-          title="Tap a start day, enable this, then tap the end day">Range select</button>
+          title="Tap a start day, enable this, then tap the end day" data-i18n-title="toolbar.range_title" data-i18n="toolbar.range">Range select</button>
       </div>
     </section>
     <div id="coverage" class="coverage" hidden></div>
-    <p id="readonly-banner" class="readonly-banner" hidden>View-only link – ask for the edit link to make changes.</p>
+    <p id="readonly-banner" class="readonly-banner" hidden data-i18n="readonly.banner">View-only link – ask for the edit link to make changes.</p>
     <div class="grid-wrap" id="grid-wrap">
-      <div id="grid" class="grid" role="grid" tabindex="0" aria-label="Year calendar"></div>
+      <div id="grid" class="grid" role="grid" tabindex="0" aria-label="Year calendar" data-i18n-aria-label="grid.label"></div>
     </div>
     <footer class="statusbar">
       <span id="selection-info">Click or drag over days to select them.</span>
-      <span class="hint">Then click a type or press <kbd>1</kbd>–<kbd>9</kbd> ·
+      <span class="hint" data-i18n="status.hint">Then click a type or press <kbd>1</kbd>–<kbd>9</kbd> ·
         <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy/paste · drag the ▪ handle to fill ·
         <kbd>Del</kbd> clear · <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo</span>
     </footer>
@@ -81,54 +82,54 @@
   <!-- Entry types editor -->
   <dialog id="dlg-types" class="dialog">
     <form method="dialog" class="dialog-head">
-      <h2>Entry types</h2>
-      <button class="icon-btn" aria-label="Close">✕</button>
+      <h2 data-i18n="types.title">Entry types</h2>
+      <button class="icon-btn" aria-label="Close" data-i18n-aria-label="close">✕</button>
     </form>
-    <p class="muted">Changes are saved immediately. The role decides how the coverage check works:</p>
+    <p class="muted" data-i18n="types.intro">Changes are saved immediately. The role decides how the coverage check works:</p>
     <ul class="roles-help">
-      <li><b>Needs cover</b> – e.g. “Day care closed”. A weekday with this entry and nothing that covers it is flagged as a gap.</li>
-      <li><b>Covers</b> – e.g. “Vacation Sascha”. Covers a “needs cover” day.</li>
-      <li><b>Day off</b> – e.g. “Holiday”. Covers everything and doesn't count as a used vacation day.</li>
-      <li><b>Normal</b> – just a color, no coverage logic.</li>
+      <li data-i18n="types.help_needs"><b>Needs cover</b> – e.g. “Day care closed”. A weekday with this entry and nothing that covers it is flagged as a gap.</li>
+      <li data-i18n="types.help_covers"><b>Covers</b> – e.g. “Vacation Sascha”. Covers a “needs cover” day.</li>
+      <li data-i18n="types.help_day_off"><b>Day off</b> – e.g. “Holiday”. Covers everything and doesn't count as a used vacation day.</li>
+      <li data-i18n="types.help_none"><b>Normal</b> – just a color, no coverage logic.</li>
     </ul>
     <div id="types-editor" class="types-editor"></div>
-    <button id="btn-add-type" class="btn">+ Add type</button>
+    <button id="btn-add-type" class="btn" data-i18n="types.add">+ Add type</button>
   </dialog>
 
   <!-- Share + iCloud -->
   <dialog id="dlg-share" class="dialog">
     <form method="dialog" class="dialog-head">
-      <h2>Share &amp; subscribe</h2>
-      <button class="icon-btn" aria-label="Close">✕</button>
+      <h2 data-i18n="share.title">Share &amp; subscribe</h2>
+      <button class="icon-btn" aria-label="Close" data-i18n-aria-label="close">✕</button>
     </form>
     <section id="share-edit">
-      <h3>Edit link</h3>
-      <p class="muted">Anyone with this link can view and change the planner. Bookmark it – it's the only key.</p>
-      <div class="copy-row"><input id="link-edit" readonly><button class="btn" data-copy="link-edit">Copy</button></div>
+      <h3 data-i18n="share.edit">Edit link</h3>
+      <p class="muted" data-i18n="share.edit_help">Anyone with this link can view and change the planner. Bookmark it – it's the only key.</p>
+      <div class="copy-row"><input id="link-edit" readonly><button class="btn" data-i18n="copy" data-copy="link-edit">Copy</button></div>
     </section>
     <section>
-      <h3>View-only link</h3>
-      <div class="copy-row"><input id="link-view" readonly><button class="btn" data-copy="link-view">Copy</button></div>
+      <h3 data-i18n="share.view">View-only link</h3>
+      <div class="copy-row"><input id="link-view" readonly><button class="btn" data-i18n="copy" data-copy="link-view">Copy</button></div>
     </section>
     <section>
-      <h3>Add to iCloud / Apple Calendar</h3>
-      <p class="muted">A read-only calendar feed. Apple Calendar checks it for changes regularly
+      <h3 data-i18n="share.icloud">Add to iCloud / Apple Calendar</h3>
+      <p class="muted" data-i18n="share.icloud_help">A read-only calendar feed. Apple Calendar checks it for changes regularly
         (choose “Every hour” or “Every 5 minutes” when subscribing on a Mac).</p>
       <fieldset class="feed-options">
-        <legend>Include</legend>
+        <legend data-i18n="share.include">Include</legend>
         <div id="feed-types" class="feed-types"></div>
-        <label class="check"><input type="checkbox" id="feed-gaps"> “⚠ Not covered” warnings</label>
+        <label class="check"><input type="checkbox" id="feed-gaps"> <span data-i18n="share.gaps">“⚠ Not covered” warnings</span></label>
       </fieldset>
-      <div class="copy-row"><input id="link-feed" readonly><button class="btn" data-copy="link-feed">Copy</button></div>
-      <p><a id="link-webcal" class="btn primary" href="#">Subscribe on this device</a></p>
+      <div class="copy-row"><input id="link-feed" readonly><button class="btn" data-i18n="copy" data-copy="link-feed">Copy</button></div>
+      <p><a id="link-webcal" class="btn primary" href="#" data-i18n="share.subscribe">Subscribe on this device</a></p>
       <details>
-        <summary>How to add it to iCloud</summary>
+        <summary data-i18n="share.howto">How to add it to iCloud</summary>
         <ol>
-          <li><b>iPhone / iPad:</b> tap “Subscribe on this device” above (or Settings → Apps → Calendar →
+          <li data-i18n="share.howto_ios"><b>iPhone / iPad:</b> tap “Subscribe on this device” above (or Settings → Apps → Calendar →
             Calendar Accounts → Add Account → Other → Add Subscribed Calendar, and paste the URL).</li>
-          <li><b>Mac:</b> Calendar → File → New Calendar Subscription…, paste the URL, set
+          <li data-i18n="share.howto_mac"><b>Mac:</b> Calendar → File → New Calendar Subscription…, paste the URL, set
             <i>Location</i> to <b>iCloud</b> so it syncs to all your devices, and pick an auto-refresh interval.</li>
-          <li>A subscription stored in iCloud (Mac, Location “iCloud”) appears on all your Apple devices
+          <li data-i18n="share.howto_sync">A subscription stored in iCloud (Mac, Location “iCloud”) appears on all your Apple devices
             and on iCloud.com.</li>
         </ol>
       </details>
@@ -139,9 +140,9 @@
   <dialog id="dlg-api" class="dialog wide">
     <form method="dialog" class="dialog-head">
       <h2>API</h2>
-      <button class="icon-btn" aria-label="Close">✕</button>
+      <button class="icon-btn" aria-label="Close" data-i18n-aria-label="close">✕</button>
     </form>
-    <p class="muted">Fill entries from scripts, shortcuts or other tools. Types can be referenced by
+    <p class="muted" data-i18n="api.intro">Fill entries from scripts, shortcuts or other tools. Types can be referenced by
       id or name. The session id in the URL is the access key.</p>
     <pre id="api-docs" class="code"></pre>
   </dialog>
@@ -149,21 +150,21 @@
   <!-- Help -->
   <dialog id="dlg-help" class="dialog">
     <form method="dialog" class="dialog-head">
-      <h2>How it works</h2>
-      <button class="icon-btn" aria-label="Close">✕</button>
+      <h2 data-i18n="help.title">How it works</h2>
+      <button class="icon-btn" aria-label="Close" data-i18n-aria-label="close">✕</button>
     </form>
     <table class="keys">
-      <tr><td>Click / drag</td><td>Select a day / a range of days (across months)</td></tr>
-      <tr><td><kbd>Shift</kbd> + click</td><td>Extend the selection</td></tr>
-      <tr><td><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + click</td><td>Add single days to the selection</td></tr>
-      <tr><td>Type button or <kbd>1</kbd>–<kbd>9</kbd></td><td>Toggle that entry on the selected days (a day can have several)</td></tr>
-      <tr><td><kbd>Del</kbd> / <kbd>Backspace</kbd></td><td>Clear the selected days</td></tr>
-      <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>X</kbd> / <kbd>V</kbd></td><td>Copy / cut / paste. Pasting onto a larger selection repeats the copied days to fill it.</td></tr>
-      <tr><td>Drag the ▪ handle</td><td>Repeat the selected days forwards or backwards</td></tr>
-      <tr><td>Arrow keys</td><td>Move (with <kbd>Shift</kbd>: extend the selection)</td></tr>
-      <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td>Undo / redo</td></tr>
-      <tr><td><kbd>G</kbd></td><td>Jump to the next day that still needs cover</td></tr>
-      <tr><td><kbd>Esc</kbd></td><td>Clear the selection</td></tr>
+      <tr><td data-i18n="help.click">Click / drag</td><td data-i18n="help.click_do">Select a day / a range of days (across months)</td></tr>
+      <tr><td data-i18n="help.shift"><kbd>Shift</kbd> + click</td><td data-i18n="help.shift_do">Extend the selection</td></tr>
+      <tr><td data-i18n="help.ctrl"><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + click</td><td data-i18n="help.ctrl_do">Add single days to the selection</td></tr>
+      <tr><td data-i18n="help.type">Type button or <kbd>1</kbd>–<kbd>9</kbd></td><td data-i18n="help.type_do">Toggle that entry on the selected days (a day can have several)</td></tr>
+      <tr><td data-i18n="help.del"><kbd>Del</kbd> / <kbd>Backspace</kbd></td><td data-i18n="help.del_do">Clear the selected days</td></tr>
+      <tr><td data-i18n="help.copy"><kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>X</kbd> / <kbd>V</kbd></td><td data-i18n="help.copy_do">Copy / cut / paste. Pasting onto a larger selection repeats the copied days to fill it.</td></tr>
+      <tr><td data-i18n="help.handle">Drag the ▪ handle</td><td data-i18n="help.handle_do">Repeat the selected days forwards or backwards</td></tr>
+      <tr><td data-i18n="help.arrows">Arrow keys</td><td data-i18n="help.arrows_do">Move (with <kbd>Shift</kbd>: extend the selection)</td></tr>
+      <tr><td data-i18n="help.undo"><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td data-i18n="help.undo_do">Undo / redo</td></tr>
+      <tr><td><kbd>G</kbd></td><td data-i18n="help.gap_do">Jump to the next day that still needs cover</td></tr>
+      <tr><td data-i18n="help.esc"><kbd>Esc</kbd></td><td data-i18n="help.esc_do">Clear the selection</td></tr>
     </table>
   </dialog>
 

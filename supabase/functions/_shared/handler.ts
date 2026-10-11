@@ -3,8 +3,15 @@
 // local dev server with an in-memory store.
 
 import { dateRange, isValidDate, isWeekend } from "./dates.ts";
-import { buildIcs } from "./ics.ts";
-import { type Role, ROLES, type SessionRow, type Store, type TypeRow } from "./store.ts";
+import { buildIcs, type Lang } from "./ics.ts";
+import {
+  type EntryRow,
+  type Role,
+  ROLES,
+  type SessionRow,
+  type Store,
+  type TypeRow,
+} from "./store.ts";
 
 export const PRESET_TYPES: { id: string; name: string; color: string; role: Role }[] = [
   { id: "holiday", name: "Holiday", color: "#f59e0b", role: "day_off" },
@@ -12,10 +19,23 @@ export const PRESET_TYPES: { id: string; name: string; color: string; role: Role
   { id: "sick", name: "Sick", color: "#ef4444", role: "none" },
 ];
 
+const LANGS: Lang[] = ["en", "de"];
+const DEFAULT_SESSION_NAME: Record<Lang, string> = {
+  en: "Vacation planner",
+  de: "Urlaubsplaner",
+};
+/** Localized preset names by type id; ids, colors and roles stay the same. */
+const PRESET_NAMES: Record<Lang, Record<string, string>> = {
+  en: Object.fromEntries(PRESET_TYPES.map((t) => [t.id, t.name])),
+  de: { holiday: "Feiertag", vacation: "Urlaub", sick: "Krank" },
+};
+
 const MAX_TYPES = 50;
 const MAX_DAYS_PER_REQUEST = 4000;
 const MAX_RANGE_DAYS = 3 * 366;
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+// Tokens come from randomToken(); the Supabase store relies on them being alphanumeric.
+const TOKEN_RE = /^[A-Za-z0-9]{10,64}$/;
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
 
 const CORS = {
@@ -77,6 +97,12 @@ function cleanRole(v: unknown): Role {
   return v as Role;
 }
 
+function cleanLang(v: unknown): Lang {
+  if (v === undefined) return "en";
+  if (!LANGS.includes(v as Lang)) throw new HttpError(400, "lang must be en or de");
+  return v as Lang;
+}
+
 function slug(name: string): string {
   return name.toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "")
     .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32) || "type";
@@ -97,8 +123,10 @@ function resolveType(types: TypeRow[], ref: unknown): TypeRow {
   return t;
 }
 
+type Range = { from?: string; to?: string };
+
 /** Range from ?year= or ?from=&to= query parameters. */
-function rangeFromQuery(url: URL): { from?: string; to?: string } {
+function rangeFromQuery(url: URL): Range {
   const year = url.searchParams.get("year");
   if (year) {
     if (!/^\d{4}$/.test(year)) throw new HttpError(400, "year must be YYYY");
@@ -114,6 +142,27 @@ function rangeFromQuery(url: URL): { from?: string; to?: string } {
 
 function publicType(t: TypeRow) {
   return { id: t.id, name: t.name, color: t.color, role: t.role, position: t.position };
+}
+
+function groupEntries(rows: EntryRow[]): Record<string, string[]> {
+  const entries: Record<string, string[]> = {};
+  for (const r of rows) (entries[r.day] ??= []).push(r.type_id);
+  return entries;
+}
+
+function sessionState(session: SessionRow, token: string, types: TypeRow[], rows: EntryRow[]) {
+  const readOnly = session.id !== token;
+  return {
+    session: {
+      ...(readOnly ? {} : { id: session.id }),
+      readId: session.read_id,
+      name: session.name,
+      readOnly,
+      updatedAt: session.updated_at,
+    },
+    types: types.map(publicType),
+    entries: groupEntries(rows),
+  };
 }
 
 type Op = {
@@ -164,8 +213,13 @@ function parseOp(raw: unknown, types: TypeRow[]): Op {
 }
 
 export function createHandler(store: Store) {
+  function checkToken(token: string) {
+    if (!TOKEN_RE.test(token)) throw new HttpError(404, "Session not found");
+  }
+
   async function loadSession(token: string, write: boolean): Promise<SessionRow> {
-    const session = token.length >= 10 ? await store.findSession(token) : null;
+    checkToken(token);
+    const session = await store.findSession(token);
     if (!session) throw new HttpError(404, "Session not found");
     if (write && session.id !== token) {
       throw new HttpError(403, "This is a read-only link");
@@ -173,26 +227,25 @@ export function createHandler(store: Store) {
     return session;
   }
 
-  async function sessionState(session: SessionRow, token: string, url: URL) {
-    const { from, to } = rangeFromQuery(url);
-    const [types, rows] = await Promise.all([
-      store.listTypes(session.id),
-      store.listEntries(session.id, from, to),
-    ]);
-    const entries: Record<string, string[]> = {};
-    for (const r of rows) (entries[r.day] ??= []).push(r.type_id);
-    const readOnly = session.id !== token;
-    return {
-      session: {
-        ...(readOnly ? {} : { id: session.id }),
-        readId: session.read_id,
-        name: session.name,
-        readOnly,
-        updatedAt: session.updated_at,
-      },
-      types: types.map(publicType),
-      entries,
-    };
+  /**
+   * Loads the session and runs `query` for its id. The query starts alongside the
+   * lookup on the guess that the token is the edit id (always true for writes); for
+   * a read-only id the guess is dropped and the query runs again with the real id.
+   */
+  async function loadWith<T>(
+    token: string,
+    write: boolean,
+    query: (sessionId: string) => Promise<T>,
+  ): Promise<[SessionRow, T]> {
+    checkToken(token);
+    const guess = query(token);
+    guess.catch(() => {}); // a dropped guess must not end up as an unhandled rejection
+    const session = await loadSession(token, write);
+    return [session, session.id === token ? await guess : await query(session.id)];
+  }
+
+  function listAll(sessionId: string, { from, to }: Range) {
+    return Promise.all([store.listTypes(sessionId), store.listEntries(sessionId, from, to)]);
   }
 
   async function route(req: Request): Promise<Response> {
@@ -213,8 +266,10 @@ export function createHandler(store: Store) {
 
     if (parts.length === 1) {
       if (method !== "POST") throw new HttpError(405, "Method not allowed");
+      rangeFromQuery(url); // validates the query even though a new session has no entries
       const body = await readBody(req);
-      const name = body.name === undefined ? "Vacation planner" : cleanName(body.name);
+      const lang = cleanLang(body.lang);
+      const name = body.name === undefined ? DEFAULT_SESSION_NAME[lang] : cleanName(body.name);
       const now = new Date().toISOString();
       const session: SessionRow = {
         id: randomToken(20),
@@ -223,7 +278,7 @@ export function createHandler(store: Store) {
         created_at: now,
         updated_at: now,
       };
-      let presets = PRESET_TYPES;
+      let presets = PRESET_TYPES.map((t) => ({ ...t, name: PRESET_NAMES[lang][t.id] }));
       if (body.types !== undefined) {
         if (!Array.isArray(body.types)) throw new HttpError(400, "types must be an array");
         const taken = new Set<string>();
@@ -236,23 +291,24 @@ export function createHandler(store: Store) {
       }
       const types = presets.map((t, i) => ({ ...t, session_id: session.id, position: i }));
       await store.createSession(session, types);
-      return json(await sessionState(session, session.id, url), 201);
+      return json(sessionState(session, session.id, types, []), 201);
     }
 
     const token = parts[1];
     const sub = parts[2];
 
     if (parts.length === 2) {
+      const range = rangeFromQuery(url);
       if (method === "GET") {
-        const session = await loadSession(token, false);
-        return json(await sessionState(session, token, url));
+        const [session, [types, rows]] = await loadWith(token, false, (id) => listAll(id, range));
+        return json(sessionState(session, token, types, rows));
       }
       if (method === "PATCH") {
-        const session = await loadSession(token, true);
-        const body = await readBody(req);
-        await store.updateSession(session.id, { name: cleanName(body.name) });
-        const updated = await loadSession(token, true);
-        return json(await sessionState(updated, token, url));
+        const [session, [types, rows]] = await loadWith(token, true, (id) => listAll(id, range));
+        const name = cleanName((await readBody(req)).name);
+        await store.updateSession(session.id, { name });
+        const updated = { ...session, name, updated_at: new Date().toISOString() };
+        return json(sessionState(updated, token, types, rows));
       }
       throw new HttpError(405, "Method not allowed");
     }
@@ -282,6 +338,7 @@ export function createHandler(store: Store) {
         entries,
         include,
         gaps: url.searchParams.get("gaps") === "1",
+        lang: url.searchParams.get("lang") === "de" ? "de" : "en",
       });
       return new Response(ics, {
         headers: {
@@ -294,12 +351,9 @@ export function createHandler(store: Store) {
     }
 
     if (sub === "types") {
-      if (parts.length === 3 && method === "GET") {
-        const session = await loadSession(token, false);
-        return json((await store.listTypes(session.id)).map(publicType));
-      }
-      const session = await loadSession(token, true);
-      const types = await store.listTypes(session.id);
+      const write = !(parts.length === 3 && method === "GET");
+      const [session, types] = await loadWith(token, write, (id) => store.listTypes(id));
+      if (!write) return json(types.map(publicType));
 
       if (parts.length === 3 && method === "POST") {
         if (types.length >= MAX_TYPES) throw new HttpError(400, "Too many entry types");
@@ -344,13 +398,12 @@ export function createHandler(store: Store) {
 
     if (sub === "entries" && parts.length === 3) {
       if (method === "GET") {
-        const session = await loadSession(token, false);
-        const state = await sessionState(session, token, url);
-        return json(state.entries);
+        const { from, to } = rangeFromQuery(url);
+        const [, rows] = await loadWith(token, false, (id) => store.listEntries(id, from, to));
+        return json(groupEntries(rows));
       }
       if (method === "POST") {
-        const session = await loadSession(token, true);
-        const types = await store.listTypes(session.id);
+        const [session, types] = await loadWith(token, true, (id) => store.listTypes(id));
         const body = await readBody(req);
         const rawOps = Array.isArray(body.ops) ? body.ops : [body];
         const ops = rawOps.map((o) => parseOp(o, types));

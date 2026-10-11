@@ -28,7 +28,7 @@ async function request(method, path, body) {
 const enc = encodeURIComponent;
 
 export const api = {
-  createSession: (name) => request("POST", "/sessions", name ? { name } : {}),
+  createSession: (body = {}) => request("POST", "/sessions", body),
   getSession: (token, year) => request("GET", `/sessions/${enc(token)}?year=${year}`),
   renameSession: (token, name) => request("PATCH", `/sessions/${enc(token)}`, { name }),
   addType: (token, type) => request("POST", `/sessions/${enc(token)}/types`, type),

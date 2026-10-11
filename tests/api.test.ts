@@ -40,6 +40,44 @@ Deno.test("creates a session with preset types", async () => {
   assert(res.data.session.id !== res.data.session.readId);
 });
 
+Deno.test("creates a German session with localized presets", async () => {
+  const { call } = setup();
+  const res = await call("POST", "/sessions", { lang: "de" });
+  assertEquals(res.status, 201);
+  assertEquals(res.data.session.name, "Urlaubsplaner");
+  assertEquals(res.data.types.map((t: any) => [t.id, t.name]), [
+    ["holiday", "Feiertag"],
+    ["vacation", "Urlaub"],
+    ["sick", "Krank"],
+  ]);
+  assertEquals(res.data.types.map((t: any) => t.role), ["day_off", "covers", "none"]);
+  // Ids stay stable, so API references keep working.
+  const entry = await call("POST", `/sessions/${res.data.session.id}/entries`, {
+    type: "vacation",
+    dates: ["2026-08-03"],
+  });
+  assertEquals(entry.status, 200);
+
+  const en = await call("POST", "/sessions", {});
+  assertEquals(en.data.session.name, "Vacation planner");
+
+  const custom = await call("POST", "/sessions", {
+    lang: "de",
+    types: [{ name: "Kita zu", color: "#8b5cf6", role: "needs_cover" }],
+  });
+  assertEquals(custom.data.session.name, "Urlaubsplaner");
+  assertEquals(custom.data.types.map((t: any) => t.name), ["Kita zu"]);
+});
+
+Deno.test("rejects an unknown lang", async () => {
+  const { call } = setup();
+  for (const lang of ["fr", "DE", 1, null]) {
+    const res = await call("POST", "/sessions", { lang });
+    assertEquals(res.status, 400);
+    assertEquals(res.data.error, "lang must be en or de");
+  }
+});
+
 Deno.test("adds, removes, sets and clears entries", async () => {
   const { call } = setup();
   const s = await newSession(call);
@@ -85,14 +123,50 @@ Deno.test("skipWeekends leaves Saturday and Sunday out", async () => {
 Deno.test("read-only id can read but not write", async () => {
   const { call } = setup();
   const s = await newSession(call);
-  const state = (await call("GET", `/sessions/${s.readId}`)).data;
+  await call("POST", `/sessions/${s.id}/entries`, { type: "vacation", dates: ["2026-01-05"] });
+  await call("POST", `/sessions/${s.id}/types`, { name: "Remote", color: "#123456" });
+
+  const state = (await call("GET", `/sessions/${s.readId}?year=2026`)).data;
   assertEquals(state.session.readOnly, true);
   assertEquals(state.session.id, undefined);
-  const res = await call("POST", `/sessions/${s.readId}/entries`, {
-    type: "vacation",
-    dates: ["2026-01-02"],
+  assertEquals(state.session.readId, s.readId);
+  assertEquals(state.types.map((t: any) => t.id), ["holiday", "vacation", "sick", "remote"]);
+  assertEquals(state.entries, { "2026-01-05": ["vacation"] });
+  assertEquals((await call("GET", `/sessions/${s.readId}/entries`)).data, {
+    "2026-01-05": ["vacation"],
   });
-  assertEquals(res.status, 403);
+  assertEquals((await call("GET", `/sessions/${s.readId}/types`)).data.length, 4);
+
+  const writes: [string, string, unknown?][] = [
+    ["POST", "/entries", { type: "vacation", dates: ["2026-01-02"] }],
+    ["PATCH", "", { name: "Hijacked" }],
+    ["POST", "/types", { name: "X", color: "#000000" }],
+    ["PATCH", "/types/vacation", { name: "X" }],
+    ["DELETE", "/types/vacation"],
+  ];
+  for (const [method, path, body] of writes) {
+    assertEquals((await call(method, `/sessions/${s.readId}${path}`, body)).status, 403);
+  }
+  const after = (await call("GET", `/sessions/${s.id}?year=2026`)).data;
+  assertEquals(after.session.name, "Family");
+  assertEquals(after.types.length, 4);
+  assertEquals(after.entries, { "2026-01-05": ["vacation"] });
+});
+
+Deno.test("rejects malformed tokens as not found", async () => {
+  const { call } = setup();
+  const s = await newSession(call);
+  for (const token of ["abc,def.ghij", "aaaaaaaaaa)", `${s.id},read_id.eq.x`, "short"]) {
+    const t = encodeURIComponent(token);
+    assertEquals((await call("GET", `/sessions/${t}`)).status, 404);
+    assertEquals((await call("GET", `/sessions/${t}/entries`)).status, 404);
+    assertEquals((await call("PATCH", `/sessions/${t}`, { name: "X" })).status, 404);
+    assertEquals(
+      (await call("POST", `/sessions/${t}/entries`, { type: "vacation", dates: ["2026-01-02"] }))
+        .status,
+      404,
+    );
+  }
 });
 
 Deno.test("validates input", async () => {
@@ -142,7 +216,12 @@ Deno.test("renames a session", async () => {
   const { call } = setup();
   const s = await newSession(call);
   const res = await call("PATCH", `/sessions/${s.id}`, { name: "Krug family" });
+  assertEquals(res.status, 200);
   assertEquals(res.data.session.name, "Krug family");
+  assertEquals(res.data.session.id, s.id);
+  assertEquals(res.data.session.readOnly, false);
+  assertEquals(res.data.types.length, 3);
+  assertEquals((await call("GET", `/sessions/${s.readId}`)).data.session.name, "Krug family");
 });
 
 Deno.test("serves an iCalendar feed with merged ranges and gaps", async () => {
@@ -172,6 +251,32 @@ Deno.test("serves an iCalendar feed with merged ranges and gaps", async () => {
     (await call("GET", `/sessions/${s.readId}/calendar.ics?types=vacation`)).data;
   assert(!onlyVacation.includes("Day care closed"));
   assertEquals(onlyVacation.match(/BEGIN:VEVENT/g).length, 1);
+});
+
+Deno.test("serves a German iCalendar feed with ?lang=de", async () => {
+  const { call } = setup();
+  const s = await newSession(call);
+  await call("POST", `/sessions/${s.id}/types`, {
+    name: "Kita zu",
+    color: "#8b5cf6",
+    role: "needs_cover",
+  });
+  await call("POST", `/sessions/${s.id}/entries`, {
+    ops: [
+      { action: "add", type: "kita-zu", from: "2026-08-06", to: "2026-08-07" },
+      { action: "add", type: "vacation", from: "2026-08-07", to: "2026-08-09" },
+    ],
+  });
+  const de: string = (await call("GET", `/sessions/${s.readId}/calendar.ics?gaps=1&lang=de`))
+    .data;
+  assert(de.includes("SUMMARY:⚠ Nicht abgedeckt: Kita zu\r\n"));
+  assert(de.includes("DESCRIPTION:Vacation: 3 Tage (1 Arbeitstag)\r\n"));
+
+  // Unknown languages fall back to English instead of breaking the feed.
+  const fallback = await call("GET", `/sessions/${s.readId}/calendar.ics?gaps=1&lang=xx`);
+  assertEquals(fallback.status, 200);
+  assert(fallback.data.includes("SUMMARY:⚠ Not covered: Kita zu\r\n"));
+  assert(fallback.data.includes("DESCRIPTION:Vacation: 3 days (1 workdays)\r\n"));
 });
 
 Deno.test("answers CORS preflight", async () => {
