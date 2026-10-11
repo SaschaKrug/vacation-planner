@@ -19,6 +19,8 @@ closures, with a coverage check, a REST API and an iCloud / Apple Calendar feed.
 - **iCloud:** *Share & iCloud* → *Subscribe on this device*, or on a Mac: Calendar → File →
   New Calendar Subscription → paste the feed URL → Location **iCloud**. The feed uses the
   view-only id, so it never exposes the edit link.
+- **English and German:** the language follows the browser and can be switched at the top right.
+  New planners get default types in that language, and the calendar feed uses it for its texts.
 
 ## Architecture
 
@@ -75,7 +77,7 @@ key; the view-only id can only read. Types can be referenced by id or by name
 
 | Method & path | Description |
 | --- | --- |
-| `POST /sessions` | Create a planner. Body (optional): `{"name": "...", "types": [{"name","color","role"}]}` |
+| `POST /sessions` | Create a planner. Body (optional): `{"name": "...", "types": [{"name","color","role"}]}`; `"lang": "de"` gives German default types and name |
 | `GET /sessions/{id}?year=2026` | Planner, types and entries (`?from=&to=` also works; no filter = all) |
 | `PATCH /sessions/{id}` | Rename: `{"name": "..."}` |
 | `GET /sessions/{id}/entries?year=2026` | `{"2026-08-03": ["vacation", "day-care-closed"], ...}` |
@@ -84,7 +86,7 @@ key; the view-only id can only read. Types can be referenced by id or by name
 | `POST /sessions/{id}/types` | Add a type: `{"name", "color": "#rrggbb", "role"}` |
 | `PATCH /sessions/{id}/types/{type}` | Change `name`, `color`, `role`, `position` |
 | `DELETE /sessions/{id}/types/{type}` | Delete a type and all its entries |
-| `GET /sessions/{id}/calendar.ics` | iCalendar feed. `?types=a,b` filters, `?gaps=1` adds “⚠ Not covered” events, `?name=` overrides the calendar name |
+| `GET /sessions/{id}/calendar.ics` | iCalendar feed. `?types=a,b` filters, `?gaps=1` adds “⚠ Not covered” events, `?name=` overrides the calendar name, `?lang=de` German event texts |
 
 Roles: `none`, `needs_cover`, `covers`, `day_off`.
 

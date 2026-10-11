@@ -3,12 +3,7 @@
 
 const DAY_MS = 86_400_000;
 
-export const ROLE_LABELS = {
-  none: "Normal",
-  needs_cover: "Needs cover",
-  covers: "Covers",
-  day_off: "Day off",
-};
+export const ROLES = ["none", "needs_cover", "covers", "day_off"];
 
 export const PALETTE = [
   "#3b82f6",
