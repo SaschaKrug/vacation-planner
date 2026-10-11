@@ -1,0 +1,30 @@
+{
+  "tasks": {
+    "dev": "deno run --allow-net --allow-read --allow-env dev/server.ts",
+    "test": "deno test --allow-read tests/",
+    "check": "deno check supabase/functions/api/index.ts dev/server.ts && deno lint && deno fmt --check"
+  },
+  "fmt": {
+    "lineWidth": 100,
+    "exclude": [
+      "README.md",
+      "supabase/migrations/",
+      "web/index.html",
+      "web/styles.css"
+    ]
+  },
+  "lint": {
+    "exclude": [
+      "web/config.js"
+    ],
+    "rules": {
+      "exclude": [
+        "no-explicit-any",
+        "no-import-prefix",
+        "no-window",
+        "no-window-prefix"
+      ]
+    }
+  },
+  "lock": false
+}
