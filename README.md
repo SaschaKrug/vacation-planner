@@ -3,7 +3,7 @@
 A shared year calendar for planning vacation, public holidays, sick days and day-care
 closures, with a coverage check, a REST API and an iCloud / Apple Calendar feed.
 
-**Live:** https://saschakrug.github.io/vacation-planner/
+**Live:** https://vacation-planner.fa-krug.de/
 
 - All days of a year as 12 rows × 31 days; pick the year at the top.
 - Your own entry types (name + color). New planners start with *Holiday*, *Vacation* and *Sick*.
