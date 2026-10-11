@@ -63,6 +63,8 @@ const STRINGS = {
     "chip.toggle_hint": "\nClick (or press {key}) to toggle on the selected days",
     "chip.count": "{n}d",
     "fill.handle": "Drag to repeat the selected days",
+    "fill.count": ({ n }) => `Fill ${n} ${s(n, "day", "days")}`,
+    "fill.drag_past": "Drag past the selection to repeat it",
     "coverage.gaps": ({ n, names }) =>
       `⚠ ${n} ${s(n, "weekday", "weekdays")} with “${names}” not covered yet`,
     "coverage.next": "Next gap →",
@@ -81,6 +83,7 @@ const STRINGS = {
     "sync.offline": "Offline",
     "sync.retrying": "Offline – retrying",
     "sync.loading": "Loading…",
+    "sync.updating": "Updating…",
     "toast.save_failed": "Couldn't save: {msg}",
     "toast.load_failed": "Couldn't load: {msg}",
     "toast.not_found": "This planner doesn't exist (anymore). Check the link.",
@@ -240,6 +243,8 @@ const STRINGS = {
       "\nKlicken (oder {key} drücken), um sie auf den ausgewählten Tagen umzuschalten",
     "chip.count": "{n} T",
     "fill.handle": "Ziehen, um die ausgewählten Tage zu wiederholen",
+    "fill.count": ({ n }) => `${n} ${s(n, "Tag", "Tage")} füllen`,
+    "fill.drag_past": "Über die Auswahl hinaus ziehen, um sie zu wiederholen",
     "coverage.gaps": ({ n, names }) =>
       `⚠ ${n} ${s(n, "Wochentag", "Wochentage")} mit „${names}“ noch nicht abgedeckt`,
     "coverage.next": "Nächste Lücke →",
@@ -256,6 +261,7 @@ const STRINGS = {
     "sync.offline": "Offline",
     "sync.retrying": "Offline – neuer Versuch",
     "sync.loading": "Lädt…",
+    "sync.updating": "Aktualisiert…",
     "toast.save_failed": "Speichern fehlgeschlagen: {msg}",
     "toast.load_failed": "Laden fehlgeschlagen: {msg}",
     "toast.not_found": "Diesen Planer gibt es nicht (mehr). Prüfe den Link.",
