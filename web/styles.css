@@ -729,44 +729,9 @@ details li { margin: 6px 0; }
 .grid .head.corner { left: 0; z-index: 3; border-right: 1px solid var(--border); }
 
 /* ---------- narrow screens ---------- */
-/* The year turns sideways: months become columns and days rows, so all 12 months fit the
-   width and the page scrolls vertically. The DOM order (corner, 31 day heads, then each month
-   label + its 31 cells) flows column by column. Must match TRANSPOSED in app.js. */
 @media (max-width: 820px) {
   .topbar { position: static; }
   .planner { display: flex; flex-direction: column; padding-bottom: 0; }
-  .grid-wrap { overflow: visible; overflow: clip; } /* not a scroll container: month labels stick to the viewport */
-  .grid {
-    grid-template-columns: 26px repeat(12, minmax(0, 1fr));
-    grid-template-rows: auto repeat(31, var(--cell-h));
-    grid-auto-flow: column;
-    min-width: 0;
-  }
-  /* Transposed, the day heads form the first column and each month label tops its column. */
-  .grid .head {
-    position: static;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    border-bottom: 1px solid var(--line);
-    border-right: 1px solid var(--border);
-  }
-  .grid .head.corner, .grid .month { position: sticky; top: 0; z-index: 3; }
-  .grid .head.corner { border-bottom-color: var(--border); }
-  .grid .month {
-    justify-content: center;
-    padding: 6px 0;
-    font-size: 11px;
-    border-right: 0;
-    border-left: 1px solid var(--line);
-    border-bottom: 1px solid var(--border);
-  }
-  .grid .month.is-today::before { display: none; }
-  .grid > :nth-last-child(-n + 32) { border-bottom: 1px solid var(--line); }
-  .grid > :nth-child(32n) { border-bottom: 0; } /* day 31 closes each column */
-  .grid .month + .cell { border-left: 1px solid var(--line); }
-  .cell { scroll-margin: 40px 0 140px; }
 
   /* Entry types stay within thumb reach while scrolling through the year. */
   .toolbar {
@@ -791,9 +756,7 @@ details li { margin: 6px 0; }
 }
 
 @media (max-width: 640px) {
-  :root { --cell-h: 44px; } /* comfortable tap targets; the page scrolls vertically anyway */
   .statusbar .hint { display: none; }
-  .cell .note-icon { font-size: 15px; transform: translate(-50%, -36%); }
   .emoji-grid { grid-template-columns: repeat(5, 1fr); }
   .emoji-btn { height: 44px; }
 
@@ -817,15 +780,45 @@ details li { margin: 6px 0; }
   #btn-share, #btn-api, #btn-help { order: 5; }
   .long-label { display: none; }
 
-  .planner { padding: 8px 8px 0; }
-  /* The calendar runs edge to edge so the 12 month columns get every pixel. */
-  .grid-wrap { margin: 0 -8px; border-left: 0; border-right: 0; border-radius: 0; box-shadow: none; }
-  .grid { grid-template-columns: 26px repeat(12, minmax(0, 1fr)); }
-  .grid .head { font-size: 13px; font-weight: 600; color: var(--text); }
+  .planner { padding: 8px 8px 0; container-type: inline-size; }
+  /* The calendar runs edge to edge and shows a window of 5 days × 5 months with square
+     cells; the rest of the year scrolls inside it, the day numbers and month names stay put. */
+  .grid-wrap {
+    --month-w: 46px;
+    --head-h: 30px;
+    --cell-w: calc((100cqi + 16px - var(--month-w)) / 5); /* 100cqi + 16px = the planner's full width */
+    --cell-h: var(--cell-w);
+    margin: 0 -8px;
+    border-left: 0;
+    border-right: 0;
+    border-radius: 0;
+    box-shadow: none;
+    overflow: auto;
+    overscroll-behavior: contain;
+    max-height: calc(var(--head-h) + 5 * var(--cell-h) + 2px);
+    scroll-padding: var(--head-h) 0 0 var(--month-w);
+  }
+  .grid {
+    grid-template-columns: var(--month-w) repeat(31, var(--cell-w));
+    min-width: calc(var(--month-w) + 31 * var(--cell-w)); /* sticky labels need the full-size grid box */
+  }
+  .grid .head {
+    z-index: 2; /* stays above the cells scrolling under it */
+    height: var(--head-h);
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+  }
   .grid .head.is-today { color: var(--accent); }
-  .grid .month { padding: 8px 0; font-size: 13px; }
-  .cell .wd { top: 4px; left: 4px; font-size: 10.5px; }
-  .cell .fills { inset: 1.5px; }
+  .grid .month { padding-left: 12px; font-size: 13px; }
+  .grid .month.is-today::before { margin-left: -9px; }
+  .cell { scroll-margin: 0; }
+  .cell .wd { top: 5px; left: 5px; font-size: 11px; }
+  .cell .note-icon { font-size: 20px; }
 
   .toolbar { margin: 8px -8px 0; padding-left: 8px; padding-right: 8px; }
   /* One swipeable row of type chips instead of several wrapped rows. */
