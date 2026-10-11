@@ -31,7 +31,7 @@ const PRESET_NAMES: Record<Lang, Record<string, string>> = {
   de: { holiday: "Feiertag", vacation: "Urlaub", sick: "Krank" },
 };
 
-const MAX_TYPES = 50;
+const MAX_TYPES = 50; // per year
 const MAX_DAYS_PER_REQUEST = 4000;
 const MAX_RANGE_DAYS = 3 * 366;
 const MAX_ICON = 16; // UTF-16 code units: enough for flags and ZWJ emoji
@@ -100,6 +100,24 @@ function cleanRole(v: unknown): Role {
   return v as Role;
 }
 
+function cleanYear(v: unknown, field = "year"): number {
+  const s = typeof v === "number" ? String(v) : v;
+  if (typeof s !== "string" || !/^\d{4}$/.test(s)) {
+    throw new HttpError(400, `${field} must be YYYY`);
+  }
+  return Number(s);
+}
+
+function currentYear(): number {
+  return new Date().getUTCFullYear();
+}
+
+/** Year a types request is about: `?year=`, else the body's "year", else the current year. */
+function typesYear(url: URL, body: Record<string, unknown> = {}): number {
+  const v = url.searchParams.get("year") ?? body.year;
+  return v === undefined ? currentYear() : cleanYear(v);
+}
+
 function cleanLang(v: unknown): Lang {
   if (v === undefined) return "en";
   if (!LANGS.includes(v as Lang)) throw new HttpError(400, "lang must be en or de");
@@ -117,14 +135,16 @@ function uniqueId(base: string, taken: Set<string>): string {
   return id;
 }
 
-/** Resolves a type reference given by id or (case-insensitive) name. */
-function resolveType(types: TypeRow[], ref: unknown): TypeRow {
+/** Resolves a type reference given by id or (case-insensitive) name among a year's types. */
+function resolveType(types: TypeRow[], ref: unknown, year: number): TypeRow {
   if (typeof ref !== "string") throw new HttpError(400, "type must be a string");
-  const t = types.find((t) => t.id === ref) ??
-    types.find((t) => t.name.toLowerCase() === ref.trim().toLowerCase());
-  if (!t) throw new HttpError(404, `Unknown entry type "${ref}"`);
+  const t = types.find((t) => t.year === year && t.id === ref) ??
+    types.find((t) => t.year === year && t.name.toLowerCase() === ref.trim().toLowerCase());
+  if (!t) throw new HttpError(404, `Unknown entry type "${ref}" in ${year}`);
   return t;
 }
+
+const yearOf = (day: string) => Number(day.slice(0, 4));
 
 type Range = { from?: string; to?: string };
 
@@ -144,7 +164,19 @@ function rangeFromQuery(url: URL): Range {
 }
 
 function publicType(t: TypeRow) {
-  return { id: t.id, name: t.name, color: t.color, role: t.role, position: t.position };
+  return {
+    id: t.id,
+    year: t.year,
+    name: t.name,
+    color: t.color,
+    role: t.role,
+    position: t.position,
+  };
+}
+
+/** Types of the years a range touches (all years without a range). */
+function typesIn(types: TypeRow[], { from, to }: Range): TypeRow[] {
+  return types.filter((t) => !(from && t.year < yearOf(from)) && !(to && t.year > yearOf(to)));
 }
 
 function groupEntries(rows: EntryRow[]): Record<string, string[]> {
@@ -157,10 +189,15 @@ function notesMap(rows: NoteRow[]): Record<string, { icon: string; comment: stri
   return Object.fromEntries(rows.map((n) => [n.day, { icon: n.icon, comment: n.comment }]));
 }
 
+/**
+ * The planner as the app loads it. `types` are all types of the session; the state holds
+ * those of the range's years, plus `typeYears`: every year that has types of its own.
+ */
 function sessionState(
   session: SessionRow,
   token: string,
   types: TypeRow[],
+  range: Range,
   rows: EntryRow[],
   notes: NoteRow[],
 ) {
@@ -173,7 +210,8 @@ function sessionState(
       readOnly,
       updatedAt: session.updated_at,
     },
-    types: types.map(publicType),
+    types: typesIn(types, range).map(publicType),
+    typeYears: [...new Set(types.map((t) => t.year))].sort((a, b) => a - b),
     entries: groupEntries(rows),
     notes: notesMap(notes),
   };
@@ -211,8 +249,9 @@ function parseDays(o: Record<string, unknown>): string[] {
 
 type Op = {
   action: "add" | "remove" | "set" | "clear";
-  types: string[];
   days: string[];
+  /** The days split by year, each with the type ids its references resolve to in that year. */
+  byYear: { types: string[]; days: string[] }[];
 };
 
 function parseOp(raw: unknown, types: TypeRow[]): Op {
@@ -230,8 +269,19 @@ function parseOp(raw: unknown, types: TypeRow[]): Op {
   if ((action === "add" || action === "remove") && refs.length === 0) {
     throw new HttpError(400, `"${action}" needs "type" or "types"`);
   }
-  const typeIds = [...new Set(refs.map((r) => resolveType(types, r).id))];
-  return { action: action as Op["action"], types: typeIds, days: parseDays(o) };
+  const days = parseDays(o);
+  // Every year has its own types, so the same name may stand for a different id per year.
+  const years = new Map<number, string[]>();
+  for (const day of days) {
+    const list = years.get(yearOf(day)) ?? [];
+    list.push(day);
+    years.set(yearOf(day), list);
+  }
+  const byYear = [...years].map(([year, days]) => ({
+    types: [...new Set(refs.map((r) => resolveType(types, r, year).id))],
+    days,
+  }));
+  return { action: action as Op["action"], days, byYear };
 }
 
 type NoteOp = { icon: string; comment: string; days: string[] };
@@ -335,6 +385,7 @@ export function createHandler(store: Store) {
       rangeFromQuery(url); // validates the query even though a new session has no entries
       const body = await readBody(req);
       const lang = cleanLang(body.lang);
+      const year = body.year === undefined ? currentYear() : cleanYear(body.year);
       const name = body.name === undefined ? DEFAULT_SESSION_NAME[lang] : cleanName(body.name);
       const now = new Date().toISOString();
       const session: SessionRow = {
@@ -355,9 +406,9 @@ export function createHandler(store: Store) {
           return { id, name: n, color: cleanColor(t.color), role: cleanRole(t.role) };
         });
       }
-      const types = presets.map((t, i) => ({ ...t, session_id: session.id, position: i }));
+      const types = presets.map((t, i) => ({ ...t, session_id: session.id, year, position: i }));
       await store.createSession(session, types);
-      return json(sessionState(session, session.id, types, [], []), 201);
+      return json(sessionState(session, session.id, types, {}, [], []), 201);
     }
 
     const token = parts[1];
@@ -371,7 +422,7 @@ export function createHandler(store: Store) {
           false,
           (id) => listAll(id, range),
         );
-        return json(sessionState(session, token, types, rows, notes));
+        return json(sessionState(session, token, types, range, rows, notes));
       }
       if (method === "PATCH") {
         const [session, [types, rows, notes]] = await loadWith(
@@ -382,7 +433,7 @@ export function createHandler(store: Store) {
         const name = cleanName((await readBody(req)).name);
         await store.updateSession(session.id, { name });
         const updated = { ...session, name, updated_at: new Date().toISOString() };
-        return json(sessionState(updated, token, types, rows, notes));
+        return json(sessionState(updated, token, types, range, rows, notes));
       }
       throw new HttpError(405, "Method not allowed");
     }
@@ -401,12 +452,16 @@ export function createHandler(store: Store) {
         list.push(r.type_id);
         entries.set(r.day, list);
       }
+      // A filter matches types by id or name in every year.
       const typesParam = url.searchParams.get("types");
-      const include = typesParam
-        ? new Set(
-          typesParam.split(",").filter(Boolean).map((ref) => resolveType(types, ref).id),
-        )
-        : undefined;
+      const include = typesParam ? new Set<TypeRow>() : undefined;
+      for (const ref of typesParam?.split(",").filter(Boolean) ?? []) {
+        const matches = types.filter((t) =>
+          t.id === ref || t.name.toLowerCase() === ref.trim().toLowerCase()
+        );
+        if (!matches.length) throw new HttpError(404, `Unknown entry type "${ref}"`);
+        for (const t of matches) include!.add(t);
+      }
       const ics = buildIcs({
         calendarName: url.searchParams.get("name") || session.name,
         uidPrefix: session.read_id,
@@ -429,29 +484,48 @@ export function createHandler(store: Store) {
 
     if (sub === "types") {
       const write = !(parts.length === 3 && method === "GET");
-      const [session, types] = await loadWith(token, write, (id) => store.listTypes(id));
+      const [session, all] = await loadWith(token, write, (id) => store.listTypes(id));
+      const body = write ? await readBody(req) : {};
+
+      if (parts.length === 4 && parts[3] === "copy" && method === "POST") {
+        // Copies a year's types into another year; types the target already has are kept.
+        const from = cleanYear(body.from, "from");
+        const to = cleanYear(body.to, "to");
+        const source = all.filter((t) => t.year === from);
+        if (!source.length) throw new HttpError(404, `${from} has no entry types`);
+        const target = all.filter((t) => t.year === to);
+        const taken = new Set(target.map((t) => t.id));
+        let position = target.reduce((m, t) => Math.max(m, t.position + 1), 0);
+        const copies = source.filter((t) => !taken.has(t.id))
+          .slice(0, Math.max(0, MAX_TYPES - target.length))
+          .map((t) => ({ ...t, year: to, position: position++ }));
+        await store.upsertTypes(copies);
+        return json([...target, ...copies].map(publicType));
+      }
+
+      const year = typesYear(url, body);
+      const types = all.filter((t) => t.year === year);
       if (!write) return json(types.map(publicType));
 
       if (parts.length === 3 && method === "POST") {
         if (types.length >= MAX_TYPES) throw new HttpError(400, "Too many entry types");
-        const body = await readBody(req);
         const name = cleanName(body.name);
         const type: TypeRow = {
           session_id: session.id,
+          year,
           id: uniqueId(slug(name), new Set(types.map((t) => t.id))),
           name,
           color: cleanColor(body.color),
           role: cleanRole(body.role),
           position: types.reduce((m, t) => Math.max(m, t.position + 1), 0),
         };
-        await store.upsertType(type);
+        await store.upsertTypes([type]);
         return json(publicType(type), 201);
       }
 
       if (parts.length === 4) {
-        const type = resolveType(types, parts[3]);
+        const type = resolveType(types, parts[3], year);
         if (method === "PATCH") {
-          const body = await readBody(req);
           const next = { ...type };
           if (body.name !== undefined) next.name = cleanName(body.name);
           if (body.color !== undefined) next.color = cleanColor(body.color);
@@ -462,12 +536,12 @@ export function createHandler(store: Store) {
             }
             next.position = body.position as number;
           }
-          await store.upsertType(next);
+          await store.upsertTypes([next]);
           return json(publicType(next));
         }
         if (method === "DELETE") {
-          await store.deleteType(session.id, type.id);
-          return json({ deleted: type.id });
+          await store.deleteType(session.id, year, type.id);
+          return json({ deleted: type.id, year });
         }
       }
       throw new HttpError(405, "Method not allowed");
@@ -483,17 +557,19 @@ export function createHandler(store: Store) {
         const [session, types] = await loadWith(token, true, (id) => store.listTypes(id));
         const { ops, total } = parseOps(await readBody(req), (o) => parseOp(o, types));
 
-        for (const op of ops) {
-          if (op.action === "clear" || op.action === "set") {
-            await store.removeEntries(session.id, op.days);
-          } else if (op.action === "remove") {
-            await store.removeEntries(session.id, op.days, op.types);
-          }
-          if ((op.action === "add" || op.action === "set") && op.types.length) {
-            await store.addEntries(
-              session.id,
-              op.days.flatMap((day) => op.types.map((type_id) => ({ day, type_id }))),
-            );
+        for (const { action, byYear } of ops) {
+          for (const { types, days } of byYear) {
+            if (action === "clear" || action === "set") {
+              await store.removeEntries(session.id, days);
+            } else if (action === "remove") {
+              await store.removeEntries(session.id, days, types);
+            }
+            if ((action === "add" || action === "set") && types.length) {
+              await store.addEntries(
+                session.id,
+                days.flatMap((day) => types.map((type_id) => ({ day, type_id }))),
+              );
+            }
           }
         }
         return json({ ok: true, ops: ops.length, days: total });

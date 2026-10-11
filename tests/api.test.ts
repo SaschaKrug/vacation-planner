@@ -25,7 +25,7 @@ function setup() {
 }
 
 async function newSession(call: ReturnType<typeof setup>["call"]) {
-  const res = await call("POST", "/sessions", { name: "Family" });
+  const res = await call("POST", "/sessions", { name: "Family", year: 2026 });
   assertEquals(res.status, 201);
   return res.data.session as { id: string; readId: string };
 }
@@ -35,6 +35,10 @@ Deno.test("creates a session with preset types", async () => {
   const res = await call("POST", "/sessions", {});
   assertEquals(res.status, 201);
   assertEquals(res.data.types.map((t: any) => t.name), ["Holiday", "Vacation", "Sick"]);
+  // Without a year, the presets go into the current year.
+  const year = new Date().getUTCFullYear();
+  assertEquals(res.data.types.map((t: any) => t.year), [year, year, year]);
+  assertEquals(res.data.typeYears, [year]);
   assertEquals(res.data.session.readOnly, false);
   assertMatch(res.data.session.id, /^[A-Za-z0-9]{20}$/);
   assert(res.data.session.id !== res.data.session.readId);
@@ -42,7 +46,7 @@ Deno.test("creates a session with preset types", async () => {
 
 Deno.test("creates a German session with localized presets", async () => {
   const { call } = setup();
-  const res = await call("POST", "/sessions", { lang: "de" });
+  const res = await call("POST", "/sessions", { lang: "de", year: 2026 });
   assertEquals(res.status, 201);
   assertEquals(res.data.session.name, "Urlaubsplaner");
   assertEquals(res.data.types.map((t: any) => [t.id, t.name]), [
@@ -124,7 +128,7 @@ Deno.test("read-only id can read but not write", async () => {
   const { call } = setup();
   const s = await newSession(call);
   await call("POST", `/sessions/${s.id}/entries`, { type: "vacation", dates: ["2026-01-05"] });
-  await call("POST", `/sessions/${s.id}/types`, { name: "Remote", color: "#123456" });
+  await call("POST", `/sessions/${s.id}/types`, { name: "Remote", color: "#123456", year: 2026 });
 
   const state = (await call("GET", `/sessions/${s.readId}?year=2026`)).data;
   assertEquals(state.session.readOnly, true);
@@ -135,14 +139,15 @@ Deno.test("read-only id can read but not write", async () => {
   assertEquals((await call("GET", `/sessions/${s.readId}/entries`)).data, {
     "2026-01-05": ["vacation"],
   });
-  assertEquals((await call("GET", `/sessions/${s.readId}/types`)).data.length, 4);
+  assertEquals((await call("GET", `/sessions/${s.readId}/types?year=2026`)).data.length, 4);
 
   const writes: [string, string, unknown?][] = [
     ["POST", "/entries", { type: "vacation", dates: ["2026-01-02"] }],
     ["PATCH", "", { name: "Hijacked" }],
     ["POST", "/types", { name: "X", color: "#000000" }],
-    ["PATCH", "/types/vacation", { name: "X" }],
-    ["DELETE", "/types/vacation"],
+    ["PATCH", "/types/vacation?year=2026", { name: "X" }],
+    ["DELETE", "/types/vacation?year=2026"],
+    ["POST", "/types/copy", { from: 2026, to: 2027 }],
   ];
   for (const [method, path, body] of writes) {
     assertEquals((await call(method, `/sessions/${s.readId}${path}`, body)).status, 403);
@@ -186,17 +191,18 @@ Deno.test("validates input", async () => {
 Deno.test("manages entry types", async () => {
   const { call } = setup();
   const s = await newSession(call);
-  const created = await call("POST", `/sessions/${s.id}/types`, {
+  const created = await call("POST", `/sessions/${s.id}/types?year=2026`, {
     name: "Day care closed",
     color: "#8B5CF6",
     role: "needs_cover",
   });
   assertEquals(created.status, 201);
   assertEquals(created.data.id, "day-care-closed");
+  assertEquals(created.data.year, 2026);
   assertEquals(created.data.color, "#8b5cf6");
   assertEquals(created.data.position, 3);
 
-  const renamed = await call("PATCH", `/sessions/${s.id}/types/vacation`, {
+  const renamed = await call("PATCH", `/sessions/${s.id}/types/vacation?year=2026`, {
     name: "Vacation Dad",
   });
   assertEquals(renamed.data.name, "Vacation Dad");
@@ -206,7 +212,7 @@ Deno.test("manages entry types", async () => {
     dates: ["2026-03-02"],
   });
 
-  await call("DELETE", `/sessions/${s.id}/types/vacation`);
+  await call("DELETE", `/sessions/${s.id}/types/vacation?year=2026`);
   const state = (await call("GET", `/sessions/${s.id}`)).data;
   assertEquals(state.types.map((t: any) => t.id), ["holiday", "sick", "day-care-closed"]);
   assertEquals(state.entries, {});
@@ -231,6 +237,7 @@ Deno.test("serves an iCalendar feed with merged ranges and gaps", async () => {
     name: "Day care closed",
     color: "#8b5cf6",
     role: "needs_cover",
+    year: 2026,
   });
   await call("POST", `/sessions/${s.id}/entries`, {
     ops: [
@@ -260,6 +267,7 @@ Deno.test("serves a German iCalendar feed with ?lang=de", async () => {
     name: "Kita zu",
     color: "#8b5cf6",
     role: "needs_cover",
+    year: 2026,
   });
   await call("POST", `/sessions/${s.id}/entries`, {
     ops: [
@@ -446,6 +454,140 @@ Deno.test("adds notes to the iCalendar feed only with ?notes=1", async () => {
   const filtered: string =
     (await call("GET", `/sessions/${s.readId}/calendar.ics?types=sick&notes=1`)).data;
   assertEquals(filtered.match(/BEGIN:VEVENT/g)!.length, 2);
+});
+
+Deno.test("every year has its own entry types", async () => {
+  const { call } = setup();
+  const s = await newSession(call);
+  const types = `/sessions/${s.id}/types`;
+  const state = (year: number) => call("GET", `/sessions/${s.id}?year=${year}`);
+
+  // A year without types of its own has none, and its days can't use other years' types.
+  assertEquals((await state(2027)).data.types, []);
+  assertEquals((await state(2027)).data.typeYears, [2026]);
+  const missing = await call("POST", `/sessions/${s.id}/entries`, {
+    type: "vacation",
+    dates: ["2027-01-04"],
+  });
+  assertEquals([missing.status, missing.data.error], [
+    404,
+    'Unknown entry type "vacation" in 2027',
+  ]);
+
+  // Copying keeps ids, names, colors, roles and order.
+  const copied = await call("POST", `${types}/copy`, { from: 2026, to: 2027 });
+  assertEquals(copied.status, 200);
+  assertEquals(copied.data.map((t: any) => [t.id, t.year, t.position]), [
+    ["holiday", 2027, 0],
+    ["vacation", 2027, 1],
+    ["sick", 2027, 2],
+  ]);
+  assertEquals((await state(2027)).data.typeYears, [2026, 2027]);
+
+  // Changes stay within their year.
+  await call("PATCH", `${types}/vacation?year=2027`, { name: "Vacation Mom", color: "#0ea5e9" });
+  await call("POST", types, { name: "Day care closed", color: "#8b5cf6", year: 2027 });
+  await call("DELETE", `${types}/sick?year=2026`);
+  assertEquals((await call("GET", `${types}?year=2026`)).data.map((t: any) => t.name), [
+    "Holiday",
+    "Vacation",
+  ]);
+  assertEquals((await call("GET", `${types}?year=2027`)).data.map((t: any) => t.name), [
+    "Holiday",
+    "Vacation Mom",
+    "Sick",
+    "Day care closed",
+  ]);
+
+  // A copy only adds what the target year doesn't have yet.
+  const again = await call("POST", `${types}/copy`, { from: 2027, to: 2026 });
+  assertEquals(again.data.map((t: any) => [t.id, t.name]), [
+    ["holiday", "Holiday"],
+    ["vacation", "Vacation"],
+    ["sick", "Sick"],
+    ["day-care-closed", "Day care closed"],
+  ]);
+
+  // Without a year filter, the state has the types of every year.
+  const all = (await call("GET", `/sessions/${s.id}`)).data;
+  assertEquals(all.types.length, 8);
+  const range = (await call("GET", `/sessions/${s.id}?from=2026-12-01&to=2027-01-31`)).data;
+  assertEquals(range.types.length, 8);
+  assertEquals((await call("GET", `/sessions/${s.id}?year=2028`)).data.types, []);
+
+  const errors: [unknown, number, string][] = [
+    [{ from: 2025, to: 2026 }, 404, "2025 has no entry types"],
+    [{ from: "26", to: 2027 }, 400, "from must be YYYY"],
+    [{ from: 2026 }, 400, "to must be YYYY"],
+  ];
+  for (const [body, status, error] of errors) {
+    const res = await call("POST", `${types}/copy`, body);
+    assertEquals([res.status, res.data.error], [status, error]);
+  }
+  assertEquals((await call("GET", `${types}?year=nope`)).status, 400);
+});
+
+Deno.test("resolves type references per year of each day", async () => {
+  const { call } = setup();
+  const s = await newSession(call);
+  await call("POST", `/sessions/${s.id}/types`, { name: "Urlaub", color: "#22c55e", year: 2027 });
+  // "Urlaub" is "vacation" in 2026 (renamed) and "urlaub" in 2027.
+  await call("PATCH", `/sessions/${s.id}/types/vacation?year=2026`, { name: "Urlaub" });
+  const res = await call("POST", `/sessions/${s.id}/entries`, {
+    type: "urlaub",
+    from: "2026-12-31",
+    to: "2027-01-01",
+  });
+  assertEquals(res.data, { ok: true, ops: 1, days: 2 });
+  assertEquals((await call("GET", `/sessions/${s.id}/entries`)).data, {
+    "2026-12-31": ["vacation"],
+    "2027-01-01": ["urlaub"],
+  });
+
+  // Deleting a type removes only its own year's entries.
+  await call("POST", `/sessions/${s.id}/types/copy`, { from: 2026, to: 2027 });
+  await call("POST", `/sessions/${s.id}/entries`, { type: "vacation", date: "2027-01-04" });
+  await call("DELETE", `/sessions/${s.id}/types/vacation?year=2027`);
+  assertEquals((await call("GET", `/sessions/${s.id}/entries`)).data, {
+    "2026-12-31": ["vacation"],
+    "2027-01-01": ["urlaub"],
+  });
+});
+
+Deno.test("the iCalendar feed uses each year's types", async () => {
+  const { call } = setup();
+  const s = await newSession(call);
+  await call("POST", `/sessions/${s.id}/types/copy`, { from: 2026, to: 2027 });
+  await call("PATCH", `/sessions/${s.id}/types/vacation?year=2027`, {
+    name: "Day care closed",
+    role: "needs_cover",
+  });
+  await call("POST", `/sessions/${s.id}/entries`, {
+    ops: [
+      { type: "vacation", date: "2026-08-03" },
+      { type: "vacation", date: "2027-08-02" },
+    ],
+  });
+  const ics: string = (await call("GET", `/sessions/${s.readId}/calendar.ics?gaps=1`)).data;
+  assert(ics.includes("SUMMARY:Vacation\r\nDESCRIPTION:Vacation\r\n"));
+  assert(ics.includes(`UID:${s.readId}-vacation-2027-08-02@vacation-planner`));
+  assert(ics.includes("SUMMARY:Day care closed\r\n"));
+  // Only the 2027 day needs cover.
+  assert(
+    ics.includes(
+      "SUMMARY:⚠ Not covered: Day care closed\r\nDESCRIPTION:⚠ Not covered: Day care closed\r\n",
+    ),
+  );
+  assertEquals(ics.match(/DTSTART;VALUE=DATE:20270802/g)!.length, 2);
+
+  // A filter matches by id or name in every year.
+  const byName: string =
+    (await call("GET", `/sessions/${s.readId}/calendar.ics?types=day%20care%20closed`)).data;
+  assertEquals(byName.match(/BEGIN:VEVENT/g)!.length, 1);
+  const byId: string = (await call("GET", `/sessions/${s.readId}/calendar.ics?types=vacation`))
+    .data;
+  assertEquals(byId.match(/BEGIN:VEVENT/g)!.length, 2);
+  assertEquals((await call("GET", `/sessions/${s.readId}/calendar.ics?types=nope`)).status, 404);
 });
 
 Deno.test("answers CORS preflight", async () => {

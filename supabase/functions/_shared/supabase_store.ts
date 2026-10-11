@@ -45,19 +45,23 @@ export class SupabaseStore implements Store {
   async listTypes(sessionId: string) {
     const rows = check(
       await this.db.from("entry_types").select("*").eq("session_id", sessionId)
-        .order("position"),
+        .order("year").order("position"),
     );
     return (rows ?? []) as TypeRow[];
   }
 
-  async upsertType(type: TypeRow) {
-    check(await this.db.from("entry_types").upsert(type, { onConflict: "session_id,id" }));
+  async upsertTypes(types: TypeRow[]) {
+    if (!types.length) return;
+    check(
+      await this.db.from("entry_types").upsert(types, { onConflict: "session_id,year,id" }),
+    );
   }
 
-  async deleteType(sessionId: string, typeId: string) {
+  async deleteType(sessionId: string, year: number, typeId: string) {
     // day_entries rows go away through the ON DELETE CASCADE foreign key.
     check(
-      await this.db.from("entry_types").delete().eq("session_id", sessionId).eq("id", typeId),
+      await this.db.from("entry_types").delete().eq("session_id", sessionId).eq("year", year)
+        .eq("id", typeId),
     );
   }
 

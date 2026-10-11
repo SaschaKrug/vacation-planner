@@ -12,9 +12,11 @@ export interface SessionRow {
   updated_at: string;
 }
 
+/** An entry type belongs to one year; each year of a session has its own set. */
 export interface TypeRow {
   session_id: string;
-  id: string;
+  year: number;
+  id: string; // unique within the session's year
   name: string;
   color: string;
   role: Role;
@@ -38,10 +40,11 @@ export interface Store {
   /** Looks a session up by its edit id or its read-only id. */
   findSession(token: string): Promise<SessionRow | null>;
   updateSession(id: string, patch: { name?: string }): Promise<void>;
+  /** Types of all years, ordered by year and position. */
   listTypes(sessionId: string): Promise<TypeRow[]>;
-  upsertType(type: TypeRow): Promise<void>;
-  /** Deletes the type and all of its day entries. */
-  deleteType(sessionId: string, typeId: string): Promise<void>;
+  upsertTypes(types: TypeRow[]): Promise<void>;
+  /** Deletes the type and all of its day entries (which are all in its year). */
+  deleteType(sessionId: string, year: number, typeId: string): Promise<void>;
   listEntries(sessionId: string, from?: string, to?: string): Promise<EntryRow[]>;
   addEntries(sessionId: string, rows: EntryRow[]): Promise<void>;
   /** Removes entries on `days`; only the given types if `typeIds` is set. */
@@ -83,24 +86,28 @@ export class MemoryStore implements Store {
 
   listTypes(sessionId: string) {
     const list = (this.types.get(sessionId) ?? []).map((t) => ({ ...t }));
-    return Promise.resolve(list.sort((a, b) => a.position - b.position));
+    return Promise.resolve(list.sort((a, b) => a.year - b.year || a.position - b.position));
   }
 
-  upsertType(type: TypeRow) {
-    const list = this.types.get(type.session_id) ?? [];
-    const i = list.findIndex((t) => t.id === type.id);
-    if (i >= 0) list[i] = { ...type };
-    else list.push({ ...type });
-    this.types.set(type.session_id, list);
+  upsertTypes(types: TypeRow[]) {
+    for (const type of types) {
+      const list = this.types.get(type.session_id) ?? [];
+      const i = list.findIndex((t) => t.year === type.year && t.id === type.id);
+      if (i >= 0) list[i] = { ...type };
+      else list.push({ ...type });
+      this.types.set(type.session_id, list);
+    }
     return Promise.resolve();
   }
 
-  deleteType(sessionId: string, typeId: string) {
+  deleteType(sessionId: string, year: number, typeId: string) {
     const list = this.types.get(sessionId) ?? [];
-    this.types.set(sessionId, list.filter((t) => t.id !== typeId));
+    this.types.set(sessionId, list.filter((t) => t.year !== year || t.id !== typeId));
     const set = this.entries.get(sessionId);
     if (set) {
-      for (const key of [...set]) if (key.endsWith("|" + typeId)) set.delete(key);
+      for (const key of [...set]) {
+        if (key.startsWith(year + "-") && key.endsWith("|" + typeId)) set.delete(key);
+      }
     }
     return Promise.resolve();
   }
