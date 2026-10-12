@@ -1,16 +1,28 @@
 import { assert, assertEquals, assertMatch } from "jsr:@std/assert@1";
-import { createHandler } from "../supabase/functions/_shared/handler.ts";
+import {
+  createHandler,
+  type HandlerOptions,
+  RATE_LIMITS,
+} from "../supabase/functions/_shared/handler.ts";
+import {
+  clientAddress,
+  MemoryRateLimiter,
+  type RateLimiter,
+} from "../supabase/functions/_shared/rate_limit.ts";
 import { MemoryStore } from "../supabase/functions/_shared/store.ts";
 
 const BASE = "http://localhost/functions/v1/api";
 
-function setup() {
-  const handler = createHandler(new MemoryStore());
-  const call = async (method: string, path: string, body?: unknown) => {
+function setup(options?: HandlerOptions) {
+  const handler = createHandler(new MemoryStore(), options);
+  const call = async (method: string, path: string, body?: unknown, ip = "203.0.113.7") => {
     const res = await handler(
       new Request(BASE + path, {
         method,
-        headers: body ? { "content-type": "application/json" } : {},
+        headers: {
+          "x-forwarded-for": ip,
+          ...(body ? { "content-type": "application/json" } : {}),
+        },
         body: body ? JSON.stringify(body) : undefined,
       }),
     );
@@ -645,4 +657,154 @@ Deno.test("agent page only answers GET and doesn't run requests", async () => {
   assertEquals(state.data.entries, {});
   res = await call("GET", `/sessions/nosuchsession1234/agent`);
   assertEquals(res.status, 404);
+});
+
+Deno.test("clones a planner with all years, types, entries and notes", async () => {
+  const { call } = setup();
+  const s = await newSession(call);
+  await call("POST", `/sessions/${s.id}/types/copy`, { from: 2026, to: 2027 });
+  await call("POST", `/sessions/${s.id}/entries`, {
+    ops: [
+      { type: "vacation", dates: ["2026-08-03"] },
+      { type: "holiday", dates: ["2027-01-01"] },
+    ],
+  });
+  await call("POST", `/sessions/${s.id}/notes`, { icon: "🎄", date: "2026-12-25" });
+
+  const res = await call("POST", `/sessions/${s.id}/clone`, {});
+  assertEquals(res.status, 201);
+  const copy = res.data.session;
+  assertEquals(copy.name, "Family (copy)");
+  assertEquals(copy.readOnly, false);
+  assert(![s.id, s.readId].includes(copy.id) && ![s.id, s.readId].includes(copy.readId));
+  assertEquals(res.data.typeYears, [2026, 2027]);
+
+  const all = (await call("GET", `/sessions/${copy.id}`)).data;
+  assertEquals(all.entries, { "2026-08-03": ["vacation"], "2027-01-01": ["holiday"] });
+  assertEquals(all.notes, { "2026-12-25": { icon: "🎄", comment: "" } });
+
+  // The copy is independent of the original.
+  await call("POST", `/sessions/${copy.id}/entries`, { action: "clear", date: "2026-08-03" });
+  await call("PATCH", `/sessions/${copy.id}/types/sick?year=2026`, { name: "Ill" });
+  const original = (await call("GET", `/sessions/${s.id}?year=2026`)).data;
+  assertEquals(original.entries, { "2026-08-03": ["vacation"] });
+  assertEquals(original.types.find((t: any) => t.id === "sick").name, "Sick");
+});
+
+Deno.test("a view-only id can clone, and the copy is editable", async () => {
+  const { call } = setup();
+  const s = await newSession(call);
+  await call("POST", `/sessions/${s.id}/entries`, { type: "vacation", date: "2026-05-04" });
+  const res = await call("POST", `/sessions/${s.readId}/clone`, { name: "Mine" });
+  assertEquals(res.status, 201);
+  assertEquals(res.data.session.name, "Mine");
+  assertEquals(res.data.entries, { "2026-05-04": ["vacation"] });
+  const edit = await call("POST", `/sessions/${res.data.session.id}/entries`, {
+    type: "sick",
+    date: "2026-05-05",
+  });
+  assertEquals(edit.status, 200);
+});
+
+Deno.test("clone validates its input", async () => {
+  const { call } = setup();
+  const s = await newSession(call);
+  assertEquals((await call("POST", "/sessions/unknownToken123/clone", {})).status, 404);
+  assertEquals((await call("GET", `/sessions/${s.id}/clone`)).status, 405);
+  assertEquals((await call("POST", `/sessions/${s.id}/clone`, { name: "" })).status, 400);
+  const long = await call("PATCH", `/sessions/${s.id}`, { name: "x".repeat(80) });
+  assertEquals(long.status, 200);
+  const res = await call("POST", `/sessions/${s.id}/clone`, {});
+  assertEquals(res.data.session.name, "x".repeat(73) + " (copy)");
+});
+
+const SMALL_LIMITS = {
+  create: { max: 2, seconds: 3600 },
+  createAll: { max: 5, seconds: 3600 },
+  write: { max: 3, seconds: 3600 },
+};
+
+Deno.test("limits how many planners one client creates", async () => {
+  const { call } = setup({ rateLimiter: new MemoryRateLimiter(), limits: SMALL_LIMITS });
+  const s = await newSession(call);
+  // Cloning counts as creating.
+  assertEquals((await call("POST", `/sessions/${s.id}/clone`, {})).status, 201);
+  const res = await call("POST", "/sessions", {});
+  assertEquals(res.status, 429);
+  assertMatch(res.data.error, /^Too many requests/);
+  const retry = Number(res.headers.get("retry-after"));
+  assert(retry > 0 && retry <= 3600);
+  assertEquals(res.headers.get("access-control-allow-origin"), "*");
+  assertEquals((await call("POST", `/sessions/${s.id}/clone`, {})).status, 429);
+  // Other clients and reads are not affected.
+  assertEquals((await call("POST", "/sessions", {}, "198.51.100.1")).status, 201);
+  assertEquals((await call("GET", `/sessions/${s.id}`)).status, 200);
+});
+
+Deno.test("limits planners of all clients together", async () => {
+  const { call } = setup({ rateLimiter: new MemoryRateLimiter(), limits: SMALL_LIMITS });
+  for (let i = 0; i < 5; i++) {
+    assertEquals((await call("POST", "/sessions", {}, `198.51.100.${i}`)).status, 201);
+  }
+  assertEquals((await call("POST", "/sessions", {}, "198.51.100.99")).status, 429);
+});
+
+Deno.test("limits writes per client, but not reads", async () => {
+  const limiter = new MemoryRateLimiter();
+  const { call } = setup({ rateLimiter: limiter, limits: SMALL_LIMITS });
+  const s = await newSession(call);
+  const write = (ip?: string) =>
+    call("POST", `/sessions/${s.id}/entries`, { type: "vacation", date: "2026-03-02" }, ip);
+  for (let i = 0; i < 3; i++) assertEquals((await write()).status, 200);
+  assertEquals((await write()).status, 429);
+  assertEquals((await call("PATCH", `/sessions/${s.id}`, { name: "x" })).status, 429);
+  assertEquals((await write("198.51.100.1")).status, 200);
+  for (let i = 0; i < 10; i++) {
+    assertEquals((await call("GET", `/sessions/${s.id}/calendar.ics`)).status, 200);
+  }
+});
+
+Deno.test("the write window resets", async () => {
+  let now = Date.UTC(2026, 0, 1);
+  const { call } = setup({
+    rateLimiter: new MemoryRateLimiter(() => now),
+    limits: { ...SMALL_LIMITS, write: { max: 1, seconds: 60 } },
+  });
+  const s = await newSession(call);
+  const write = () => call("PATCH", `/sessions/${s.id}`, { name: "x" });
+  assertEquals((await write()).status, 200);
+  assertEquals((await write()).status, 429);
+  now += 60_000;
+  assertEquals((await write()).status, 200);
+});
+
+Deno.test("a failing rate limiter lets requests through", async () => {
+  const broken: RateLimiter = { hit: () => Promise.reject(new Error("db down")) };
+  const { call } = setup({ rateLimiter: broken, limits: SMALL_LIMITS });
+  const error = console.error;
+  console.error = () => {};
+  try {
+    for (let i = 0; i < 3; i++) assertEquals((await call("POST", "/sessions", {})).status, 201);
+  } finally {
+    console.error = error;
+  }
+});
+
+Deno.test("default limits leave room for normal use", () => {
+  assert(RATE_LIMITS.create.max >= 10);
+  assert(RATE_LIMITS.write.max / RATE_LIMITS.write.seconds >= 0.5);
+});
+
+Deno.test("clientAddress keys IPv4 by address and IPv6 by /64 network", () => {
+  const req = (headers: Record<string, string>) => new Request(BASE, { headers });
+  assertEquals(clientAddress(req({ "x-forwarded-for": "203.0.113.7, 10.0.0.1" })), "203.0.113.7");
+  assertEquals(clientAddress(req({ "x-forwarded-for": "::ffff:203.0.113.7" })), "203.0.113.7");
+  assertEquals(clientAddress(req({ "x-real-ip": "198.51.100.2" })), "198.51.100.2");
+  assertEquals(clientAddress(req({})), "unknown");
+  assertEquals(
+    clientAddress(req({ "x-forwarded-for": "2001:0DB8:0a:1:abcd::1" })),
+    "2001:db8:a:1::/64",
+  );
+  assertEquals(clientAddress(req({ "x-forwarded-for": "2001:db8::1" })), "2001:db8:0:0::/64");
+  assertEquals(clientAddress(req({ "x-forwarded-for": "::1" })), "0:0:0:0::/64");
 });

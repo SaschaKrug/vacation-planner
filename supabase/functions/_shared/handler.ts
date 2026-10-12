@@ -5,6 +5,7 @@
 import { buildAgentDoc } from "./agent.ts";
 import { dateRange, formatDate, isValidDate, isWeekend } from "./dates.ts";
 import { buildIcs, type Lang } from "./ics.ts";
+import { clientAddress, type RateLimiter } from "./rate_limit.ts";
 import {
   type EntryRow,
   type NoteRow,
@@ -47,10 +48,28 @@ const CORS = {
   "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
   "access-control-allow-headers": "content-type, authorization, apikey, x-client-info",
   "access-control-max-age": "86400",
+  "access-control-expose-headers": "retry-after",
 };
 
+/** Requests per client and window. Reads aren't limited: iCloud fetches every feed from a
+ *  few shared addresses, and reads don't add data. */
+export const RATE_LIMITS = {
+  /** New planners (created or cloned) per client. */
+  create: { max: 20, seconds: 3600 },
+  /** New planners of all clients together: a ceiling even if one client poses as many. */
+  createAll: { max: 500, seconds: 3600 },
+  /** Changes (POST / PATCH / DELETE) per client; the app batches edits made in quick
+   *  succession, so this leaves plenty of room for fast clicking. */
+  write: { max: 300, seconds: 300 },
+};
+export type RateLimits = typeof RATE_LIMITS;
+
 export class HttpError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(
+    public status: number,
+    message: string,
+    public headers: Record<string, string> = {},
+  ) {
     super(message);
   }
 }
@@ -60,10 +79,10 @@ export function randomToken(length = 20): string {
   return [...bytes].map((b) => ALPHABET[b % ALPHABET.length]).join("");
 }
 
-function json(data: unknown, status = 200): Response {
+function json(data: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { ...CORS, "content-type": "application/json; charset=utf-8" },
+    headers: { ...CORS, ...headers, "content-type": "application/json; charset=utf-8" },
   });
 }
 
@@ -123,6 +142,16 @@ function cleanLang(v: unknown): Lang {
   if (v === undefined) return "en";
   if (!LANGS.includes(v as Lang)) throw new HttpError(400, "lang must be en or de");
   return v as Lang;
+}
+
+/** Default name of a cloned planner, kept within the 80 characters of a name. */
+function copyName(name: string): string {
+  return `${name.slice(0, 73)} (copy)`;
+}
+
+function newSessionRow(name: string): SessionRow {
+  const now = new Date().toISOString();
+  return { id: randomToken(20), read_id: randomToken(20), name, created_at: now, updated_at: now };
 }
 
 function slug(name: string): string {
@@ -334,9 +363,37 @@ export interface HandlerOptions {
   /** Public API base for absolute links, e.g. https://<project>.supabase.co/functions/v1/api.
    * Default: derived from the request URL. */
   publicBase?: string;
+  /** Counts requests for the rate limits; without one, nothing is limited. */
+  rateLimiter?: RateLimiter;
+  /** The client's rate-limit key. Default: its address (see clientAddress). */
+  clientKey?: (req: Request) => string | Promise<string>;
+  limits?: RateLimits;
 }
 
 export function createHandler(store: Store, options: HandlerOptions = {}) {
+  const limits = options.limits ?? RATE_LIMITS;
+  const clientKey = options.clientKey ?? clientAddress;
+
+  /** Counts the request against a limit; 429 once the window's limit is used up. */
+  async function limit(name: keyof RateLimits, key: string) {
+    if (!options.rateLimiter) return;
+    const { max, seconds } = limits[name];
+    let hits: number;
+    try {
+      hits = await options.rateLimiter.hit(`${name}:${key}`, seconds);
+    } catch (err) {
+      // Fail open: a broken counter is no reason to stop people from planning.
+      console.error("Rate limit check failed:", err);
+      return;
+    }
+    if (hits > max) {
+      const retry = seconds - Math.floor(Date.now() / 1000) % seconds;
+      throw new HttpError(429, `Too many requests, try again in ${retry} seconds`, {
+        "retry-after": String(retry),
+      });
+    }
+  }
+
   function checkToken(token: string) {
     if (!TOKEN_RE.test(token)) throw new HttpError(404, "Session not found");
   }
@@ -398,6 +455,14 @@ export function createHandler(store: Store, options: HandlerOptions = {}) {
     }
     if (parts[0] !== "sessions") throw new HttpError(404, "Not found");
 
+    if (method !== "GET") {
+      const client = await clientKey(req);
+      if (parts.length === 1 || parts[2] === "clone") {
+        await limit("create", client);
+        await limit("createAll", "all");
+      } else await limit("write", client);
+    }
+
     if (parts.length === 1) {
       if (method !== "POST") throw new HttpError(405, "Method not allowed");
       rangeFromQuery(url); // validates the query even though a new session has no entries
@@ -405,14 +470,7 @@ export function createHandler(store: Store, options: HandlerOptions = {}) {
       const lang = cleanLang(body.lang);
       const year = body.year === undefined ? currentYear() : cleanYear(body.year);
       const name = body.name === undefined ? DEFAULT_SESSION_NAME[lang] : cleanName(body.name);
-      const now = new Date().toISOString();
-      const session: SessionRow = {
-        id: randomToken(20),
-        read_id: randomToken(20),
-        name,
-        created_at: now,
-        updated_at: now,
-      };
+      const session = newSessionRow(name);
       let presets = PRESET_TYPES.map((t) => ({ ...t, name: PRESET_NAMES[lang][t.id] }));
       if (body.types !== undefined) {
         if (!Array.isArray(body.types)) throw new HttpError(400, "types must be an array");
@@ -470,6 +528,26 @@ export function createHandler(store: Store, options: HandlerOptions = {}) {
         return json(sessionState(updated, token, types, range, rows, notes));
       }
       throw new HttpError(405, "Method not allowed");
+    }
+
+    if (sub === "clone" && parts.length === 3) {
+      // A new planner with its own ids and a copy of all types, entries and notes. The
+      // view-only id may clone too: it can read all of that anyway.
+      if (method !== "POST") throw new HttpError(405, "Method not allowed");
+      const body = await readBody(req);
+      const [source, [types, rows, notes]] = await loadWith(
+        token,
+        false,
+        (id) => listAll(id, {}),
+      );
+      const session = newSessionRow(
+        body.name === undefined ? copyName(source.name) : cleanName(body.name),
+      );
+      const copies = types.map((t) => ({ ...t, session_id: session.id }));
+      await store.createSession(session, copies);
+      await store.addEntries(session.id, rows);
+      await store.upsertNotes(session.id, notes);
+      return json(sessionState(session, session.id, copies, {}, rows, notes), 201);
     }
 
     if (sub === "calendar.ics" && parts.length === 3 && method === "GET") {
@@ -638,7 +716,7 @@ export function createHandler(store: Store, options: HandlerOptions = {}) {
     try {
       return await route(req);
     } catch (err) {
-      if (err instanceof HttpError) return json({ error: err.message }, err.status);
+      if (err instanceof HttpError) return json({ error: err.message }, err.status, err.headers);
       console.error(err);
       return json({ error: "Internal error" }, 500);
     }

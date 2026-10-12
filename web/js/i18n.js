@@ -28,6 +28,7 @@ const STRINGS = {
     "top.more": "More",
     "menu.ai": "AI assistant",
     "menu.api": "API for scripts",
+    "menu.clone": "Clone planner",
     "menu.help": "Help &amp; shortcuts",
 
     // landing
@@ -119,6 +120,12 @@ const STRINGS = {
     "toast.add_type_failed": "Couldn't add type: {msg}",
     "toast.copy_types_failed": "Couldn't copy types: {msg}",
     "toast.create_failed": "Couldn't create a planner: {msg}",
+    "toast.clone_failed": "Couldn't clone the planner: {msg}",
+    "toast.rate_limited": "Too many requests – please try again later",
+    "toast.wait_saving": "Changes are still being saved – try again in a moment",
+    "clone.confirm":
+      "Create a copy of “{name}” with all years, types, entries and notes?\n\nThe copy gets its own new links; this planner stays unchanged.",
+    "clone.name": "{name} (copy)",
     "toast.rename_failed": "Couldn't rename: {msg}",
     "toast.copied": "Copied to clipboard",
 
@@ -282,6 +289,7 @@ const STRINGS = {
     "top.more": "Mehr",
     "menu.ai": "KI-Assistent",
     "menu.api": "API für Skripte",
+    "menu.clone": "Planer duplizieren",
     "menu.help": "Hilfe &amp; Tastenkürzel",
 
     "landing.title": "Das ganze Jahr auf einen Blick planen",
@@ -375,6 +383,12 @@ const STRINGS = {
     "toast.add_type_failed": "Art konnte nicht hinzugefügt werden: {msg}",
     "toast.copy_types_failed": "Arten konnten nicht übernommen werden: {msg}",
     "toast.create_failed": "Planer konnte nicht erstellt werden: {msg}",
+    "toast.clone_failed": "Planer konnte nicht dupliziert werden: {msg}",
+    "toast.rate_limited": "Zu viele Anfragen – bitte später noch einmal versuchen",
+    "toast.wait_saving": "Änderungen werden noch gespeichert – gleich noch einmal versuchen",
+    "clone.confirm":
+      "Eine Kopie von „{name}“ mit allen Jahren, Typen, Einträgen und Notizen erstellen?\n\nDie Kopie bekommt eigene, neue Links; dieser Planer bleibt unverändert.",
+    "clone.name": "{name} (Kopie)",
     "toast.rename_failed": "Umbenennen fehlgeschlagen: {msg}",
     "toast.copied": "In die Zwischenablage kopiert",
 

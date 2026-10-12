@@ -233,7 +233,8 @@ async function flush() {
       queue.splice(0, n);
       retryDelay = 2000;
     } catch (err) {
-      if (err.status && err.status < 500) {
+      // 429 (rate limit) is temporary: keep the changes and retry with the backoff below.
+      if (err.status && err.status < 500 && err.status !== 429) {
         // The server rejected it (e.g. a type was deleted elsewhere): drop and resync.
         queue.splice(0, n);
         toast(t("toast.save_failed", { msg: err.message }));
@@ -1691,8 +1692,29 @@ async function createPlanner() {
     const data = await api.createSession({ lang, year: state.year });
     location.href = pageUrl({ s: data.session.id });
   } catch (err) {
-    toast(t("toast.create_failed", { msg: err.message }), 5000);
+    toast(rateLimited(err) ?? t("toast.create_failed", { msg: err.message }), 5000);
     btn.disabled = false;
+  }
+}
+
+function rateLimited(err) {
+  return err.status === 429 ? t("toast.rate_limited") : undefined;
+}
+
+/** Copies the planner (all years) into a new one with its own links and opens it. Works
+ *  from a view-only link too, which gives the viewer an editable copy. */
+async function clonePlanner() {
+  if (!state.session) return;
+  if (queue.length || flushing) return toast(t("toast.wait_saving"));
+  const name = state.session.name;
+  if (!confirm(t("clone.confirm", { name }))) return;
+  try {
+    // Names are limited to 80 characters; leave room for the " (copy)" suffix.
+    const copy = t("clone.name", { name: name.slice(0, 70) });
+    const data = await api.cloneSession(state.token, copy);
+    location.href = pageUrl({ s: data.session.id, y: state.year });
+  } catch (err) {
+    toast(rateLimited(err) ?? t("toast.clone_failed", { msg: err.message }), 5000);
   }
 }
 
@@ -1784,6 +1806,7 @@ function bind() {
   $("btn-share").addEventListener("click", openShareDialog);
   $("btn-ai").addEventListener("click", openAiDialog);
   $("btn-api").addEventListener("click", openApiDialog);
+  $("btn-clone").addEventListener("click", clonePlanner);
   $("btn-help").addEventListener("click", () => $("dlg-help").showModal());
   $("btn-clear").addEventListener("click", clearSelection);
   $("btn-deselect").addEventListener("click", () => {
