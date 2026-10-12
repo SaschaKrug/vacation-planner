@@ -19,6 +19,7 @@ Deno.test("merges consecutive days, also across months", () => {
     uidPrefix: "r",
     types: [{
       session_id: "s",
+      year: 2026,
       id: "v",
       name: "Vacation",
       color: "#000000",
@@ -43,6 +44,7 @@ Deno.test("merges consecutive days, also across months", () => {
 Deno.test("localizes gap summaries and descriptions in German", () => {
   const type = (id: string, name: string, role: "covers" | "needs_cover") => ({
     session_id: "s",
+    year: 2026,
     id,
     name,
     color: "#000000",

@@ -8,11 +8,12 @@ import type { TypeRow } from "./store.ts";
 export interface IcsInput {
   calendarName: string;
   uidPrefix: string;
+  /** Types of all years; a day's type ids refer to the types of that day's year. */
   types: TypeRow[];
   /** day -> type ids */
   entries: Map<string, string[]>;
-  /** Only these type ids become events (all types if omitted). */
-  include?: Set<string>;
+  /** Only these types become events (all types if omitted). */
+  include?: Set<TypeRow>;
   /** Adds a warning event for weekdays that need cover but have none. */
   gaps?: boolean;
   /** day -> note; each note (run of identical notes) becomes an event if set. */
@@ -69,11 +70,11 @@ function stamp(now: Date): string {
 }
 
 export function gapDays(types: TypeRow[], entries: Map<string, string[]>): string[] {
-  const role = new Map(types.map((t) => [t.id, t.role]));
+  const role = new Map(types.map((t) => [`${t.year}|${t.id}`, t.role]));
   const out: string[] = [];
   for (const [day, ids] of entries) {
     if (isWeekend(day)) continue;
-    const roles = ids.map((id) => role.get(id));
+    const roles = ids.map((id) => role.get(`${day.slice(0, 4)}|${id}`));
     if (!roles.includes("needs_cover")) continue;
     if (roles.includes("covers") || roles.includes("day_off")) continue;
     out.push(day);
@@ -116,8 +117,10 @@ export function buildIcs(input: IcsInput): string {
   };
 
   for (const type of input.types) {
-    if (input.include && !input.include.has(type.id)) continue;
-    const days = [...input.entries].filter(([, ids]) => ids.includes(type.id))
+    if (input.include && !input.include.has(type)) continue;
+    const year = `${type.year}-`;
+    const days = [...input.entries]
+      .filter(([day, ids]) => day.startsWith(year) && ids.includes(type.id))
       .map(([day]) => day).sort();
     for (const run of consecutiveRuns(days)) {
       event(`${input.uidPrefix}-${type.id}-${run[0]}@vacation-planner`, run, type.name);
@@ -125,7 +128,9 @@ export function buildIcs(input: IcsInput): string {
   }
 
   if (input.gaps) {
-    const needs = input.types.filter((t) => t.role === "needs_cover").map((t) => t.name);
+    const needs = [
+      ...new Set(input.types.filter((t) => t.role === "needs_cover").map((t) => t.name)),
+    ];
     const label = text.notCovered + (needs.length ? ": " + needs.join(", ") : "");
     for (const run of consecutiveRuns(gapDays(input.types, input.entries))) {
       event(`${input.uidPrefix}-gap-${run[0]}@vacation-planner`, run, label);

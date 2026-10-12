@@ -6,7 +6,10 @@ closures, with a coverage check, a REST API and an iCloud / Apple Calendar feed.
 **Live:** https://vacation-planner.fa-krug.de/
 
 - All days of a year as 12 rows × 31 days; pick the year at the top.
-- Your own entry types (name + color). New planners start with *Holiday*, *Vacation* and *Sick*.
+- Your own entry types (name + color), **per year**: every year has its own types, so 2027 can
+  have different people, colors or day-care closures than 2026. New planners start with
+  *Holiday*, *Vacation* and *Sick*; a year without types offers to copy them from the closest
+  year that has some.
 - A day can hold **several entries**, e.g. *Day care closed* + *Vacation Dad*.
 - **Icons & comments on days**, e.g. 🎄 *Christmas* or 🐣 *Easter*: shown in the grid and in
   the tooltip, optionally in the calendar feed. They are independent of entries (no coverage,
@@ -78,20 +81,26 @@ shows ready-to-run examples for your planner). The session id from the edit link
 key; the view-only id can only read. Types can be referenced by id or by name
 (case-insensitive). Dates are `YYYY-MM-DD`.
 
+Every year has its own entry types, and a day can only use the types of its year: a reference
+like `"type": "vacation"` is resolved in the year of each day. The types endpoints work on one
+year, given as `?year=` (default: the current year); copying keeps the ids, so references keep
+working across years.
+
 | Method & path | Description |
 | --- | --- |
-| `POST /sessions` | Create a planner. Body (optional): `{"name": "...", "types": [{"name","color","role"}]}`; `"lang": "de"` gives German default types and name |
-| `GET /sessions/{id}?year=2026` | Planner, types, entries and notes (`?from=&to=` also works; no filter = all) |
+| `POST /sessions` | Create a planner. Body (optional): `{"name": "...", "year": 2026, "types": [{"name","color","role"}]}`; the types go into `year` (default: current year); `"lang": "de"` gives German default types and name |
+| `GET /sessions/{id}?year=2026` | Planner, the year's types, entries and notes, and `typeYears` (all years with types). `?from=&to=` also works; no filter = all |
 | `PATCH /sessions/{id}` | Rename: `{"name": "..."}` |
 | `GET /sessions/{id}/entries?year=2026` | `{"2026-08-03": ["vacation", "day-care-closed"], ...}` |
 | `POST /sessions/{id}/entries` | Change entries (see below) |
 | `GET /sessions/{id}/notes?year=2026` | `{"2026-12-25": {"icon": "🎄", "comment": "Christmas"}, ...}` |
 | `POST /sessions/{id}/notes` | Set or clear day notes (see below) |
-| `GET /sessions/{id}/types` | List entry types |
-| `POST /sessions/{id}/types` | Add a type: `{"name", "color": "#rrggbb", "role"}` |
-| `PATCH /sessions/{id}/types/{type}` | Change `name`, `color`, `role`, `position` |
-| `DELETE /sessions/{id}/types/{type}` | Delete a type and all its entries |
-| `GET /sessions/{id}/calendar.ics` | iCalendar feed. `?types=a,b` filters, `?gaps=1` adds “⚠ Not covered” events, `?notes=1` adds day notes as events, `?name=` overrides the calendar name, `?lang=de` German event texts |
+| `GET /sessions/{id}/types?year=2026` | List the year's entry types |
+| `POST /sessions/{id}/types?year=2026` | Add a type to the year: `{"name", "color": "#rrggbb", "role"}` (`"year"` in the body works too) |
+| `PATCH /sessions/{id}/types/{type}?year=2026` | Change `name`, `color`, `role`, `position` |
+| `DELETE /sessions/{id}/types/{type}?year=2026` | Delete a type and all its entries in that year |
+| `POST /sessions/{id}/types/copy` | Copy a year's types into another year: `{"from": 2026, "to": 2027}`; types the target year already has (same id) are kept |
+| `GET /sessions/{id}/calendar.ics` | iCalendar feed. `?types=a,b` filters (by id or name, in every year), `?gaps=1` adds “⚠ Not covered” events, `?notes=1` adds day notes as events, `?name=` overrides the calendar name, `?lang=de` German event texts |
 
 Roles: `none`, `needs_cover`, `covers`, `day_off`.
 

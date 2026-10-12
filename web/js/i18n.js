@@ -100,13 +100,21 @@ const STRINGS = {
     "toast.reorder_failed": "Couldn't reorder: {msg}",
     "toast.delete_failed": "Couldn't delete: {msg}",
     "toast.add_type_failed": "Couldn't add type: {msg}",
+    "toast.copy_types_failed": "Couldn't copy types: {msg}",
     "toast.create_failed": "Couldn't create a planner: {msg}",
     "toast.rename_failed": "Couldn't rename: {msg}",
     "toast.copied": "Copied to clipboard",
 
     // types dialog
     "types.title": "Entry types",
+    "types.title_year": "Entry types {year}",
     "types.intro": "Changes are saved immediately. The role decides how the coverage check works:",
+    "types.year_note": "These types belong to {year}. Every year has its own types.",
+    "types.empty": "No entry types for {year} yet.",
+    "types.empty_readonly": "No entry types for {year}.",
+    "types.empty_hint": "Add some with “Edit types”.",
+    "types.copy_from": "Copy types from {year}",
+    "types.copy_from_title": "Start {to} with the types of {from}; you can change them afterwards",
     "types.help_needs":
       "<b>Needs cover</b> – e.g. “Day care closed”. A weekday with this entry and nothing that covers it is flagged as a gap.",
     "types.help_covers": "<b>Covers</b> – e.g. “Vacation Dad”. Covers a “needs cover” day.",
@@ -125,7 +133,7 @@ const STRINGS = {
     "types.confirm_delete_used": ({ name, n, year }) =>
       `Delete “${name}”? It is used on ${n} ${
         s(n, "day", "days")
-      } in ${year} (and maybe other years). This can't be undone.`,
+      } in ${year}. This can't be undone.`,
 
     // note dialog
     "note.title": "Icon &amp; note",
@@ -164,12 +172,12 @@ const STRINGS = {
 
     // API dialog
     "api.intro":
-      "Fill entries from scripts, shortcuts or other tools. Types can be referenced by id or name. The session id in the URL is the access key.",
+      "Fill entries from scripts, shortcuts or other tools. Types can be referenced by id or name and belong to a year: a day uses the types of its year. The session id in the URL is the access key.",
     "api.read": "Read the planner (types, entries and notes of a year)",
     "api.add": "Add “{name}” from Aug 3 to Aug 14, skipping weekends",
     "api.ops": "Several operations at once (actions: add | remove | set | clear)",
     "api.notes": "Icon and comment on days (set replaces a day's note, clear removes it)",
-    "api.types": "Entry types",
+    "api.types": "Entry types of a year (every year has its own; copy them into another year)",
     "api.feed": "Calendar feed (read-only id works too). Optional: ?types=a,b&gaps=1&notes=1",
     "api.new": "New planner",
     "api.ex_vacation": "Vacation",
@@ -297,11 +305,20 @@ const STRINGS = {
     "toast.reorder_failed": "Sortieren fehlgeschlagen: {msg}",
     "toast.delete_failed": "Löschen fehlgeschlagen: {msg}",
     "toast.add_type_failed": "Art konnte nicht hinzugefügt werden: {msg}",
+    "toast.copy_types_failed": "Arten konnten nicht übernommen werden: {msg}",
     "toast.create_failed": "Planer konnte nicht erstellt werden: {msg}",
     "toast.rename_failed": "Umbenennen fehlgeschlagen: {msg}",
     "toast.copied": "In die Zwischenablage kopiert",
 
     "types.title": "Eintragsarten",
+    "types.title_year": "Eintragsarten {year}",
+    "types.year_note": "Diese Arten gehören zu {year}. Jedes Jahr hat eigene Arten.",
+    "types.empty": "Noch keine Eintragsarten für {year}.",
+    "types.empty_readonly": "Keine Eintragsarten für {year}.",
+    "types.empty_hint": "Über „Arten bearbeiten“ hinzufügen.",
+    "types.copy_from": "Arten aus {year} übernehmen",
+    "types.copy_from_title":
+      "{to} mit den Arten aus {from} beginnen; sie lassen sich danach ändern",
     "types.intro":
       "Änderungen werden sofort gespeichert. Die Rolle bestimmt, wie die Betreuungsprüfung funktioniert:",
     "types.help_needs":
@@ -323,7 +340,7 @@ const STRINGS = {
     "types.confirm_delete_used": ({ name, n, year }) =>
       `„${name}“ löschen? Die Art wird an ${n} ${
         s(n, "Tag", "Tagen")
-      } in ${year} verwendet (und evtl. in anderen Jahren). Das kann nicht rückgängig gemacht werden.`,
+      } in ${year} verwendet. Das kann nicht rückgängig gemacht werden.`,
 
     "note.title": "Symbol &amp; Notiz",
     "note.days": ({ n, span }) => `${n} ${s(n, "Tag", "Tage")}: ${span}`,
@@ -360,13 +377,14 @@ const STRINGS = {
     "close": "Schließen",
 
     "api.intro":
-      "Einträge aus Skripten, Kurzbefehlen oder anderen Tools füllen. Arten können über ID oder Namen angegeben werden. Die Session-ID in der URL ist der Zugangsschlüssel.",
+      "Einträge aus Skripten, Kurzbefehlen oder anderen Tools füllen. Arten können über ID oder Namen angegeben werden und gehören zu einem Jahr: Ein Tag nutzt die Arten seines Jahres. Die Session-ID in der URL ist der Zugangsschlüssel.",
     "api.read": "Planer lesen (Arten, Einträge und Notizen eines Jahres)",
     "api.add": "„{name}“ vom 3. bis 14. Aug. eintragen, ohne Wochenenden",
     "api.ops": "Mehrere Operationen auf einmal (Aktionen: add | remove | set | clear)",
     "api.notes":
       "Symbol und Kommentar an Tagen (set ersetzt die Notiz eines Tages, clear entfernt sie)",
-    "api.types": "Eintragsarten",
+    "api.types":
+      "Eintragsarten eines Jahres (jedes Jahr hat eigene; in ein anderes Jahr übernehmen)",
     "api.feed":
       "Kalender-Feed (Nur-Lese-ID geht auch). Optional: ?types=a,b&gaps=1&notes=1&lang=de",
     "api.new": "Neuer Planer",

@@ -65,7 +65,8 @@ const NOTE_ICONS = [
 const state = {
   token: null, // id from the URL (edit id or read-only id)
   session: null,
-  types: [],
+  types: [], // the types of `year`; every year has its own
+  typeYears: null, // years that have types (null until loaded)
   entries: new Map(),
   notes: new Map(), // date -> { icon, comment }
   year: new Date().getFullYear(),
@@ -73,7 +74,7 @@ const state = {
   selection: new Set(),
   anchor: null,
   focus: null,
-  clipboard: null, // { pattern, text }
+  clipboard: null, // { pattern, text, year }
   undo: [], // { kind: "entries" | "notes", before, after }
   redo: [],
   version: 0, // bumps on every local change; stale poll responses are dropped
@@ -169,10 +170,11 @@ function cacheResponse(token, year, data) {
 /** Caches what is shown now, so local edits appear instantly next time too. */
 function cacheState() {
   if (!state.session) return;
-  const { session, types, entries, notes } = state;
+  const { session, types, typeYears, entries, notes } = state;
   cacheResponse(state.token, state.year, {
     session,
     types,
+    typeYears,
     entries: Object.fromEntries(entries),
     notes: Object.fromEntries(notes),
   });
@@ -251,6 +253,7 @@ function applyResponse(data, json = JSON.stringify(data)) {
   state.session = data.session;
   state.readOnly = data.session.readOnly;
   state.types = data.types;
+  state.typeYears = data.typeYears ?? null;
   state.entries = new Map(Object.entries(data.entries));
   state.notes = new Map(Object.entries(data.notes ?? {}));
   lastResponse = json;
@@ -397,7 +400,7 @@ function copySelection() {
   const span = range(days[0], days[days.length - 1]);
   const pattern = patternOf(state.entries, span);
   const text = toClipboardText(span, pattern, state.types);
-  state.clipboard = { pattern, text };
+  state.clipboard = { pattern, text, year: state.year };
   toast(t("toast.copied_days", { n: span.length }));
   return text;
 }
@@ -642,8 +645,41 @@ function chipTitle(type, i, st) {
   }) + (state.readOnly ? "" : t("chip.toggle_hint", { key: i + 1 }));
 }
 
+/** The year to copy types from when this year has none: the closest earlier one, else later. */
+function copySource() {
+  const years = (state.typeYears ?? []).filter((y) => y !== state.year);
+  return years.filter((y) => y < state.year).pop() ?? years[0] ?? null;
+}
+
+function renderNoTypes(box) {
+  const source = copySource();
+  const sig = ["none", state.year, state.typeYears === null, source, state.readOnly, lang]
+    .join("|");
+  if (sig === chipsSig) return;
+  chipsSig = sig;
+  box.textContent = "";
+  if (state.typeYears === null) return; // not loaded yet
+  const empty = document.createElement("div");
+  empty.className = "types-empty";
+  const msg = document.createElement("span");
+  msg.textContent = state.readOnly
+    ? t("types.empty_readonly", { year: state.year })
+    : t("types.empty", { year: state.year }) + (source ? "" : " " + t("types.empty_hint"));
+  empty.append(msg);
+  if (source && !state.readOnly) {
+    const btn = document.createElement("button");
+    btn.className = "btn small primary";
+    btn.textContent = t("types.copy_from", { year: source });
+    btn.title = t("types.copy_from_title", { from: source, to: state.year });
+    btn.addEventListener("click", () => copyTypes(source, btn));
+    empty.append(btn);
+  }
+  box.append(empty);
+}
+
 function renderTypes() {
   const box = $("types");
+  if (!state.types.length) return renderNoTypes(box);
   const s = stats(state.entries, state.types, state.year);
   const sig = typesSig() + state.readOnly + lang;
   if (sig === chipsSig) {
@@ -772,9 +808,14 @@ function setYear(y) {
   state.year = y;
   state.selection.clear();
   state.anchor = state.focus = null;
+  // Undo steps hold type ids of the year they were made in.
+  state.undo = [];
+  state.redo = [];
   state.version++;
   if (applyCached()) setSync("sync.updating");
   else {
+    state.types = [];
+    state.typeYears = null;
     state.entries = new Map();
     state.notes = new Map();
   }
@@ -977,15 +1018,13 @@ function onCopy(e, cut = false) {
 function onPaste(e) {
   if ($("planner").hidden || inEditable(e) || state.readOnly) return;
   e.preventDefault();
-  const text = e.clipboardData?.getData("text/plain") ?? "";
-  // Prefer our own copy (keeps type ids even if names are duplicated).
-  if (state.clipboard && text === state.clipboard.text) {
-    return pastePattern(state.clipboard.pattern);
-  }
-  if (!text.trim()) {
-    if (state.clipboard) pastePattern(state.clipboard.pattern);
-    return;
-  }
+  let text = e.clipboardData?.getData("text/plain") ?? "";
+  const own = state.clipboard && (text === state.clipboard.text || !text.trim());
+  // Prefer our own copy (keeps type ids even if names are duplicated). Ids belong to the
+  // year they were copied in, so in another year the types are matched by name instead.
+  if (own && state.clipboard.year === state.year) return pastePattern(state.clipboard.pattern);
+  if (own) text = state.clipboard.text;
+  if (!text.trim()) return;
   const { pattern, unknown } = parseClipboardText(text, state.types);
   if (unknown.length) {
     toast(t("toast.unknown_types", { n: unknown.length, names: unknown.join(", ") }));
@@ -996,6 +1035,8 @@ function onPaste(e) {
 // ---------------------------------------------------------------- dialogs
 
 function openTypesDialog() {
+  $("dlg-types").querySelector("h2").textContent = t("types.title_year", { year: state.year });
+  $("types-year-note").textContent = t("types.year_note", { year: state.year });
   renderTypesEditor();
   $("dlg-types").showModal();
 }
@@ -1061,7 +1102,7 @@ async function updateType(type, patch) {
   state.version++;
   render();
   try {
-    await api.updateType(state.token, type.id, patch);
+    await api.updateType(state.token, state.year, type.id, patch);
   } catch (err) {
     toast(t("toast.type_save_failed", { msg: err.message }));
     await load();
@@ -1078,8 +1119,8 @@ async function moveType(i, dir) {
   render();
   try {
     await Promise.all([
-      api.updateType(state.token, state.types[i].id, { position: i }),
-      api.updateType(state.token, state.types[j].id, { position: j }),
+      api.updateType(state.token, state.year, state.types[i].id, { position: i }),
+      api.updateType(state.token, state.year, state.types[j].id, { position: j }),
     ]);
   } catch (err) {
     toast(t("toast.reorder_failed", { msg: err.message }));
@@ -1093,7 +1134,7 @@ async function deleteType(type) {
     : t("types.confirm_delete", { name: type.name });
   if (!confirm(msg)) return;
   try {
-    await api.deleteType(state.token, type.id);
+    await api.deleteType(state.token, state.year, type.id);
     state.types = state.types.filter((x) => x.id !== type.id);
     for (const [d, ids] of state.entries) {
       const rest = ids.filter((id) => id !== type.id);
@@ -1112,12 +1153,13 @@ async function deleteType(type) {
 async function addType() {
   const n = state.types.length + 1;
   try {
-    const type = await api.addType(state.token, {
+    const type = await api.addType(state.token, state.year, {
       name: t("types.new_name", { n }),
       color: nextColor(state.types),
       role: "none",
     });
     state.types.push(type);
+    addTypeYear(state.year);
     state.version++;
     renderTypesEditor();
     render();
@@ -1125,6 +1167,28 @@ async function addType() {
     inputs[inputs.length - 1]?.select();
   } catch (err) {
     toast(t("toast.add_type_failed", { msg: err.message }));
+  }
+}
+
+function addTypeYear(year) {
+  const years = new Set(state.typeYears ?? []);
+  state.typeYears = [...years.add(year)].sort((a, b) => a - b);
+}
+
+async function copyTypes(from, btn) {
+  const year = state.year;
+  btn.disabled = true;
+  try {
+    const types = await api.copyTypes(state.token, from, year);
+    if (year !== state.year) return;
+    state.types = types;
+    addTypeYear(year);
+    state.version++;
+    render();
+    cacheState();
+  } catch (err) {
+    btn.disabled = false;
+    toast(t("toast.copy_types_failed", { msg: err.message }));
   }
 }
 
@@ -1267,12 +1331,14 @@ curl -X POST "$BASE/sessions/$SESSION/notes" \\
       ]}'
 
 # ${t("api.types")}
-curl "$BASE/sessions/$SESSION/types"
-curl -X POST "$BASE/sessions/$SESSION/types" -H "content-type: application/json" \\
+curl "$BASE/sessions/$SESSION/types?year=${y}"
+curl -X POST "$BASE/sessions/$SESSION/types?year=${y}" -H "content-type: application/json" \\
   -d '{"name":"${t("api.ex_needs")}","color":"#8b5cf6","role":"needs_cover"}'
-curl -X PATCH "$BASE/sessions/$SESSION/types/${typeRef}" -H "content-type: application/json" \\
-  -d '{"name":"${t("api.ex_rename")}","color":"#22c55e"}'
-curl -X DELETE "$BASE/sessions/$SESSION/types/<type-id>"
+curl -X PATCH "$BASE/sessions/$SESSION/types/${typeRef}?year=${y}" \\
+  -H "content-type: application/json" -d '{"name":"${t("api.ex_rename")}","color":"#22c55e"}'
+curl -X DELETE "$BASE/sessions/$SESSION/types/<type-id>?year=${y}"
+curl -X POST "$BASE/sessions/$SESSION/types/copy" -H "content-type: application/json" \\
+  -d '{"from":${y},"to":${y + 1}}'
 
 # ${t("api.feed")}
 curl "$BASE/sessions/${state.session.readId}/calendar.ics"
@@ -1340,7 +1406,7 @@ async function createPlanner() {
   const btn = $("btn-create");
   btn.disabled = true;
   try {
-    const data = await api.createSession({ lang });
+    const data = await api.createSession({ lang, year: state.year });
     location.href = pageUrl({ s: data.session.id });
   } catch (err) {
     toast(t("toast.create_failed", { msg: err.message }), 5000);

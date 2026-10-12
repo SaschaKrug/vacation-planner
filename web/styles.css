@@ -328,6 +328,17 @@ kbd {
 }
 .chip.active .count { background: color-mix(in srgb, var(--c) 22%, var(--surface)); color: var(--text); }
 
+/* A year without types of its own (each year has its own set). */
+.types-empty {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--ctl-h);
+  color: var(--muted);
+}
+
 /* Wide screens: the type chips spread over the full width in equal columns, and the
    actions share the next row with the coverage banner instead of wrapping on their own. */
 @media (min-width: 821px) {
