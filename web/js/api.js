@@ -41,6 +41,7 @@ export const api = {
     request("POST", `/sessions/${enc(token)}/types/copy`, { from, to }),
   applyOps: (token, ops) => request("POST", `/sessions/${enc(token)}/entries`, { ops }),
   applyNoteOps: (token, ops) => request("POST", `/sessions/${enc(token)}/notes`, { ops }),
+  agentUrl: (token) => `${apiBase()}/sessions/${enc(token)}/agent`,
   calendarUrl: (readId, params) => {
     const qs = new URLSearchParams(params).toString();
     return `${apiBase()}/sessions/${enc(readId)}/calendar.ics${qs ? "?" + qs : ""}`;

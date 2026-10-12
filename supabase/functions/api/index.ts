@@ -9,4 +9,8 @@ if (!url || !key) throw new Error("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are 
 
 const db = createClient(url, key, { auth: { persistSession: false } });
 
-Deno.serve(createHandler(new SupabaseStore(db)));
+// Inside the function, request URLs don't carry the public host and path, so links in the
+// AI instructions page are built from the project URL.
+const publicBase = `${url.replace(/\/+$/, "")}/functions/v1/api`;
+
+Deno.serve(createHandler(new SupabaseStore(db), { publicBase }));

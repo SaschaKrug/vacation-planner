@@ -26,6 +26,7 @@
     <div class="actions" id="actions" hidden>
       <span id="sync-status" class="sync-status" aria-live="polite"></span>
       <button id="btn-share" class="btn primary" data-i18n="top.share">Share<span class="long-label"> &amp; iCloud</span></button>
+      <button id="btn-ai" class="btn" title="Let an AI agent manage this planner" aria-label="AI" data-i18n-title="top.ai_title" data-i18n-aria-label="top.ai_label" data-i18n="top.ai">✨<span class="long-label"> AI</span></button>
       <button id="btn-api" class="btn" data-i18n="top.api">API</button>
       <button id="btn-help" class="icon-btn" title="Keyboard shortcuts" aria-label="Help" data-i18n-title="top.help_title" data-i18n-aria-label="top.help">?</button>
     </div>
@@ -168,6 +169,24 @@
         </ol>
       </details>
     </section>
+  </dialog>
+
+  <!-- AI assistant -->
+  <dialog id="dlg-ai" class="dialog">
+    <form method="dialog" class="dialog-head">
+      <h2 data-i18n="ai.title">Let an AI manage this planner</h2>
+      <button class="icon-btn" aria-label="Close" data-i18n-aria-label="close">✕</button>
+    </form>
+    <p class="muted" data-i18n="ai.intro">Point an AI agent at one link: it explains the planner and the API, so the
+      agent can read and change entries, types and notes for you. Changes show up here within seconds.</p>
+    <p id="ai-readonly" class="muted" hidden data-i18n="ai.readonly">This is a view-only link, so the AI can only read the planner.</p>
+    <h3 data-i18n="ai.quickstart">Quickstart</h3>
+    <p class="muted" data-i18n="ai.quickstart_help">Copy this prompt into an AI agent that can send HTTP requests, e.g.
+      Claude Code, Codex or ChatGPT agent mode.</p>
+    <textarea id="ai-prompt" class="ai-prompt" rows="3" readonly aria-label="Prompt" data-i18n-aria-label="ai.prompt"></textarea>
+    <button class="btn primary ai-copy" data-i18n="ai.copy" data-copy="ai-prompt">Copy prompt</button>
+    <p id="ai-warning" class="muted" data-i18n="ai.warning">Like the edit link, this link is the key: anyone who has it –
+      including the AI service – can change the planner.</p>
   </dialog>
 
   <!-- API -->

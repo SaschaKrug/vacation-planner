@@ -596,3 +596,53 @@ Deno.test("answers CORS preflight", async () => {
   assertEquals(res.status, 204);
   assertEquals(res.headers.get("access-control-allow-origin"), "*");
 });
+
+Deno.test("agent page describes the planner with ready-to-use URLs", async () => {
+  const { call } = setup();
+  // Types only in 2025: the examples use that year instead of the current one.
+  const created = await call("POST", "/sessions", { name: "Family", year: 2025 });
+  const s = created.data.session;
+  const res = await call("GET", `/sessions/${s.id}/agent`);
+  assertEquals(res.status, 200);
+  assertMatch(res.headers.get("content-type")!, /^text\/markdown/);
+  assertEquals(res.headers.get("cache-control"), "no-store");
+  const doc: string = res.data;
+  assert(doc.includes("Family"));
+  assert(doc.includes("full edit access"));
+  assert(doc.includes(`POST ${BASE}/sessions/${s.id}/entries`));
+  assert(doc.includes("| `vacation` | Vacation | covers | #22c55e |"));
+  // The example body in the page works against the real endpoint.
+  const body = JSON.parse(/-d '(\{.*\})'/.exec(doc)![1]);
+  assertEquals(body.from, "2025-08-03");
+  const add = await call("POST", `/sessions/${s.id}/entries`, body);
+  assertEquals(add.status, 200);
+  const entries = await call("GET", `/sessions/${s.id}/entries?year=2025`);
+  assert(entries.data["2025-08-04"].includes("vacation"));
+});
+
+Deno.test("agent page for a read-only id has no edit id or write requests", async () => {
+  const { call } = setup();
+  const s = await newSession(call);
+  const res = await call("GET", `/sessions/${s.readId}/agent`);
+  assertEquals(res.status, 200);
+  assert(res.data.includes("read-only"));
+  assert(!res.data.includes(s.id));
+  assert(!res.data.includes("POST"));
+});
+
+Deno.test("agent page only answers GET and doesn't run requests", async () => {
+  const { call } = setup();
+  const s = await newSession(call);
+  let res = await call("POST", `/sessions/${s.id}/agent`, {});
+  assertEquals(res.status, 405);
+  const body = encodeURIComponent(JSON.stringify({ type: "vacation", date: "2026-03-02" }));
+  res = await call("GET", `/sessions/${s.id}/agent/entries?method=POST&body=${body}`);
+  assertEquals(res.status, 404);
+  res = await call("GET", `/sessions/${s.id}/agent?method=PATCH&body=%7B%22name%22%3A%22x%22%7D`);
+  assertEquals(res.status, 200);
+  const state = await call("GET", `/sessions/${s.id}?year=2026`);
+  assertEquals(state.data.session.name, "Family");
+  assertEquals(state.data.entries, {});
+  res = await call("GET", `/sessions/nosuchsession1234/agent`);
+  assertEquals(res.status, 404);
+});

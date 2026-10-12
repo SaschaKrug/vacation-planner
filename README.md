@@ -28,6 +28,12 @@ closures, with a coverage check, a REST API and an iCloud / Apple Calendar feed.
 - **iCloud:** *Share & iCloud* → *Subscribe on this device*, or on a Mac: Calendar → File →
   New Calendar Subscription → paste the feed URL → Location **iCloud**. The feed uses the
   view-only id, so it never exposes the edit link.
+- **Let an AI agent manage it:** *✨ AI* gives a ready-to-paste prompt with one link for an AI
+  agent that can send HTTP requests (Claude Code, Codex, ChatGPT agent mode …). The link returns
+  instructions with the planner's types and ready-to-use API URLs; the agent then reads and
+  changes the planner through the API, and the open app shows the changes within seconds. The
+  link carries the edit id, so it's as powerful as the edit link (the view-only link gives a
+  read-only version).
 - **English and German:** the language follows the browser and can be switched at the top right.
   New planners get default types in that language, and the calendar feed uses it for its texts.
 
@@ -104,6 +110,8 @@ working across years.
 | `DELETE /sessions/{id}/types/{type}?year=2026` | Delete a type and all its entries in that year |
 | `POST /sessions/{id}/types/copy` | Copy a year's types into another year: `{"from": 2026, "to": 2027}`; types the target year already has (same id) are kept |
 | `GET /sessions/{id}/calendar.ics` | iCalendar feed. `?types=a,b` filters (by id or name, in every year), `?gaps=1` adds “⚠ Not covered” events, `?notes=1` adds day notes as events, `?name=` overrides the calendar name, `?lang=de` German event texts |
+
+| `GET /sessions/{id}/agent` | Instructions for AI agents (Markdown) with this planner's types and API URLs |
 
 Roles: `none`, `needs_cover`, `covers`, `day_off`.
 
