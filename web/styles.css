@@ -98,16 +98,12 @@ kbd {
 }
 .brand { display: flex; align-items: center; gap: 10px; min-width: 0; grid-column: 1; }
 .logo {
-  display: grid;
-  place-items: center;
+  display: block;
   flex: none;
   width: 32px;
   height: 32px;
   border-radius: 9px;
-  font-size: 18px;
-  line-height: 1;
-  background: linear-gradient(140deg, #4f86ff, #8b5cf6);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), var(--shadow-sm);
+  box-shadow: var(--shadow-sm);
 }
 .home-link { color: var(--text); text-decoration: none; font-weight: 650; letter-spacing: -0.01em; }
 .session-name {
@@ -856,7 +852,7 @@ details li { margin: 6px 0; }
   /* One row: name, year, save dot, Share (icon only), menu. */
   .topbar { position: static; gap: 6px; padding: 8px 8px 8px 12px; grid-template-columns: minmax(0, 1fr) auto auto; }
   .brand:has(.session-name:not([hidden])) .logo { display: none; }
-  .logo { width: 28px; height: 28px; font-size: 16px; border-radius: 8px; }
+  .logo { width: 28px; height: 28px; border-radius: 8px; }
   .session-name { font-size: 15px; padding: 4px 6px; }
   .year-nav { gap: 0; }
   .year-nav .icon-btn { width: 28px; border-color: transparent; box-shadow: none; background: transparent; }
