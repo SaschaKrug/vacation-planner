@@ -808,3 +808,38 @@ Deno.test("clientAddress keys IPv4 by address and IPv6 by /64 network", () => {
   assertEquals(clientAddress(req({ "x-forwarded-for": "2001:db8::1" })), "2001:db8:0:0::/64");
   assertEquals(clientAddress(req({ "x-forwarded-for": "::1" })), "0:0:0:0::/64");
 });
+
+Deno.test("a memory store snapshot restores sessions, types, entries and notes", async () => {
+  const store = new MemoryStore();
+  const handler = createHandler(store);
+  const call = async (method: string, path: string, body?: unknown, h = handler) => {
+    const res = await h(
+      new Request(BASE + path, {
+        method,
+        headers: body ? { "content-type": "application/json" } : {},
+        body: body ? JSON.stringify(body) : undefined,
+      }),
+    );
+    return await res.json();
+  };
+  const { session } = await call("POST", "/sessions", { name: "Family", year: 2026 });
+  await call("POST", `/sessions/${session.id}/entries`, {
+    action: "add",
+    type: "vacation",
+    from: "2026-08-03",
+    to: "2026-08-05",
+  });
+  await call("POST", `/sessions/${session.id}/notes`, { icon: "🎄", date: "2026-12-24" });
+  const before = await call("GET", `/sessions/${session.id}?year=2026`);
+
+  const restored = new MemoryStore();
+  restored.restore(JSON.parse(JSON.stringify(store.snapshot())));
+  const after = await call(
+    "GET",
+    `/sessions/${session.id}?year=2026`,
+    undefined,
+    createHandler(restored),
+  );
+  assertEquals(after, before);
+  assertEquals(Object.keys(after.entries).length, 3);
+});

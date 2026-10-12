@@ -106,6 +106,17 @@ deno task test    # unit + API tests
 deno task check   # type-check, lint, format check
 ```
 
+No database needed: the dev server runs the real API handler on an in-memory store. Options
+(combinable, e.g. `deno task dev --persist --seed`):
+
+| Option | Effect |
+| --- | --- |
+| `--persist` | Keeps the data in `.dev/data.json` across restarts (delete the file to start over) |
+| `--seed` | Adds a *Demo family* planner with types, entries, notes and uncovered days in this and next year, if there are no planners yet |
+| `--rate-limit` | Low rate limits (3 new planners, 30 changes per minute) to try the app's 429 handling |
+
+On start, the server prints the edit and view links of all planners it holds.
+
 ## API
 
 Base URL: `https://<project-ref>.supabase.co/functions/v1/api` (*⋯* → *API for scripts* in the app

@@ -1,6 +1,6 @@
 {
   "tasks": {
-    "dev": "deno run --allow-net --allow-read --allow-env dev/server.ts",
+    "dev": "deno run --allow-net --allow-read --allow-env --allow-write=.dev dev/server.ts",
     "test": "deno test --allow-read tests/",
     "check": "deno check supabase/functions/api/index.ts dev/server.ts && deno lint && deno fmt --check"
   },
