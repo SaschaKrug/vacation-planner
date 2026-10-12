@@ -206,6 +206,7 @@ kbd {
 .menu-item[aria-checked="true"] { font-weight: 600; }
 .menu-item[aria-checked="true"] .menu-icon::before { content: "✓"; color: var(--accent); }
 .menu-sep { height: 1px; margin: 6px 4px; background: var(--border); }
+@media (max-width: 640px) { .menu .desktop-only { display: none; } }
 .menu-label { padding: 4px 10px 2px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 
 .btn {

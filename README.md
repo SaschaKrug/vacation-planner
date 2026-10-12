@@ -9,7 +9,8 @@ closures, with a coverage check, a REST API and an iCloud / Apple Calendar feed.
   per month instead (Monday to Sunday), with the type chips and the actions for the selected
   days in a bar at the bottom.
 - **Zoom:** the 🔍 slider below the calendar (or `Ctrl/⌘` + `+` / `−` / `0`) sets how many days
-  fit across it, 7 to 31; zoomed in, the cells also show the weekday. Remembered per device.
+  fit across it, 7 to 31; zoomed in, the cells also show the weekday (or always, with
+  *⋯* → *Always show weekdays*). Remembered per device.
 - Your own entry types (name + color), **per year**: every year has its own types, so 2027 can
   have different people, colors or day-care closures than 2026. New planners start with
   *Holiday*, *Vacation* and *Sick*; a year without types offers to copy them from the closest
