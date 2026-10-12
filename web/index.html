@@ -33,6 +33,11 @@
 
   <!-- Overflow menu of the top bar (opened by #btn-menu) -->
   <div id="menu" class="menu" popover role="menu">
+    <div id="history" role="group" aria-label="Undo / redo" data-i18n-aria-label="toolbar.history">
+      <button id="btn-undo" class="menu-item" role="menuitem" disabled><span class="menu-icon" aria-hidden="true">↶</span><span data-i18n="toolbar.undo">Undo</span><kbd class="menu-kbd" data-i18n="menu.undo_key">Ctrl/⌘+Z</kbd></button>
+      <button id="btn-redo" class="menu-item" role="menuitem" disabled><span class="menu-icon" aria-hidden="true">↷</span><span data-i18n="toolbar.redo">Redo</span><kbd class="menu-kbd" data-i18n="menu.redo_key">Ctrl/⌘+Y</kbd></button>
+      <div class="menu-sep" role="separator"></div>
+    </div>
     <button id="btn-ai" class="menu-item" role="menuitem"><span class="menu-icon" aria-hidden="true">✨</span><span data-i18n="menu.ai">AI assistant</span></button>
     <button id="btn-api" class="menu-item" role="menuitem"><span class="menu-icon" aria-hidden="true">{ }</span><span data-i18n="menu.api">API for scripts</span></button>
     <button id="btn-clone" class="menu-item" role="menuitem"><span class="menu-icon" aria-hidden="true">⧉</span><span data-i18n="menu.clone">Clone planner</span></button>
@@ -97,10 +102,6 @@
       <section class="toolbar" aria-label="Entry types" data-i18n-aria-label="toolbar.label">
         <div id="types" class="types"></div>
         <button id="btn-edit-types" class="icon-btn edit-types" title="Edit types" aria-label="Edit types" data-i18n-title="toolbar.edit_types" data-i18n-aria-label="toolbar.edit_types"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4"/></svg></button>
-        <div id="history" class="history" role="group" aria-label="Undo / redo" data-i18n-aria-label="toolbar.history">
-          <button id="btn-undo" class="icon-btn" title="Undo (Ctrl/⌘+Z)" aria-label="Undo" data-i18n-title="toolbar.undo_title" data-i18n-aria-label="toolbar.undo" disabled><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
-          <button id="btn-redo" class="icon-btn" title="Redo (Ctrl/⌘+Y)" aria-label="Redo" data-i18n-title="toolbar.redo_title" data-i18n-aria-label="toolbar.redo" disabled><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 14 5-5-5-5M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>
-        </div>
       </section>
     </div>
   </main>
@@ -237,7 +238,7 @@
       <tr class="touch-row"><td data-i18n="help.long_press">Long-press + drag</td><td data-i18n="help.long_press_do">Select a range of days</td></tr>
       <tr class="touch-row"><td data-i18n="help.range">Range</td><td data-i18n="help.range_do">Tap a start day, then “Range”, then the end day</td></tr>
       <tr class="touch-row"><td data-i18n="help.multi">Multi-select</td><td data-i18n="help.multi_do">Turn it on, then tap days to add or remove them; long-press + drag adds a range</td></tr>
-      <tr class="touch-row"><td data-i18n="help.undo_touch">↶ / ↷</td><td data-i18n="help.undo_do">Undo / redo</td></tr>
+      <tr class="touch-row"><td data-i18n="help.undo_touch">⋯ menu</td><td data-i18n="help.undo_do">Undo / redo</td></tr>
       <tr class="mouse-row"><td data-i18n="help.click">Click / drag</td><td data-i18n="help.click_do">Select a day / a range of days (across months)</td></tr>
       <tr class="mouse-row"><td data-i18n="help.shift"><kbd>Shift</kbd> + click</td><td data-i18n="help.shift_do">Extend the selection</td></tr>
       <tr class="mouse-row"><td data-i18n="help.ctrl"><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + click</td><td data-i18n="help.ctrl_do">Add single days to the selection</td></tr>
