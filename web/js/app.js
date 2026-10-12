@@ -502,6 +502,7 @@ function centerInGrid(date) {
 // Phones show stacked month calendars instead, which don't zoom.
 const ZOOM = { min: 7, max: 31, initial: 31, key: "vp-days-wide" };
 const SHOW_WEEKDAYS = 16; // from this zoom on, cells are big enough for weekday letters
+const WEEKDAYS_KEY = "vp-show-weekdays"; // "1": weekday letters at every zoom (⋯ menu)
 const narrowScreen = matchMedia("(max-width: 640px)");
 const coarsePointer = matchMedia("(pointer: coarse)");
 
@@ -518,6 +519,16 @@ function shownDays() {
 function setShownDays(n) {
   n = Math.min(ZOOM.max, Math.max(ZOOM.min, Math.round(n)));
   storage(() => localStorage.setItem(ZOOM.key, String(n)));
+  applyZoom();
+}
+
+function alwaysWeekdays() {
+  return storage(() => localStorage.getItem(WEEKDAYS_KEY) === "1", false);
+}
+
+function setAlwaysWeekdays(on) {
+  storage(() => localStorage.setItem(WEEKDAYS_KEY, on ? "1" : "0"));
+  $("btn-weekdays").setAttribute("aria-checked", String(on));
   applyZoom();
 }
 
@@ -549,7 +560,7 @@ function applyZoom({ keepView = true } = {}) {
     ? state.focus ?? centerDate()
     : null;
   wrap.style.setProperty("--days", n);
-  wrap.classList.toggle("show-wd", n <= SHOW_WEEKDAYS);
+  wrap.classList.toggle("show-wd", n <= SHOW_WEEKDAYS || alwaysWeekdays());
   const slider = $("zoom");
   slider.min = ZOOM.min;
   slider.max = ZOOM.max;
@@ -1761,6 +1772,8 @@ function bind() {
     document.addEventListener("click", (e) => !menu.contains(e.target) && closeMenu());
   }
   for (const item of menu.querySelectorAll("button")) item.addEventListener("click", closeMenu);
+  $("btn-weekdays").setAttribute("aria-checked", String(alwaysWeekdays()));
+  $("btn-weekdays").addEventListener("click", () => setAlwaysWeekdays(!alwaysWeekdays()));
   $("btn-create").addEventListener("click", createPlanner);
   $("open-form").addEventListener("submit", (e) => {
     e.preventDefault();

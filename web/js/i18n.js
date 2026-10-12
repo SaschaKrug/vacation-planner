@@ -30,6 +30,8 @@ const STRINGS = {
     "menu.api": "API for scripts",
     "menu.clone": "Clone planner",
     "menu.help": "Help &amp; shortcuts",
+    "menu.weekdays": "Always show weekdays",
+    "menu.weekdays_title": "Show the weekday letters on the days at every zoom level",
     "menu.undo_key": "Ctrl/⌘+Z",
     "menu.redo_key": "Ctrl/⌘+Y",
 
@@ -291,6 +293,8 @@ const STRINGS = {
     "menu.api": "API für Skripte",
     "menu.clone": "Planer duplizieren",
     "menu.help": "Hilfe &amp; Tastenkürzel",
+    "menu.weekdays": "Wochentage immer anzeigen",
+    "menu.weekdays_title": "Die Wochentag-Buchstaben in jeder Zoomstufe auf den Tagen anzeigen",
     "menu.undo_key": "Strg/⌘+Z",
     "menu.redo_key": "Strg/⌘+Y",
 
