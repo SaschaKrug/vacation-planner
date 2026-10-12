@@ -38,13 +38,16 @@ closures, with a coverage check, a REST API and an iCloud / Apple Calendar feed.
   changes the planner through the API, and the open app shows the changes within seconds. The
   link carries the edit id, so it's as powerful as the edit link (the view-only link gives a
   read-only version).
+- **Clone:** *⋯* → *Clone planner* copies the planner with all years, types, entries and notes
+  into a new one with its own links; the original stays unchanged. Works from a view-only
+  link too, which gives you your own editable copy.
 - **English and German:** the language follows the browser and can be switched at the top right.
   New planners get default types in that language, and the calendar feed uses it for its texts.
 
 ## Architecture
 
 ```
-GitHub Pages (web/)  ──fetch──▶  Supabase Edge Function "api"  ──▶  Postgres (4 tables)
+GitHub Pages (web/)  ──fetch──▶  Supabase Edge Function "api"  ──▶  Postgres (5 tables)
 iCloud / Apple Calendar ──GET calendar.ics──┘
 ```
 
@@ -52,7 +55,7 @@ iCloud / Apple Calendar ──GET calendar.ics──┘
 | --- | --- |
 | `web/` | Static frontend (plain HTML/CSS/JS, no build step) |
 | `supabase/functions/api/` | Edge Function entry point |
-| `supabase/functions/_shared/` | API handler, iCalendar builder, storage (Supabase + in-memory) |
+| `supabase/functions/_shared/` | API handler, iCalendar builder, storage (Supabase + in-memory), rate limits |
 | `supabase/migrations/` | Database schema |
 | `dev/server.ts` | Local server: frontend + API with an in-memory store |
 | `tests/` | Deno tests (API, iCalendar, calendar logic) |
@@ -79,6 +82,22 @@ migrations → Edge Function → frontend to the `gh-pages` branch.
 The tables use Row Level Security without policies, so they are not reachable with the public
 anon key; all access goes through the Edge Function, which uses the service role key.
 
+### Rate limits
+
+The API counts requests per client address (IPv6: per /64 network) in fixed windows, stored in
+the `rate_limits` table as a keyed hash, never the address itself; rows older than a day are
+deleted. Over the limit, it answers `429` with a `Retry-After` header.
+
+| What | Limit |
+| --- | --- |
+| New planners (`POST /sessions`, `…/clone`) per client | 20 per hour |
+| New planners of all clients together | 500 per hour |
+| Changes (`POST`, `PATCH`, `DELETE`) per client | 300 per 5 minutes |
+
+Reads, including the calendar feed, are not limited: iCloud fetches every subscription from a
+few shared addresses. If counting fails, requests go through. The limits are in
+`RATE_LIMITS` in `supabase/functions/_shared/handler.ts`; the local dev server has none.
+
 ## Local development
 
 ```sh
@@ -104,6 +123,7 @@ working across years.
 | `POST /sessions` | Create a planner. Body (optional): `{"name": "...", "year": 2026, "types": [{"name","color","role"}]}`; the types go into `year` (default: current year); `"lang": "de"` gives German default types and name |
 | `GET /sessions/{id}?year=2026` | Planner, the year's types, entries and notes, and `typeYears` (all years with types). `?from=&to=` also works; no filter = all |
 | `PATCH /sessions/{id}` | Rename: `{"name": "..."}` |
+| `POST /sessions/{id}/clone` | Copy the planner (all years, types, entries, notes) into a new one with new ids. Body (optional): `{"name": "..."}`, default *“… (copy)”*. The view-only id works too |
 | `GET /sessions/{id}/entries?year=2026` | `{"2026-08-03": ["vacation", "day-care-closed"], ...}` |
 | `POST /sessions/{id}/entries` | Change entries (see below) |
 | `GET /sessions/{id}/notes?year=2026` | `{"2026-12-25": {"icon": "🎄", "comment": "Christmas"}, ...}` |
