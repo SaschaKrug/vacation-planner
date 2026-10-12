@@ -83,6 +83,8 @@
           </label>
           <button id="btn-range" class="btn small touch-only" aria-pressed="false"
             title="Tap a start day, enable this, then tap the end day" data-i18n-title="toolbar.range_title" data-i18n="toolbar.range">Range</button>
+          <button id="btn-multi" class="btn small touch-only" aria-pressed="false"
+            title="Tap days to add them to the selection or remove them" data-i18n-title="toolbar.multi_title" data-i18n="toolbar.multi">Multi-select</button>
         </div>
         <button id="btn-deselect" class="icon-btn small" title="Clear the selection (Esc)" aria-label="Clear the selection" data-i18n-title="sel.deselect_title" data-i18n-aria-label="sel.deselect"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
         <label class="zoom" title="Zoom: how many days fit in the calendar (Ctrl/⌘ + / − / 0)" data-i18n-title="toolbar.zoom_title">
@@ -94,6 +96,10 @@
       <section class="toolbar" aria-label="Entry types" data-i18n-aria-label="toolbar.label">
         <div id="types" class="types"></div>
         <button id="btn-edit-types" class="icon-btn edit-types" title="Edit types" aria-label="Edit types" data-i18n-title="toolbar.edit_types" data-i18n-aria-label="toolbar.edit_types"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4"/></svg></button>
+        <div id="history" class="history" role="group" aria-label="Undo / redo" data-i18n-aria-label="toolbar.history">
+          <button id="btn-undo" class="icon-btn" title="Undo (Ctrl/⌘+Z)" aria-label="Undo" data-i18n-title="toolbar.undo_title" data-i18n-aria-label="toolbar.undo" disabled><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
+          <button id="btn-redo" class="icon-btn" title="Redo (Ctrl/⌘+Y)" aria-label="Redo" data-i18n-title="toolbar.redo_title" data-i18n-aria-label="toolbar.redo" disabled><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 14 5-5-5-5M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>
+        </div>
       </section>
     </div>
   </main>
@@ -229,6 +235,8 @@
       <tr class="touch-row"><td data-i18n="help.tap">Tap</td><td data-i18n="help.tap_do">Select a day; tap another day to move the selection</td></tr>
       <tr class="touch-row"><td data-i18n="help.long_press">Long-press + drag</td><td data-i18n="help.long_press_do">Select a range of days</td></tr>
       <tr class="touch-row"><td data-i18n="help.range">Range</td><td data-i18n="help.range_do">Tap a start day, then “Range”, then the end day</td></tr>
+      <tr class="touch-row"><td data-i18n="help.multi">Multi-select</td><td data-i18n="help.multi_do">Turn it on, then tap days to add or remove them; long-press + drag adds a range</td></tr>
+      <tr class="touch-row"><td data-i18n="help.undo_touch">↶ / ↷</td><td data-i18n="help.undo_do">Undo / redo</td></tr>
       <tr class="mouse-row"><td data-i18n="help.click">Click / drag</td><td data-i18n="help.click_do">Select a day / a range of days (across months)</td></tr>
       <tr class="mouse-row"><td data-i18n="help.shift"><kbd>Shift</kbd> + click</td><td data-i18n="help.shift_do">Extend the selection</td></tr>
       <tr class="mouse-row"><td data-i18n="help.ctrl"><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + click</td><td data-i18n="help.ctrl_do">Add single days to the selection</td></tr>
