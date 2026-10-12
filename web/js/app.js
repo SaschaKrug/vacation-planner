@@ -502,6 +502,7 @@ function centerInGrid(date) {
 // Phones show stacked month calendars instead, which don't zoom.
 const ZOOM = { min: 7, max: 31, initial: 31, key: "vp-days-wide" };
 const SHOW_WEEKDAYS = 16; // from this zoom on, cells are big enough for weekday letters
+const WEEKDAYS_KEY = "vp-show-weekdays"; // "1": weekday letters at every zoom (⋯ menu)
 const narrowScreen = matchMedia("(max-width: 640px)");
 const coarsePointer = matchMedia("(pointer: coarse)");
 
@@ -518,6 +519,16 @@ function shownDays() {
 function setShownDays(n) {
   n = Math.min(ZOOM.max, Math.max(ZOOM.min, Math.round(n)));
   storage(() => localStorage.setItem(ZOOM.key, String(n)));
+  applyZoom();
+}
+
+function alwaysWeekdays() {
+  return storage(() => localStorage.getItem(WEEKDAYS_KEY) === "1", false);
+}
+
+function setAlwaysWeekdays(on) {
+  storage(() => localStorage.setItem(WEEKDAYS_KEY, on ? "1" : "0"));
+  $("btn-weekdays").setAttribute("aria-checked", String(on));
   applyZoom();
 }
 
@@ -549,7 +560,7 @@ function applyZoom({ keepView = true } = {}) {
     ? state.focus ?? centerDate()
     : null;
   wrap.style.setProperty("--days", n);
-  wrap.classList.toggle("show-wd", n <= SHOW_WEEKDAYS);
+  wrap.classList.toggle("show-wd", n <= SHOW_WEEKDAYS || alwaysWeekdays());
   const slider = $("zoom");
   slider.min = ZOOM.min;
   slider.max = ZOOM.max;
@@ -934,6 +945,7 @@ function render() {
   $("readonly-banner").hidden = !state.readOnly;
   $("btn-edit-types").hidden = state.readOnly;
   $("history").hidden = state.readOnly;
+  $("btn-import").hidden = state.readOnly;
   $("sel-actions").hidden = state.readOnly;
   const nameInput = $("session-name");
   if (document.activeElement !== nameInput) nameInput.value = state.session?.name ?? "";
@@ -1718,6 +1730,47 @@ async function clonePlanner() {
   }
 }
 
+/** Downloads the planner (all years, without its links) as a JSON file for Import. */
+async function exportPlanner() {
+  if (!state.session) return;
+  if (queue.length || flushing) return toast(t("toast.wait_saving"));
+  try {
+    const data = await api.exportSession(state.token);
+    const blob = new Blob([JSON.stringify(data, null, 2) + "\n"], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${state.session.name.replace(/[\\/:*?"<>|]+/g, "-")} ${today}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+  } catch (err) {
+    toast(t("toast.export_failed", { msg: err.message }), 5000);
+  }
+}
+
+/** Replaces all years, types, entries and notes of this planner with an exported file's;
+ *  the name and the links stay. */
+async function importPlanner(file) {
+  if (!state.session || state.readOnly) return;
+  if (queue.length || flushing) return toast(t("toast.wait_saving"));
+  let data;
+  try {
+    data = JSON.parse(await file.text());
+  } catch {
+    // handled below
+  }
+  if (data?.format !== "vacation-planner") return toast(t("toast.import_invalid"), 5000);
+  if (!confirm(t("import.confirm", { name: state.session.name, file: file.name }))) return;
+  setSync("sync.saving");
+  try {
+    const year = state.year;
+    cacheResponse(state.token, year, await api.importSession(state.token, year, data));
+    location.reload(); // starts over: the undo history doesn't apply to the imported data
+  } catch (err) {
+    setSync(err.status ? "sync.saved" : "sync.offline", !err.status);
+    toast(rateLimited(err) ?? t("toast.import_failed", { msg: err.message }), 5000);
+  }
+}
+
 async function openPlanner(token, year) {
   state.token = token;
   if (year) state.year = year;
@@ -1761,6 +1814,8 @@ function bind() {
     document.addEventListener("click", (e) => !menu.contains(e.target) && closeMenu());
   }
   for (const item of menu.querySelectorAll("button")) item.addEventListener("click", closeMenu);
+  $("btn-weekdays").setAttribute("aria-checked", String(alwaysWeekdays()));
+  $("btn-weekdays").addEventListener("click", () => setAlwaysWeekdays(!alwaysWeekdays()));
   $("btn-create").addEventListener("click", createPlanner);
   $("open-form").addEventListener("submit", (e) => {
     e.preventDefault();
@@ -1807,6 +1862,13 @@ function bind() {
   $("btn-ai").addEventListener("click", openAiDialog);
   $("btn-api").addEventListener("click", openApiDialog);
   $("btn-clone").addEventListener("click", clonePlanner);
+  $("btn-export").addEventListener("click", exportPlanner);
+  $("btn-import").addEventListener("click", () => $("import-file").click());
+  $("import-file").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    e.target.value = ""; // picking the same file again fires "change" again
+    if (file) importPlanner(file);
+  });
   $("btn-help").addEventListener("click", () => $("dlg-help").showModal());
   $("btn-clear").addEventListener("click", clearSelection);
   $("btn-deselect").addEventListener("click", () => {

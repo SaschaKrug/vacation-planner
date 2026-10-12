@@ -718,6 +718,102 @@ Deno.test("clone validates its input", async () => {
   assertEquals(res.data.session.name, "x".repeat(73) + " (copy)");
 });
 
+Deno.test("exports a planner and imports the file over another one", async () => {
+  const { call } = setup();
+  const s = await newSession(call);
+  await call("POST", `/sessions/${s.id}/types/copy`, { from: 2026, to: 2027 });
+  await call("PATCH", `/sessions/${s.id}/types/sick?year=2027`, { name: "Ill", position: 7 });
+  await call("POST", `/sessions/${s.id}/entries`, {
+    ops: [
+      { types: ["vacation", "sick"], dates: ["2026-08-03"] },
+      { type: "holiday", dates: ["2027-01-01"] },
+    ],
+  });
+  await call("POST", `/sessions/${s.id}/notes`, {
+    icon: "🎄",
+    comment: "Xmas",
+    date: "2026-12-25",
+  });
+
+  // The view-only id may export; the file never contains the planner's ids.
+  const res = await call("GET", `/sessions/${s.readId}/export`);
+  assertEquals(res.status, 200);
+  assertEquals(res.headers.get("content-disposition"), 'attachment; filename="family.json"');
+  const file = res.data;
+  assertEquals(file.format, "vacation-planner");
+  assertEquals(file.version, 1);
+  assertEquals(file.name, "Family");
+  assertEquals(file.types.length, 6);
+  assertEquals(file.entries, { "2026-08-03": ["vacation", "sick"], "2027-01-01": ["holiday"] });
+  assertEquals(file.notes, { "2026-12-25": { icon: "🎄", comment: "Xmas" } });
+  const text = JSON.stringify(file);
+  assert(!text.includes(s.id) && !text.includes(s.readId));
+
+  // Importing replaces everything of the target, but keeps its name and links.
+  const target = (await call("POST", "/sessions", { name: "Other", year: 2028 })).data.session;
+  await call("POST", `/sessions/${target.id}/types?year=2028`, { name: "Gone", color: "#000000" });
+  await call("POST", `/sessions/${target.id}/entries`, { type: "gone", date: "2028-03-01" });
+  await call("POST", `/sessions/${target.id}/notes`, { icon: "👻", date: "2028-03-02" });
+  const imported = await call("POST", `/sessions/${target.id}/import?year=2027`, file);
+  assertEquals(imported.status, 200);
+  assertEquals(imported.data.session.id, target.id);
+  assertEquals(imported.data.session.name, "Other");
+  assertEquals(imported.data.typeYears, [2026, 2027]);
+  assertEquals(imported.data.entries, { "2027-01-01": ["holiday"] });
+
+  const all = (await call("GET", `/sessions/${target.id}`)).data;
+  const original = (await call("GET", `/sessions/${s.id}`)).data;
+  assertEquals(all.types, original.types);
+  assertEquals(all.entries, original.entries);
+  assertEquals(all.notes, original.notes);
+  assertEquals((await call("GET", `/sessions/${target.id}/export`)).data.types, file.types);
+});
+
+Deno.test("import needs the edit id and validates the file", async () => {
+  const { call } = setup();
+  const s = await newSession(call);
+  const type = { year: 2026, id: "vacation", name: "Vacation", color: "#22c55e", role: "covers" };
+  const file = { format: "vacation-planner", version: 1, name: "Imported", types: [type] };
+  const path = `/sessions/${s.id}/import`;
+  const status = async (body: unknown) => (await call("POST", path, body)).status;
+
+  assertEquals((await call("POST", `/sessions/${s.readId}/import`, file)).status, 403);
+  assertEquals((await call("POST", "/sessions/unknownToken123/import", file)).status, 404);
+  assertEquals((await call("GET", path)).status, 405);
+  assertEquals(await status({ ...file, format: "other" }), 400);
+  assertEquals(await status({ ...file, version: 2 }), 400);
+  assertEquals(await status({ ...file, types: {} }), 400);
+  assertEquals(await status({ ...file, types: [type, type] }), 400);
+  assertEquals(await status({ ...file, types: [{ ...type, id: "../x" }] }), 400);
+  assertEquals(await status({ ...file, types: [{ ...type, color: "red" }] }), 400);
+  assertEquals(await status({ ...file, types: [{ ...type, role: "boss" }] }), 400);
+  assertEquals(await status({ ...file, types: [{ ...type, year: 26 }] }), 400);
+  // Entries can only use the types of their own year.
+  assertEquals(await status({ ...file, entries: { "2027-08-03": ["vacation"] } }), 400);
+  assertEquals(await status({ ...file, entries: { "2026-02-30": ["vacation"] } }), 400);
+  assertEquals(await status({ ...file, entries: { "2026-08-03": "vacation" } }), 400);
+  assertEquals(await status({ ...file, entries: { "2026-08-03": [1] } }), 400);
+  assertEquals(await status({ ...file, notes: { "2026-12-25": "🎄" } }), 400);
+  assertEquals(
+    await status({ ...file, notes: { "2026-12-25": { comment: "x".repeat(501) } } }),
+    400,
+  );
+
+  // A rejected file changes nothing.
+  const before = (await call("GET", `/sessions/${s.id}`)).data;
+  assertEquals(before.types.map((t: any) => t.id), ["holiday", "vacation", "sick"]);
+
+  // Empty notes are dropped.
+  const res = await call("POST", `${path}?year=2026`, {
+    ...file,
+    entries: { "2026-08-03": ["vacation"] },
+    notes: { "2026-12-24": { icon: "", comment: " " }, "2026-12-25": { icon: "🎄" } },
+  });
+  assertEquals(res.status, 200);
+  assertEquals(res.data.entries, { "2026-08-03": ["vacation"] });
+  assertEquals(res.data.notes, { "2026-12-25": { icon: "🎄", comment: "" } });
+});
+
 const SMALL_LIMITS = {
   create: { max: 2, seconds: 3600 },
   createAll: { max: 5, seconds: 3600 },
