@@ -471,6 +471,79 @@ function centerInGrid(date) {
   });
 }
 
+// ---------------------------------------------------------------- zoom
+
+// The zoom is the number of days that fit across the calendar, remembered per device.
+// Narrow screens show a square window of that many days × months, wide screens show
+// all months in a window that ends at the bottom of the screen (see styles.css).
+const ZOOM = {
+  wide: { min: 7, max: 31, initial: 31, key: "vp-days-wide" },
+  narrow: { min: 3, max: 10, initial: 5, key: "vp-days-narrow" },
+};
+const narrowScreen = matchMedia("(max-width: 640px)");
+
+function zoomRange() {
+  return narrowScreen.matches ? ZOOM.narrow : ZOOM.wide;
+}
+
+function shownDays() {
+  const z = zoomRange();
+  const n = storage(() => Number(localStorage.getItem(z.key)), 0);
+  return n >= z.min && n <= z.max ? n : z.initial;
+}
+
+function setShownDays(n) {
+  const z = zoomRange();
+  n = Math.min(z.max, Math.max(z.min, Math.round(n)));
+  storage(() => localStorage.setItem(z.key, String(n)));
+  applyZoom();
+}
+
+/** Ctrl/⌘ + / − steps by about a quarter; 0 resets. */
+function zoomBy(dir) {
+  const n = shownDays();
+  if (!dir) setShownDays(zoomRange().initial);
+  else if (dir > 0) setShownDays(Math.min(n - 1, Math.round(n / 1.25)));
+  else setShownDays(Math.max(n + 1, Math.round(n * 1.25)));
+}
+
+/** The day in the middle of the visible part of the calendar. */
+function centerDate() {
+  const wrap = $("grid-wrap");
+  const corner = $("grid").firstElementChild;
+  if (!corner) return null;
+  const r = wrap.getBoundingClientRect();
+  const top = Math.max(r.top + corner.offsetHeight, 0);
+  const bottom = Math.min(r.bottom, innerHeight);
+  const left = r.left + corner.offsetWidth;
+  return dateAt((left + r.right) / 2, (top + bottom) / 2);
+}
+
+function applyZoom({ keepView = true } = {}) {
+  const z = zoomRange();
+  const n = shownDays();
+  const wrap = $("grid-wrap");
+  const keep = keepView && !$("planner").hidden ? state.focus ?? centerDate() : null;
+  wrap.style.setProperty("--days", n);
+  const slider = $("zoom");
+  slider.min = z.min;
+  slider.max = z.max;
+  slider.value = z.min + z.max - n; // to the right = zoom in = fewer days
+  $("zoom-value").textContent = t("toolbar.zoom_days", { n });
+  if (keep) centerInGrid(keep);
+}
+
+/** Wide screens: measures where the calendar starts and what sits below it, so it can end
+ *  at the bottom of the screen and keep the day numbers and month names in view. */
+function fitGridWindow() {
+  const wrap = $("grid-wrap");
+  const r = wrap.getBoundingClientRect();
+  const below = $("planner").getBoundingClientRect().bottom - r.bottom;
+  wrap.style.setProperty("--wrap-top", `${Math.round(r.top + scrollY)}px`);
+  wrap.style.setProperty("--wrap-below", `${Math.max(0, Math.round(below))}px`);
+}
+new ResizeObserver(fitGridWindow).observe($("planner"));
+
 // ---------------------------------------------------------------- rendering
 
 let cells = new Map();
@@ -964,8 +1037,16 @@ function inEditable(e) {
 }
 
 function onKeyDown(e) {
-  if ($("planner").hidden || inEditable(e)) return;
+  if ($("planner").hidden) return;
   const mod = e.ctrlKey || e.metaKey;
+  // Zooms the calendar instead of the page, also while a field has the focus.
+  const zoom = { "+": 1, "=": 1, "-": -1, "0": 0 }[e.key];
+  if (mod && !e.altKey && zoom !== undefined && !document.querySelector("dialog[open]")) {
+    e.preventDefault();
+    zoomBy(zoom);
+    return;
+  }
+  if (inEditable(e)) return;
   const arrows = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -31, ArrowDown: 31 };
 
   if (e.key in arrows) {
@@ -1363,6 +1444,7 @@ function renderLangSelect() {
 function relocalize() {
   applyStatic();
   setSync(...syncState);
+  applyZoom({ keepView: false });
   if (!$("planner").hidden) {
     buildGrid();
     render();
@@ -1533,6 +1615,14 @@ function bind() {
     "change",
     () => storage(() => localStorage.setItem("vp-skip-weekends", skip.checked ? "1" : "0")),
   );
+
+  const zoom = $("zoom");
+  zoom.addEventListener(
+    "input",
+    () => setShownDays(Number(zoom.min) + Number(zoom.max) - zoom.value),
+  );
+  narrowScreen.addEventListener("change", () => applyZoom());
+  applyZoom({ keepView: false });
 
   const grid = $("grid");
   grid.addEventListener("pointerdown", onPointerDown);

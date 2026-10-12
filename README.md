@@ -6,6 +6,9 @@ closures, with a coverage check, a REST API and an iCloud / Apple Calendar feed.
 **Live:** https://vacation-planner.fa-krug.de/
 
 - All days of a year as 12 rows × 31 days; pick the year at the top.
+- **Zoom:** the 🔍 slider (or `Ctrl/⌘` + `+` / `−` / `0`) sets how many days fit across the
+  calendar – 7 to 31 on wide screens, 3 to 10 on phones (a square window of days × months).
+  Remembered per device.
 - Your own entry types (name + color), **per year**: every year has its own types, so 2027 can
   have different people, colors or day-care closures than 2026. New planners start with
   *Holiday*, *Vacation* and *Sick*; a year without types offers to copy them from the closest

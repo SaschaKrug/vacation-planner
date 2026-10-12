@@ -50,6 +50,9 @@ const STRINGS = {
     "toolbar.skip_weekends_title": "Weekends are left out when filling, pasting or toggling ranges",
     "toolbar.range": "Range select",
     "toolbar.range_title": "Tap a start day, enable this, then tap the end day",
+    "toolbar.zoom": "Zoom",
+    "toolbar.zoom_title": "Zoom: how many days fit in the calendar (Ctrl/⌘ + / − / 0)",
+    "toolbar.zoom_days": ({ n }) => `${n} ${s(n, "day", "days")}`,
     "readonly.banner": "View-only link – ask for the edit link to make changes.",
     "grid.label": "Year calendar",
     "status.hint":
@@ -209,6 +212,8 @@ const STRINGS = {
     "help.undo_do": "Undo / redo",
     "help.note": "<kbd>N</kbd> / double-click",
     "help.note_do": "Add an icon or comment to the selected days",
+    "help.zoom": "<kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>+</kbd> / <kbd>−</kbd> / <kbd>0</kbd>",
+    "help.zoom_do": "Zoom the calendar in / out (fewer or more days at once) / reset",
     "help.gap_do": "Jump to the next day that still needs cover",
     "help.esc": "<kbd>Esc</kbd>",
     "help.esc_do": "Clear the selection",
@@ -254,6 +259,9 @@ const STRINGS = {
       "Wochenenden werden beim Füllen, Einfügen und Umschalten von Bereichen ausgelassen",
     "toolbar.range": "Bereich wählen",
     "toolbar.range_title": "Starttag antippen, dies aktivieren, dann den Endtag antippen",
+    "toolbar.zoom": "Zoom",
+    "toolbar.zoom_title": "Zoom: wie viele Tage in den Kalender passen (Strg/⌘ + / − / 0)",
+    "toolbar.zoom_days": ({ n }) => `${n} ${s(n, "Tag", "Tage")}`,
     "readonly.banner": "Nur-Lese-Link – frag nach dem Bearbeitungslink, um etwas zu ändern.",
     "grid.label": "Jahreskalender",
     "status.hint":
@@ -417,6 +425,9 @@ const STRINGS = {
     "help.undo_do": "Rückgängig / wiederholen",
     "help.note": "<kbd>N</kbd> / Doppelklick",
     "help.note_do": "Den ausgewählten Tagen ein Symbol oder einen Kommentar geben",
+    "help.zoom": "<kbd>Strg</kbd>/<kbd>⌘</kbd> + <kbd>+</kbd> / <kbd>−</kbd> / <kbd>0</kbd>",
+    "help.zoom_do":
+      "Kalender vergrößern / verkleinern (weniger oder mehr Tage auf einmal) / zurücksetzen",
     "help.gap_do": "Zum nächsten Tag springen, der noch Betreuung braucht",
     "help.esc": "<kbd>Esc</kbd>",
     "help.esc_do": "Auswahl aufheben",
