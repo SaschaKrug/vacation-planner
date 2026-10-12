@@ -23,10 +23,12 @@ const STRINGS = {
     "top.next_year": "Next year",
     "top.next_year_title": "Next year (PageDown)",
     "top.year": "Year",
-    "top.share": 'Share<span class="long-label"> &amp; iCloud</span>',
-    "top.api": "API",
-    "top.help": "Help",
-    "top.help_title": "Keyboard shortcuts",
+    "top.share": "Share",
+    "top.share_title": "Share & iCloud",
+    "top.more": "More",
+    "menu.ai": "AI assistant",
+    "menu.api": "API for scripts",
+    "menu.help": "Help &amp; shortcuts",
 
     // landing
     "landing.title": "Plan the whole year at a glance",
@@ -48,16 +50,19 @@ const STRINGS = {
     "toolbar.note_title": "Add an icon or comment to the selected days (N)",
     "toolbar.skip_weekends": "Skip weekends",
     "toolbar.skip_weekends_title": "Weekends are left out when filling, pasting or toggling ranges",
-    "toolbar.range": "Range select",
+    "toolbar.range": "Range",
     "toolbar.range_title": "Tap a start day, enable this, then tap the end day",
     "toolbar.zoom": "Zoom",
     "toolbar.zoom_title": "Zoom: how many days fit in the calendar (Ctrl/⌘ + / − / 0)",
     "toolbar.zoom_days": ({ n }) => `${n} ${s(n, "day", "days")}`,
     "readonly.banner": "View-only link – ask for the edit link to make changes.",
     "grid.label": "Year calendar",
-    "status.hint":
-      "Then click a type or press <kbd>1</kbd>–<kbd>9</kbd> · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy/paste · drag the ▪ handle to fill · <kbd>N</kbd> note · <kbd>Del</kbd> clear · <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo",
-    "sel.none": "Click or drag over days to select them.",
+    "sel.none": "Click or drag over days to select them. Press ? for all shortcuts.",
+    "sel.none_touch": "Tap a day to select it – long-press and drag for a range.",
+    "sel.clear": "Clear",
+    "sel.clear_title": "Remove all entries from the selected days (Del)",
+    "sel.deselect": "Clear the selection",
+    "sel.deselect_title": "Clear the selection (Esc)",
     "sel.view_only": "View-only",
     "sel.info": ({ n, work, span }) =>
       `${n} ${s(n, "day", "days")} selected (${work} ${s(work, "weekday", "weekdays")}): ${span}`,
@@ -70,11 +75,13 @@ const STRINGS = {
     "fill.handle": "Drag to repeat the selected days",
     "fill.count": ({ n }) => `Fill ${n} ${s(n, "day", "days")}`,
     "fill.drag_past": "Drag past the selection to repeat it",
-    "coverage.gaps": ({ n, names }) =>
-      `⚠ ${n} ${s(n, "weekday", "weekdays")} with “${names}” not covered yet`,
+    "coverage.gaps": ({ n }) => `⚠ ${n} uncovered ${s(n, "weekday", "weekdays")}`,
+    "coverage.gaps_title": ({ n, names }) =>
+      `${n} ${s(n, "weekday", "weekdays")} with “${names}” not covered yet`,
     "coverage.next": "Next gap →",
     "coverage.next_title": "Jump to the next uncovered day (G)",
-    "coverage.ok": "✓ All “{names}” days in {year} are covered",
+    "coverage.ok": "✓ All covered",
+    "coverage.ok_title": "All “{names}” days in {year} are covered",
 
     // roles
     "role.none": "Normal",
@@ -111,11 +118,11 @@ const STRINGS = {
     // types dialog
     "types.title": "Entry types",
     "types.title_year": "Entry types {year}",
-    "types.intro": "Changes are saved immediately. The role decides how the coverage check works:",
-    "types.year_note": "These types belong to {year}. Every year has its own types.",
+    "types.year_note":
+      "These types belong to {year} – every year has its own. Changes are saved immediately.",
     "types.empty": "No entry types for {year} yet.",
     "types.empty_readonly": "No entry types for {year}.",
-    "types.empty_hint": "Add some with “Edit types”.",
+    "types.add_first": "Add types",
     "types.copy_from": "Copy types from {year}",
     "types.copy_from_title": "Start {to} with the types of {from}; you can change them afterwards",
     "types.help_needs":
@@ -123,6 +130,7 @@ const STRINGS = {
     "types.help_covers": "<b>Covers</b> – e.g. “Vacation Dad”. Covers a “needs cover” day.",
     "types.help_day_off":
       "<b>Day off</b> – e.g. “Holiday”. Covers everything and doesn't count as a used vacation day.",
+    "types.roles_summary": "What do the roles do?",
     "types.help_none": "<b>Normal</b> – just a color, no coverage logic.",
     "types.add": "+ Add type",
     "types.color": "Color",
@@ -152,11 +160,12 @@ const STRINGS = {
 
     // share dialog
     "share.title": "Share &amp; subscribe",
+    "share.tab_links": "Links",
+    "share.tab_calendar": "Calendar &amp; iCloud",
     "share.edit": "Edit link",
     "share.edit_help":
       "Anyone with this link can view and change the planner. Bookmark it – it's the only key.",
     "share.view": "View-only link",
-    "share.icloud": "Add to iCloud / Apple Calendar",
     "share.icloud_help":
       "A read-only calendar feed. Apple Calendar checks it for changes regularly (choose “Every hour” or “Every 5 minutes” when subscribing on a Mac).",
     "share.include": "Include",
@@ -174,9 +183,6 @@ const STRINGS = {
     "close": "Close",
 
     // AI dialog
-    "top.ai": '✨<span class="long-label"> AI</span>',
-    "top.ai_label": "AI",
-    "top.ai_title": "Let an AI agent manage this planner",
     "ai.title": "Let an AI manage this planner",
     "ai.intro":
       "Point an AI agent at one link: it explains the planner and the API, so the agent can read and change entries, types and notes for you. Changes show up here within seconds.",
@@ -211,6 +217,13 @@ const STRINGS = {
 
     // help dialog
     "help.title": "How it works",
+    "help.tap": "Tap",
+    "help.tap_do": "Select a day; tap another day to move the selection",
+    "help.long_press": "Long-press + drag",
+    "help.long_press_do": "Select a range of days",
+    "help.range": "Range",
+    "help.range_do": "Tap a start day, then “Range”, then the end day",
+    "help.help_do": "Show this help",
     "help.click": "Click / drag",
     "help.click_do": "Select a day / a range of days (across months)",
     "help.shift": "<kbd>Shift</kbd> + click",
@@ -253,10 +266,12 @@ const STRINGS = {
     "top.next_year": "Nächstes Jahr",
     "top.next_year_title": "Nächstes Jahr (Bild ↓)",
     "top.year": "Jahr",
-    "top.share": 'Teilen<span class="long-label"> &amp; iCloud</span>',
-    "top.api": "API",
-    "top.help": "Hilfe",
-    "top.help_title": "Tastenkürzel",
+    "top.share": "Teilen",
+    "top.share_title": "Teilen & iCloud",
+    "top.more": "Mehr",
+    "menu.ai": "KI-Assistent",
+    "menu.api": "API für Skripte",
+    "menu.help": "Hilfe &amp; Tastenkürzel",
 
     "landing.title": "Das ganze Jahr auf einen Blick planen",
     "landing.lead":
@@ -277,16 +292,20 @@ const STRINGS = {
     "toolbar.skip_weekends": "Wochenenden auslassen",
     "toolbar.skip_weekends_title":
       "Wochenenden werden beim Füllen, Einfügen und Umschalten von Bereichen ausgelassen",
-    "toolbar.range": "Bereich wählen",
+    "toolbar.range": "Bereich",
     "toolbar.range_title": "Starttag antippen, dies aktivieren, dann den Endtag antippen",
     "toolbar.zoom": "Zoom",
     "toolbar.zoom_title": "Zoom: wie viele Tage in den Kalender passen (Strg/⌘ + / − / 0)",
     "toolbar.zoom_days": ({ n }) => `${n} ${s(n, "Tag", "Tage")}`,
     "readonly.banner": "Nur-Lese-Link – frag nach dem Bearbeitungslink, um etwas zu ändern.",
     "grid.label": "Jahreskalender",
-    "status.hint":
-      "Dann eine Art anklicken oder <kbd>1</kbd>–<kbd>9</kbd> drücken · <kbd>Strg</kbd>+<kbd>C</kbd>/<kbd>V</kbd> kopieren/einfügen · ▪-Griff ziehen zum Füllen · <kbd>N</kbd> Notiz · <kbd>Entf</kbd> leeren · <kbd>Strg</kbd>+<kbd>Z</kbd> rückgängig",
-    "sel.none": "Tage anklicken oder darüber ziehen, um sie auszuwählen.",
+    "sel.none":
+      "Tage anklicken oder darüber ziehen, um sie auszuwählen. ? zeigt alle Tastenkürzel.",
+    "sel.none_touch": "Tippe auf einen Tag – lange drücken und ziehen wählt einen Bereich.",
+    "sel.clear": "Leeren",
+    "sel.clear_title": "Alle Einträge der ausgewählten Tage entfernen (Entf)",
+    "sel.deselect": "Auswahl aufheben",
+    "sel.deselect_title": "Auswahl aufheben (Esc)",
     "sel.view_only": "Nur ansehen",
     "sel.info": ({ n, work, span }) =>
       `${n} ${s(n, "Tag", "Tage")} ausgewählt (${work} ${
@@ -302,11 +321,13 @@ const STRINGS = {
     "fill.handle": "Ziehen, um die ausgewählten Tage zu wiederholen",
     "fill.count": ({ n }) => `${n} ${s(n, "Tag", "Tage")} füllen`,
     "fill.drag_past": "Über die Auswahl hinaus ziehen, um sie zu wiederholen",
-    "coverage.gaps": ({ n, names }) =>
-      `⚠ ${n} ${s(n, "Wochentag", "Wochentage")} mit „${names}“ noch nicht abgedeckt`,
+    "coverage.gaps": ({ n }) => `⚠ ${n} ${s(n, "Wochentag", "Wochentage")} nicht abgedeckt`,
+    "coverage.gaps_title": ({ n, names }) =>
+      `${n} ${s(n, "Wochentag", "Wochentage")} mit „${names}“ noch nicht abgedeckt`,
     "coverage.next": "Nächste Lücke →",
     "coverage.next_title": "Zum nächsten nicht abgedeckten Tag springen (G)",
-    "coverage.ok": "✓ Alle „{names}“-Tage in {year} sind abgedeckt",
+    "coverage.ok": "✓ Alles abgedeckt",
+    "coverage.ok_title": "Alle „{names}“-Tage in {year} sind abgedeckt",
 
     "role.none": "Normal",
     "role.needs_cover": "Braucht Betreuung",
@@ -340,21 +361,21 @@ const STRINGS = {
 
     "types.title": "Eintragsarten",
     "types.title_year": "Eintragsarten {year}",
-    "types.year_note": "Diese Arten gehören zu {year}. Jedes Jahr hat eigene Arten.",
+    "types.year_note":
+      "Diese Arten gehören zu {year} – jedes Jahr hat eigene. Änderungen werden sofort gespeichert.",
     "types.empty": "Noch keine Eintragsarten für {year}.",
     "types.empty_readonly": "Keine Eintragsarten für {year}.",
-    "types.empty_hint": "Über „Arten bearbeiten“ hinzufügen.",
+    "types.add_first": "Arten hinzufügen",
     "types.copy_from": "Arten aus {year} übernehmen",
     "types.copy_from_title":
       "{to} mit den Arten aus {from} beginnen; sie lassen sich danach ändern",
-    "types.intro":
-      "Änderungen werden sofort gespeichert. Die Rolle bestimmt, wie die Betreuungsprüfung funktioniert:",
     "types.help_needs":
       "<b>Braucht Betreuung</b> – z. B. „Kita geschlossen“. Ein Wochentag mit diesem Eintrag ohne Betreuung wird als Lücke markiert.",
     "types.help_covers":
       "<b>Betreut</b> – z. B. „Urlaub Papa“. Deckt einen Tag ab, der Betreuung braucht.",
     "types.help_day_off":
       "<b>Frei</b> – z. B. „Feiertag“. Deckt alles ab und zählt nicht als genommener Urlaubstag.",
+    "types.roles_summary": "Was bewirken die Rollen?",
     "types.help_none": "<b>Normal</b> – nur eine Farbe, ohne Betreuungslogik.",
     "types.add": "+ Art hinzufügen",
     "types.color": "Farbe",
@@ -383,11 +404,12 @@ const STRINGS = {
     "note.save": "Speichern",
 
     "share.title": "Teilen &amp; abonnieren",
+    "share.tab_links": "Links",
+    "share.tab_calendar": "Kalender &amp; iCloud",
     "share.edit": "Bearbeitungslink",
     "share.edit_help":
       "Jeder mit diesem Link kann den Planer ansehen und ändern. Setz ein Lesezeichen – er ist der einzige Schlüssel.",
     "share.view": "Nur-Lese-Link",
-    "share.icloud": "Zu iCloud / Apple Kalender hinzufügen",
     "share.icloud_help":
       "Ein schreibgeschützter Kalender-Feed. Apple Kalender prüft ihn regelmäßig auf Änderungen (beim Abonnieren auf dem Mac „Jede Stunde“ oder „Alle 5 Minuten“ wählen).",
     "share.include": "Enthalten",
@@ -404,9 +426,6 @@ const STRINGS = {
     "copy": "Kopieren",
     "close": "Schließen",
 
-    "top.ai": '✨<span class="long-label"> KI</span>',
-    "top.ai_label": "KI",
-    "top.ai_title": "Einen KI-Agenten diesen Planer verwalten lassen",
     "ai.title": "Planer von einer KI verwalten lassen",
     "ai.intro":
       "Gib einem KI-Agenten einen einzigen Link: Er erklärt den Planer und die API, damit der Agent Einträge, Arten und Notizen für dich lesen und ändern kann. Änderungen erscheinen hier nach wenigen Sekunden.",
@@ -442,6 +461,13 @@ const STRINGS = {
     "api.ex_note": "Weihnachten",
 
     "help.title": "So funktioniert's",
+    "help.tap": "Tippen",
+    "help.tap_do": "Tag auswählen; ein anderer Tag verschiebt die Auswahl",
+    "help.long_press": "Lange drücken + ziehen",
+    "help.long_press_do": "Einen Bereich von Tagen auswählen",
+    "help.range": "Bereich",
+    "help.range_do": "Starttag antippen, dann „Bereich“, dann den Endtag",
+    "help.help_do": "Diese Hilfe zeigen",
     "help.click": "Klicken / ziehen",
     "help.click_do": "Einen Tag / einen Zeitraum auswählen (auch über Monate hinweg)",
     "help.shift": "<kbd>Umschalt</kbd> + Klick",
