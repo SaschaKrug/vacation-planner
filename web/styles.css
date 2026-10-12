@@ -8,7 +8,8 @@
   --line: #eceef2; /* calendar grid lines */
   --cell: #ffffff;
   --weekend: #f4f5f8;
-  --invalid: #eceef2;
+  --invalid: #fafbfc; /* days a month doesn't have (Feb 30) are hatched */
+  --invalid-hatch: #d9dce3;
   --accent: #2f6bff;
   --accent-soft: rgba(47, 107, 255, 0.16);
   --accent-faint: rgba(47, 107, 255, 0.07);
@@ -36,10 +37,11 @@
     --text: #e8eaf0;
     --muted: #8a92a6;
     --border: #262b37;
-    --line: #1e222c;
-    --cell: #171a22;
-    --weekend: #111319;
-    --invalid: #0e1015;
+    --line: #252a36;
+    --cell: #1c2029;
+    --weekend: #0f1116;
+    --invalid: #13161d;
+    --invalid-hatch: #262b37;
     --accent: #6c9dff;
     --accent-soft: rgba(108, 157, 255, 0.22);
     --accent-faint: rgba(108, 157, 255, 0.09);
@@ -512,7 +514,10 @@ kbd {
 }
 .grid .month + .cell { border-left: 0; }
 .cell.weekend { background: var(--weekend); }
-.cell.invalid { background: var(--invalid); cursor: default; }
+.cell.invalid {
+  background: repeating-linear-gradient(135deg, transparent 0 4px, var(--invalid-hatch) 4px 5px), var(--invalid);
+  cursor: default;
+}
 .cell .wd {
   position: absolute;
   top: 4px;
