@@ -32,6 +32,9 @@ export const api = {
   getSession: (token, year) => request("GET", `/sessions/${enc(token)}?year=${year}`),
   renameSession: (token, name) => request("PATCH", `/sessions/${enc(token)}`, { name }),
   cloneSession: (token, name) => request("POST", `/sessions/${enc(token)}/clone`, { name }),
+  exportSession: (token) => request("GET", `/sessions/${enc(token)}/export`),
+  importSession: (token, year, file) =>
+    request("POST", `/sessions/${enc(token)}/import?year=${year}`, file),
   addType: (token, year, type) =>
     request("POST", `/sessions/${enc(token)}/types?year=${year}`, type),
   updateType: (token, year, id, patch) =>

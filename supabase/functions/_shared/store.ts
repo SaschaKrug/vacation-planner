@@ -53,6 +53,13 @@ export interface Store {
   /** Inserts or replaces the note on each row's day. */
   upsertNotes(sessionId: string, rows: NoteRow[]): Promise<void>;
   removeNotes(sessionId: string, days: string[]): Promise<void>;
+  /** Replaces all types, entries and notes of the session at once: all or nothing. */
+  replaceContents(
+    sessionId: string,
+    types: TypeRow[],
+    entries: EntryRow[],
+    notes: NoteRow[],
+  ): Promise<void>;
 }
 
 export class MemoryStore implements Store {
@@ -158,5 +165,12 @@ export class MemoryStore implements Store {
     const map = this.notes.get(sessionId);
     if (map) { for (const d of days) map.delete(d); }
     return Promise.resolve();
+  }
+
+  replaceContents(sessionId: string, types: TypeRow[], entries: EntryRow[], notes: NoteRow[]) {
+    this.types.set(sessionId, types.map((t) => ({ ...t })));
+    this.entries.set(sessionId, new Set(entries.map((r) => r.day + "|" + r.type_id)));
+    this.notes.set(sessionId, new Map(notes.map((n) => [n.day, { ...n }])));
+    return this.updateSession(sessionId, {});
   }
 }

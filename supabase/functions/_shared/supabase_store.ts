@@ -129,4 +129,21 @@ export class SupabaseStore implements Store {
       check(await this.db.from("day_notes").delete().eq("session_id", sessionId).in("day", part));
     }
   }
+
+  async replaceContents(
+    sessionId: string,
+    types: TypeRow[],
+    entries: EntryRow[],
+    notes: NoteRow[],
+  ) {
+    // One database function, so a failed import leaves the planner as it was.
+    check(
+      await this.db.rpc("replace_session_contents", {
+        p_session_id: sessionId,
+        p_types: types.map(({ session_id: _, ...t }) => t),
+        p_entries: entries,
+        p_notes: notes,
+      }),
+    );
+  }
 }

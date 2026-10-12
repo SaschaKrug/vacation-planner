@@ -934,6 +934,7 @@ function render() {
   $("readonly-banner").hidden = !state.readOnly;
   $("btn-edit-types").hidden = state.readOnly;
   $("history").hidden = state.readOnly;
+  $("btn-import").hidden = state.readOnly;
   $("sel-actions").hidden = state.readOnly;
   const nameInput = $("session-name");
   if (document.activeElement !== nameInput) nameInput.value = state.session?.name ?? "";
@@ -1718,6 +1719,47 @@ async function clonePlanner() {
   }
 }
 
+/** Downloads the planner (all years, without its links) as a JSON file for Import. */
+async function exportPlanner() {
+  if (!state.session) return;
+  if (queue.length || flushing) return toast(t("toast.wait_saving"));
+  try {
+    const data = await api.exportSession(state.token);
+    const blob = new Blob([JSON.stringify(data, null, 2) + "\n"], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${state.session.name.replace(/[\\/:*?"<>|]+/g, "-")} ${today}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+  } catch (err) {
+    toast(t("toast.export_failed", { msg: err.message }), 5000);
+  }
+}
+
+/** Replaces all years, types, entries and notes of this planner with an exported file's;
+ *  the name and the links stay. */
+async function importPlanner(file) {
+  if (!state.session || state.readOnly) return;
+  if (queue.length || flushing) return toast(t("toast.wait_saving"));
+  let data;
+  try {
+    data = JSON.parse(await file.text());
+  } catch {
+    // handled below
+  }
+  if (data?.format !== "vacation-planner") return toast(t("toast.import_invalid"), 5000);
+  if (!confirm(t("import.confirm", { name: state.session.name, file: file.name }))) return;
+  setSync("sync.saving");
+  try {
+    const year = state.year;
+    cacheResponse(state.token, year, await api.importSession(state.token, year, data));
+    location.reload(); // starts over: the undo history doesn't apply to the imported data
+  } catch (err) {
+    setSync(err.status ? "sync.saved" : "sync.offline", !err.status);
+    toast(rateLimited(err) ?? t("toast.import_failed", { msg: err.message }), 5000);
+  }
+}
+
 async function openPlanner(token, year) {
   state.token = token;
   if (year) state.year = year;
@@ -1807,6 +1849,13 @@ function bind() {
   $("btn-ai").addEventListener("click", openAiDialog);
   $("btn-api").addEventListener("click", openApiDialog);
   $("btn-clone").addEventListener("click", clonePlanner);
+  $("btn-export").addEventListener("click", exportPlanner);
+  $("btn-import").addEventListener("click", () => $("import-file").click());
+  $("import-file").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    e.target.value = ""; // picking the same file again fires "change" again
+    if (file) importPlanner(file);
+  });
   $("btn-help").addEventListener("click", () => $("dlg-help").showModal());
   $("btn-clear").addEventListener("click", clearSelection);
   $("btn-deselect").addEventListener("click", () => {
