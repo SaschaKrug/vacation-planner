@@ -173,4 +173,30 @@ export class MemoryStore implements Store {
     this.notes.set(sessionId, new Map(notes.map((n) => [n.day, { ...n }])));
     return this.updateSession(sessionId, {});
   }
+
+  /** Plain-JSON copy of all data, so the dev server can keep it across restarts. */
+  snapshot(): MemorySnapshot {
+    return [...this.sessions.values()].map((session) => ({
+      session,
+      types: this.types.get(session.id) ?? [],
+      entries: [...(this.entries.get(session.id) ?? [])],
+      notes: [...(this.notes.get(session.id)?.values() ?? [])],
+    }));
+  }
+
+  restore(snapshot: MemorySnapshot) {
+    for (const { session, types, entries, notes } of snapshot) {
+      this.sessions.set(session.id, { ...session });
+      this.types.set(session.id, types.map((t) => ({ ...t })));
+      this.entries.set(session.id, new Set(entries));
+      this.notes.set(session.id, new Map(notes.map((n) => [n.day, { ...n }])));
+    }
+  }
 }
+
+export type MemorySnapshot = {
+  session: SessionRow;
+  types: TypeRow[];
+  entries: string[]; // "day|type"
+  notes: NoteRow[];
+}[];
