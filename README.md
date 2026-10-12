@@ -22,9 +22,11 @@ closures, with a coverage check, a REST API and an iCloud / Apple Calendar feed.
   every weekday that has no *Covers* (e.g. “Vacation …”) or *Day off* (e.g. “Holiday”) entry.
 - Click/drag to select days (also across months), then click a type or press `1`–`9`.
   `Ctrl/⌘+C`, `X`, `V` copy/cut/paste (pasting onto a larger selection repeats the copied days),
-  drag the ▪ fill handle to repeat a selection, `Del` clears, `Ctrl+Z`/`Ctrl+Y` undo/redo,
-  `G` jumps to the next uncovered day, `?` shows all shortcuts. On touch screens: tap a day, or
-  long-press and drag to select a range.
+  drag the ▪ fill handle to repeat a selection, `Del` clears, `G` jumps to the next uncovered
+  day, `?` shows all shortcuts. On touch screens: tap a day, or long-press and drag to select a
+  range; *Multi-select* lets taps add or remove single days (and long-press ranges add to the
+  selection).
+- **Undo / redo:** the ↶ ↷ buttons next to the type chips, or `Ctrl/⌘+Z` / `Ctrl/⌘+Y`.
 - No login: every planner has a secret **edit link** (`?s=<id>`) and a separate **view-only link**.
   Anyone with the edit link can change it, so only share it with people who should.
 - **iCloud:** *Share* → *Calendar & iCloud* → *Subscribe on this device*, or on a Mac: Calendar → File →

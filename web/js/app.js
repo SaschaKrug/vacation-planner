@@ -81,6 +81,7 @@ const state = {
   redo: [],
   version: 0, // bumps on every local change; stale poll responses are dropped
   rangeMode: false,
+  multi: false, // touch: taps add days to the selection or remove them
 };
 
 const today = (() => {
@@ -355,6 +356,7 @@ function recordStep(step) {
   state.undo.push(step);
   if (state.undo.length > 200) state.undo.shift();
   state.redo = [];
+  renderHistory();
 }
 
 function applyStep(step, values) {
@@ -367,6 +369,7 @@ function undo() {
   if (!step) return toast(t("toast.nothing_undo"));
   applyStep(step, step.before);
   state.redo.push(step);
+  renderHistory();
 }
 
 function redo() {
@@ -374,6 +377,7 @@ function redo() {
   if (!step) return toast(t("toast.nothing_redo"));
   applyStep(step, step.after);
   state.undo.push(step);
+  renderHistory();
 }
 
 function selectedDays() {
@@ -431,6 +435,19 @@ function select(a, b = a, { add = false } = {}) {
   state.anchor = a;
   state.focus = b;
   renderSelection();
+}
+
+/** Adds a single day to the selection, or removes it if it is already selected. */
+function toggleDay(date) {
+  if (!state.selection.has(date)) return select(date, date, { add: true });
+  state.selection.delete(date);
+  state.anchor = state.focus = date;
+  renderSelection();
+}
+
+function setMulti(on) {
+  state.multi = on;
+  $("btn-multi").setAttribute("aria-pressed", String(on));
 }
 
 function isContiguous(days) {
@@ -771,6 +788,11 @@ function renderSelectionInfo(days) {
     (note ? " · " + noteText(note) : "");
 }
 
+function renderHistory() {
+  $("btn-undo").disabled = !state.undo.length;
+  $("btn-redo").disabled = !state.redo.length;
+}
+
 function renderChipsActive(days) {
   for (const chip of document.querySelectorAll(".chip[data-type]")) {
     const id = chip.dataset.type;
@@ -910,6 +932,7 @@ function render() {
   $("planner").classList.toggle("readonly", state.readOnly);
   $("readonly-banner").hidden = !state.readOnly;
   $("btn-edit-types").hidden = state.readOnly;
+  $("history").hidden = state.readOnly;
   $("sel-actions").hidden = state.readOnly;
   const nameInput = $("session-name");
   if (document.activeElement !== nameInput) nameInput.value = state.session?.name ?? "";
@@ -919,6 +942,7 @@ function render() {
   renderCells();
   renderSelection();
   renderCoverage();
+  renderHistory();
 }
 
 function renderYearSelect() {
@@ -1019,11 +1043,13 @@ function onPointerDown(e) {
   if (e.pointerType === "touch") {
     // Touch: a tap selects a day (see onPointerUp) and a long press starts selecting a
     // range, so a swipe still scrolls; the touchmove listener in bind() stops the scrolling
-    // once a range selection runs.
+    // once a range selection runs. In multi-select mode both add to the selection.
     const timer = setTimeout(() => {
       if (drag?.mode !== "tap" || drag.date !== date) return;
-      drag = { mode: "select", anchor: date, base: new Set(), last: date, touch: true };
-      select(date);
+      const base = new Set(state.multi ? state.selection : []);
+      drag = { mode: "select", anchor: date, base, last: date, touch: true };
+      state.selection = new Set(base);
+      select(date, date, { add: true });
       navigator.vibrate?.(10);
     }, LONG_PRESS_MS);
     drag = { mode: "tap", date, x: e.clientX, y: e.clientY, timer };
@@ -1037,10 +1063,7 @@ function onPointerDown(e) {
   } else if (e.ctrlKey || e.metaKey) {
     const base = new Set(state.selection);
     if (base.has(date)) {
-      base.delete(date);
-      state.selection = new Set(base);
-      state.anchor = state.focus = date;
-      renderSelection();
+      toggleDay(date);
       drag = null;
       return;
     }
@@ -1114,9 +1137,11 @@ function onPointerUp(e) {
   if (d.mode === "tap") {
     if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 10) return; // it was a scroll
     if (state.rangeMode && state.anchor) {
-      select(state.anchor, d.date);
+      select(state.anchor, d.date, { add: state.multi });
       state.rangeMode = false;
       $("btn-range").setAttribute("aria-pressed", "false");
+    } else if (state.multi) {
+      toggleDay(d.date);
     } else {
       select(d.date);
     }
@@ -1166,6 +1191,7 @@ function onKeyDown(e) {
   } else if (e.key === "Escape") {
     if (cancelFill()) return;
     state.selection.clear();
+    setMulti(false);
     renderSelection();
   } else if (e.key === "PageUp") {
     e.preventDefault();
@@ -1762,8 +1788,11 @@ function bind() {
   $("btn-clear").addEventListener("click", clearSelection);
   $("btn-deselect").addEventListener("click", () => {
     state.selection.clear();
+    setMulti(false);
     renderSelection();
   });
+  $("btn-undo").addEventListener("click", undo);
+  $("btn-redo").addEventListener("click", redo);
   for (const tab of SHARE_TABS) {
     $("tab-" + tab).addEventListener("click", () => showShareTab(tab));
     $("tab-" + tab).addEventListener("keydown", (e) => {
@@ -1800,6 +1829,7 @@ function bind() {
     state.rangeMode = !state.rangeMode;
     e.currentTarget.setAttribute("aria-pressed", String(state.rangeMode));
   });
+  $("btn-multi").addEventListener("click", () => setMulti(!state.multi));
   $("dlg-types").addEventListener("close", () => render());
 
   for (const btn of document.querySelectorAll("[data-copy]")) {
