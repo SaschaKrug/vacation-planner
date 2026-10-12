@@ -35,6 +35,8 @@ const $ = (id) => document.getElementById(id);
 const POLL_MS = 15000;
 const RECENT_KEY = "vp-recent";
 const CACHE_KEY = "vp-cache";
+const HINTED_KEY = "vp-hinted";
+const LONG_PRESS_MS = 350;
 const CACHE_SIZE = 12;
 const MAX_DAYS_PER_REQUEST = 4000; // server limit
 const SHORT_DATE = { weekday: "short", day: "numeric", month: "short" };
@@ -102,8 +104,11 @@ let syncState = ["", false];
 function setSync(key, error = false) {
   syncState = [key, error];
   const el = $("sync-status");
-  el.textContent = key ? t(key) : "";
-  el.classList.toggle("error", error);
+  const text = key ? t(key) : "";
+  el.querySelector(".sync-text").textContent = text;
+  el.title = text;
+  // saved | saving | loading | updating | error: styles.css draws a colored dot for each.
+  el.dataset.state = error ? "error" : key.replace("sync.", "");
 }
 
 function storage(fn, fallback) {
@@ -435,7 +440,7 @@ function isContiguous(days) {
 function moveFocus(delta, extend) {
   const from = state.focus ?? today;
   let next;
-  if (Math.abs(delta) === 1) next = addDays(from, delta);
+  if (Math.abs(delta) < 31) next = addDays(from, delta); // days, or weeks in the month view
   else {
     // Up/down: same day number in the previous/next month (clamped).
     const [y, m, d] = from.split("-").map(Number);
@@ -462,6 +467,7 @@ function jumpToNextGap() {
 function centerInGrid(date) {
   const cell = cellFor(date);
   if (!cell) return;
+  if (monthView()) return cell.scrollIntoView({ block: "center" }); // the page scrolls
   const wrap = $("grid-wrap");
   const corner = $("grid").firstElementChild;
   const left = corner.offsetWidth, top = corner.offsetHeight;
@@ -473,36 +479,35 @@ function centerInGrid(date) {
 
 // ---------------------------------------------------------------- zoom
 
-// The zoom is the number of days that fit across the calendar, remembered per device.
-// Narrow screens show a square window of that many days × months, wide screens show
-// all months in a window that ends at the bottom of the screen (see styles.css).
-const ZOOM = {
-  wide: { min: 7, max: 31, initial: 31, key: "vp-days-wide" },
-  narrow: { min: 3, max: 10, initial: 5, key: "vp-days-narrow" },
-};
+// The zoom is the number of days that fit across the year grid, remembered per device.
+// All months show in a window that ends at the bottom of the screen (see styles.css).
+// Phones show stacked month calendars instead, which don't zoom.
+const ZOOM = { min: 7, max: 31, initial: 31, key: "vp-days-wide" };
+const SHOW_WEEKDAYS = 16; // from this zoom on, cells are big enough for weekday letters
 const narrowScreen = matchMedia("(max-width: 640px)");
+const coarsePointer = matchMedia("(pointer: coarse)");
 
-function zoomRange() {
-  return narrowScreen.matches ? ZOOM.narrow : ZOOM.wide;
+/** Phones show one calendar per month (7 columns) instead of the 12 × 31 year grid. */
+function monthView() {
+  return narrowScreen.matches;
 }
 
 function shownDays() {
-  const z = zoomRange();
-  const n = storage(() => Number(localStorage.getItem(z.key)), 0);
-  return n >= z.min && n <= z.max ? n : z.initial;
+  const n = storage(() => Number(localStorage.getItem(ZOOM.key)), 0);
+  return n >= ZOOM.min && n <= ZOOM.max ? n : ZOOM.initial;
 }
 
 function setShownDays(n) {
-  const z = zoomRange();
-  n = Math.min(z.max, Math.max(z.min, Math.round(n)));
-  storage(() => localStorage.setItem(z.key, String(n)));
+  n = Math.min(ZOOM.max, Math.max(ZOOM.min, Math.round(n)));
+  storage(() => localStorage.setItem(ZOOM.key, String(n)));
   applyZoom();
 }
 
 /** Ctrl/⌘ + / − steps by about a quarter; 0 resets. */
 function zoomBy(dir) {
+  if (monthView()) return;
   const n = shownDays();
-  if (!dir) setShownDays(zoomRange().initial);
+  if (!dir) setShownDays(ZOOM.initial);
   else if (dir > 0) setShownDays(Math.min(n - 1, Math.round(n / 1.25)));
   else setShownDays(Math.max(n + 1, Math.round(n * 1.25)));
 }
@@ -520,15 +525,17 @@ function centerDate() {
 }
 
 function applyZoom({ keepView = true } = {}) {
-  const z = zoomRange();
   const n = shownDays();
   const wrap = $("grid-wrap");
-  const keep = keepView && !$("planner").hidden ? state.focus ?? centerDate() : null;
+  const keep = keepView && !$("planner").hidden && !monthView()
+    ? state.focus ?? centerDate()
+    : null;
   wrap.style.setProperty("--days", n);
+  wrap.classList.toggle("show-wd", n <= SHOW_WEEKDAYS);
   const slider = $("zoom");
-  slider.min = z.min;
-  slider.max = z.max;
-  slider.value = z.min + z.max - n; // to the right = zoom in = fewer days
+  slider.min = ZOOM.min;
+  slider.max = ZOOM.max;
+  slider.value = ZOOM.min + ZOOM.max - n; // to the right = zoom in = fewer days
   $("zoom-value").textContent = t("toolbar.zoom_days", { n });
   if (keep) centerInGrid(keep);
 }
@@ -567,6 +574,44 @@ function buildGrid() {
   shownSel = new Set();
   shownFocus = null;
   previewed = new Set();
+  const months = monthView();
+  grid.classList.toggle("yv", !months);
+  grid.classList.toggle("mv", months);
+  grid.append(months ? buildMonths() : buildYear());
+  grid.dataset.year = state.year;
+  grid.dataset.layout = layoutName();
+}
+
+function layoutName() {
+  return monthView() ? "months" : "year";
+}
+
+/** A day cell; `label` is its weekday letter (year grid) or day number (month view). */
+function makeCell(date, label) {
+  const cell = document.createElement("div");
+  cell.className = "cell";
+  cell.setAttribute("role", "gridcell");
+  cell.dataset.date = date;
+  const wd = document.createElement("span");
+  wd.className = "wd";
+  wd.textContent = label;
+  const fills = document.createElement("div");
+  fills.className = "fills";
+  const icon = document.createElement("span");
+  icon.className = "note-icon";
+  const mark = document.createElement("span");
+  mark.className = "note-mark";
+  const overlay = document.createElement("div");
+  overlay.className = "sel-overlay";
+  cell.append(fills, wd, icon, mark, overlay);
+  if (isWeekend(date)) cell.classList.add("weekend");
+  if (date === today) cell.classList.add("today");
+  cells.set(date, cell);
+  return cell;
+}
+
+/** Wide screens: 12 month rows × 31 day columns. */
+function buildYear() {
   const frag = document.createDocumentFragment();
   const corner = document.createElement("div");
   corner.className = "head corner";
@@ -588,35 +633,53 @@ function buildGrid() {
     frag.append(label);
     const n = daysInMonth(state.year, m);
     for (let d = 1; d <= 31; d++) {
-      const cell = document.createElement("div");
-      cell.className = "cell";
-      cell.setAttribute("role", "gridcell");
       if (d > n) {
-        cell.classList.add("invalid");
+        const cell = document.createElement("div");
+        cell.className = "cell invalid";
+        cell.setAttribute("role", "gridcell");
+        frag.append(cell);
       } else {
         const date = iso(state.year, m, d);
-        cell.dataset.date = date;
-        const wd = document.createElement("span");
-        wd.className = "wd";
-        wd.textContent = t("weekdays")[weekday(date)];
-        const fills = document.createElement("div");
-        fills.className = "fills";
-        const icon = document.createElement("span");
-        icon.className = "note-icon";
-        const mark = document.createElement("span");
-        mark.className = "note-mark";
-        const overlay = document.createElement("div");
-        overlay.className = "sel-overlay";
-        cell.append(fills, wd, icon, mark, overlay);
-        if (isWeekend(date)) cell.classList.add("weekend");
-        if (date === today) cell.classList.add("today");
-        cells.set(date, cell);
+        frag.append(makeCell(date, t("weekdays")[weekday(date)]));
       }
-      frag.append(cell);
     }
   }
-  grid.append(frag);
-  grid.dataset.year = state.year;
+  return frag;
+}
+
+/** Phones: one calendar per month, weeks from Monday to Sunday, scrolling with the page. */
+function buildMonths() {
+  const frag = document.createDocumentFragment();
+  const names = Array.from(
+    { length: 7 },
+    (_, i) => fmtDate(iso(2024, 0, 1 + i), { weekday: "short" }), // Jan 1, 2024 was a Monday
+  );
+  for (let m = 0; m < 12; m++) {
+    const first = iso(state.year, m, 1);
+    const section = document.createElement("section");
+    section.className = "mv-month";
+    section.classList.toggle("is-today", first.slice(0, 7) === today.slice(0, 7));
+    const title = document.createElement("h3");
+    title.className = "mv-title";
+    title.textContent = fmtDate(first, { month: "long", year: "numeric" });
+    const days = document.createElement("div");
+    days.className = "mv-days";
+    for (const name of names) {
+      const h = document.createElement("div");
+      h.className = "mv-wd";
+      h.textContent = name;
+      days.append(h);
+    }
+    for (let i = (weekday(first) + 6) % 7; i > 0; i--) {
+      days.append(Object.assign(document.createElement("div"), { className: "mv-blank" }));
+    }
+    for (let d = 1; d <= daysInMonth(state.year, m); d++) {
+      days.append(makeCell(iso(state.year, m, d), d));
+    }
+    section.append(title, days);
+    frag.append(section);
+  }
+  return frag;
 }
 
 /** Everything about the types that shows up in cells and chips. */
@@ -686,9 +749,17 @@ function renderSelection() {
 
 function renderSelectionInfo(days) {
   const el = $("selection-info");
+  $("selbar").classList.toggle("has-sel", days.length > 0);
   if (!days.length) {
-    el.textContent = state.readOnly ? t("sel.view_only") : t("sel.none");
+    el.textContent = state.readOnly
+      ? t("sel.view_only")
+      : t(coarsePointer.matches ? "sel.none_touch" : "sel.none");
     return;
+  }
+  // Phones show the "how to select" hint only until the first selection.
+  if (!$("planner").classList.contains("hinted")) {
+    $("planner").classList.add("hinted");
+    storage(() => localStorage.setItem(HINTED_KEY, "1"));
   }
   const work = days.filter((d) => !isWeekend(d)).length;
   const span = days.length === 1
@@ -737,7 +808,7 @@ function renderNoTypes(box) {
   const msg = document.createElement("span");
   msg.textContent = state.readOnly
     ? t("types.empty_readonly", { year: state.year })
-    : t("types.empty", { year: state.year }) + (source ? "" : " " + t("types.empty_hint"));
+    : t("types.empty", { year: state.year });
   empty.append(msg);
   if (source && !state.readOnly) {
     const btn = document.createElement("button");
@@ -745,6 +816,12 @@ function renderNoTypes(box) {
     btn.textContent = t("types.copy_from", { year: source });
     btn.title = t("types.copy_from_title", { from: source, to: state.year });
     btn.addEventListener("click", () => copyTypes(source, btn));
+    empty.append(btn);
+  } else if (!state.readOnly) {
+    const btn = document.createElement("button");
+    btn.className = "btn small primary";
+    btn.textContent = t("types.add_first");
+    btn.addEventListener("click", openTypesDialog);
     empty.append(btn);
   }
   box.append(empty);
@@ -789,30 +866,10 @@ function renderTypes() {
     count.className = "count";
     count.textContent = t("chip.count", { n: st.workdays });
     chip.append(sw, name, count);
-    if (i < 9 && !state.readOnly) {
-      const key = document.createElement("span");
-      key.className = "key";
-      key.textContent = i + 1;
-      chip.append(key);
-    }
     chip.addEventListener("click", () => toggleOnSelection(type.id));
     box.append(chip);
   });
-  balanceChips();
 }
-
-/** Wide screens: spread the chips over as few rows as fit, evenly (6 types: 3 + 3, not 4 + 2). */
-function balanceChips() {
-  const box = $("types");
-  const n = box.children.length;
-  if (!n) return;
-  const style = getComputedStyle(box);
-  const min = parseFloat(style.getPropertyValue("--chip-min")) || 210;
-  const gap = parseFloat(style.columnGap) || 0;
-  const perRow = Math.max(1, Math.floor((box.clientWidth + gap) / (min + gap)));
-  box.style.setProperty("--cols", Math.ceil(n / Math.ceil(n / perRow)));
-}
-new ResizeObserver(balanceChips).observe($("types"));
 
 function renderCoverage() {
   const el = $("coverage");
@@ -829,7 +886,8 @@ function renderCoverage() {
   const names = needs.map((t) => t.name).join(" / ");
   if (gaps.length) {
     msg.className = "bad";
-    msg.textContent = t("coverage.gaps", { n: gaps.length, names });
+    msg.textContent = t("coverage.gaps", { n: gaps.length });
+    el.title = t("coverage.gaps_title", { n: gaps.length, names });
     const btn = document.createElement("button");
     btn.className = "btn small";
     btn.textContent = t("coverage.next");
@@ -838,17 +896,21 @@ function renderCoverage() {
     el.append(msg, btn);
   } else {
     msg.className = "ok";
-    msg.textContent = t("coverage.ok", { names, year: state.year });
+    msg.textContent = t("coverage.ok");
+    el.title = t("coverage.ok_title", { names, year: state.year });
     el.append(msg);
   }
 }
 
 function render() {
-  if (Number($("grid").dataset.year) !== state.year) buildGrid();
+  const grid = $("grid");
+  if (Number(grid.dataset.year) !== state.year || grid.dataset.layout !== layoutName()) {
+    buildGrid();
+  }
   $("planner").classList.toggle("readonly", state.readOnly);
   $("readonly-banner").hidden = !state.readOnly;
   $("btn-edit-types").hidden = state.readOnly;
-  $("btn-note").hidden = state.readOnly;
+  $("sel-actions").hidden = state.readOnly;
   const nameInput = $("session-name");
   if (document.activeElement !== nameInput) nameInput.value = state.session?.name ?? "";
   nameInput.readOnly = state.readOnly;
@@ -900,7 +962,9 @@ function setYear(y) {
 
 // ---------------------------------------------------------------- pointer input
 
-let drag = null; // { mode: "select" | "fill", ... }
+let drag = null; // { mode: "tap" | "select" | "fill", ... }
+let lastPointer = "mouse";
+let edgeScrolling = false;
 
 function dateAt(x, y) {
   const el = document.elementFromPoint(x, y)?.closest?.(".cell[data-date]");
@@ -937,6 +1001,7 @@ function cancelFill() {
 }
 
 function onPointerDown(e) {
+  lastPointer = e.pointerType;
   if (e.button !== 0) return;
   const handle = e.target.closest(".fill-handle");
   const date = e.target.closest(".cell[data-date]")?.dataset.date;
@@ -952,8 +1017,16 @@ function onPointerDown(e) {
   }
 
   if (e.pointerType === "touch") {
-    // Touch: taps select (so the grid can still be scrolled); see onPointerUp.
-    drag = { mode: "tap", date, x: e.clientX, y: e.clientY };
+    // Touch: a tap selects a day (see onPointerUp) and a long press starts selecting a
+    // range, so a swipe still scrolls; the touchmove listener in bind() stops the scrolling
+    // once a range selection runs.
+    const timer = setTimeout(() => {
+      if (drag?.mode !== "tap" || drag.date !== date) return;
+      drag = { mode: "select", anchor: date, base: new Set(), last: date, touch: true };
+      select(date);
+      navigator.vibrate?.(10);
+    }, LONG_PRESS_MS);
+    drag = { mode: "tap", date, x: e.clientX, y: e.clientY, timer };
     return;
   }
 
@@ -982,8 +1055,20 @@ function onPointerDown(e) {
 }
 
 function onPointerMove(e) {
-  if (!drag || drag.mode === "tap") return;
-  const date = dateAt(e.clientX, e.clientY);
+  if (!drag) return;
+  if (drag.mode === "tap") {
+    if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 10) endDrag(); // a scroll
+    return;
+  }
+  if (drag.touch) {
+    drag.x = e.clientX;
+    drag.y = e.clientY;
+    edgeScroll();
+  }
+  extendDrag(dateAt(e.clientX, e.clientY));
+}
+
+function extendDrag(date) {
   if (!date || date === drag.last) return;
   drag.last = date;
   if (drag.mode === "select") {
@@ -997,10 +1082,35 @@ function onPointerMove(e) {
   }
 }
 
+function endDrag() {
+  clearTimeout(drag?.timer);
+  drag = null;
+}
+
+/** Touch range selection in the month view: scrolls the page while the finger is near the
+ *  top of the screen or the bottom dock, so a range can span several months. */
+function edgeScroll() {
+  if (edgeScrolling || !monthView()) return;
+  edgeScrolling = true;
+  const step = () => {
+    const d = drag;
+    const bottom = $("dock").getBoundingClientRect().top;
+    const dir = !d?.touch ? 0 : d.y < 64 ? -1 : d.y > bottom - 32 ? 1 : 0;
+    if (!dir) {
+      edgeScrolling = false;
+      return;
+    }
+    scrollBy(0, dir * 6);
+    extendDrag(dateAt(d.x, d.y));
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
 function onPointerUp(e) {
   if (!drag) return;
   const d = drag;
-  drag = null;
+  endDrag();
   if (d.mode === "tap") {
     if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 10) return; // it was a scroll
     if (state.rangeMode && state.anchor) {
@@ -1047,7 +1157,8 @@ function onKeyDown(e) {
     return;
   }
   if (inEditable(e)) return;
-  const arrows = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -31, ArrowDown: 31 };
+  const week = monthView() ? 7 : 31; // up/down: a week in the month view, else a month
+  const arrows = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -week, ArrowDown: week };
 
   if (e.key in arrows) {
     e.preventDefault();
@@ -1079,6 +1190,8 @@ function onKeyDown(e) {
   } else if (/^[1-9]$/.test(e.key)) {
     const t = state.types[Number(e.key) - 1];
     if (t) toggleOnSelection(t.id);
+  } else if (e.key === "?") {
+    $("dlg-help").showModal();
   } else if (e.key.toLowerCase() === "g") {
     jumpToNextGap();
   } else if (e.key.toLowerCase() === "n" && !e.altKey && !e.shiftKey) {
@@ -1374,7 +1487,20 @@ function openShareDialog() {
   $("feed-gaps").checked = state.types.some((t) => t.role === "needs_cover");
   $("feed-notes").checked = true;
   updateFeedLinks();
+  showShareTab("links");
   $("dlg-share").showModal();
+}
+
+const SHARE_TABS = ["links", "calendar"];
+
+function showShareTab(name) {
+  for (const tab of SHARE_TABS) {
+    const on = tab === name;
+    const btn = $("tab-" + tab);
+    btn.setAttribute("aria-selected", String(on));
+    btn.tabIndex = on ? 0 : -1;
+    $("panel-" + tab).hidden = !on;
+  }
 }
 
 function openAiDialog() {
@@ -1448,9 +1574,43 @@ curl -X POST "$BASE/sessions" -H "content-type: application/json" \\
 function renderLangSelect() {
   const sel = $("lang");
   sel.textContent = "";
+  const items = $("menu-lang");
+  items.textContent = "";
   for (const [code, name] of Object.entries(LANGS)) {
     sel.append(new Option(name, code, false, code === lang));
+    const item = document.createElement("button");
+    item.className = "menu-item";
+    item.setAttribute("role", "menuitemradio");
+    item.setAttribute("aria-checked", String(code === lang));
+    const icon = document.createElement("span");
+    icon.className = "menu-icon";
+    const label = document.createElement("span");
+    label.textContent = name;
+    item.append(icon, label);
+    item.addEventListener("click", () => switchLang(code));
+    items.append(item);
   }
+}
+
+function switchLang(code) {
+  setLang(code);
+  renderLangSelect();
+  relocalize();
+}
+
+/** Places the menu under its button (fixed, so it works the same with and without the
+ *  popover API; without it, .open shows the menu). */
+function positionMenu() {
+  const r = $("btn-menu").getBoundingClientRect();
+  const menu = $("menu");
+  menu.style.top = `${Math.round(r.bottom + 6)}px`;
+  menu.style.right = `${Math.max(8, Math.round(innerWidth - r.right))}px`;
+}
+
+function closeMenu() {
+  const menu = $("menu");
+  if (menu.hidePopover && menu.matches(":popover-open")) menu.hidePopover();
+  menu.classList.remove("open");
 }
 
 /** Re-translates everything on screen after a language switch. */
@@ -1474,6 +1634,7 @@ function showLanding(message) {
   $("actions").hidden = true;
   $("session-name").hidden = true;
   $("home-link").hidden = false;
+  $("lang").hidden = false;
   $("landing").hidden = false;
   document.title = t("app.title");
   if (message) toast(message, 5000);
@@ -1519,6 +1680,11 @@ async function openPlanner(token, year) {
   $("actions").hidden = false;
   $("session-name").hidden = false;
   $("home-link").hidden = true;
+  $("lang").hidden = true;
+  $("planner").classList.toggle(
+    "hinted",
+    storage(() => localStorage.getItem(HINTED_KEY) === "1", false),
+  );
   renderYearSelect();
   buildGrid();
   if (applyCached()) {
@@ -1533,10 +1699,20 @@ async function openPlanner(token, year) {
 
 function bind() {
   renderLangSelect();
-  $("lang").addEventListener("change", (e) => {
-    setLang(e.target.value);
-    relocalize();
-  });
+  $("lang").addEventListener("change", (e) => switchLang(e.target.value));
+  const menu = $("menu");
+  if (menu.showPopover) {
+    menu.addEventListener("beforetoggle", (e) => e.newState === "open" && positionMenu());
+  } else {
+    // No popover API: toggle it by hand and close it on any click outside.
+    $("btn-menu").addEventListener("click", (e) => {
+      e.stopPropagation();
+      positionMenu();
+      menu.classList.toggle("open");
+    });
+    document.addEventListener("click", (e) => !menu.contains(e.target) && closeMenu());
+  }
+  for (const item of menu.querySelectorAll("button")) item.addEventListener("click", closeMenu);
   $("btn-create").addEventListener("click", createPlanner);
   $("open-form").addEventListener("submit", (e) => {
     e.preventDefault();
@@ -1583,6 +1759,22 @@ function bind() {
   $("btn-ai").addEventListener("click", openAiDialog);
   $("btn-api").addEventListener("click", openApiDialog);
   $("btn-help").addEventListener("click", () => $("dlg-help").showModal());
+  $("btn-clear").addEventListener("click", clearSelection);
+  $("btn-deselect").addEventListener("click", () => {
+    state.selection.clear();
+    renderSelection();
+  });
+  for (const tab of SHARE_TABS) {
+    $("tab-" + tab).addEventListener("click", () => showShareTab(tab));
+    $("tab-" + tab).addEventListener("keydown", (e) => {
+      const dir = { ArrowLeft: -1, ArrowRight: 1 }[e.key];
+      if (!dir) return;
+      const next =
+        SHARE_TABS[(SHARE_TABS.indexOf(tab) + dir + SHARE_TABS.length) % SHARE_TABS.length];
+      showShareTab(next);
+      $("tab-" + next).focus();
+    });
+  }
   $("btn-edit-types").addEventListener("click", openTypesDialog);
   $("btn-note").addEventListener("click", openNoteDialog);
   $("note-save").addEventListener("click", saveNote);
@@ -1635,7 +1827,12 @@ function bind() {
     "input",
     () => setShownDays(Number(zoom.min) + Number(zoom.max) - zoom.value),
   );
-  narrowScreen.addEventListener("change", () => applyZoom());
+  narrowScreen.addEventListener("change", () => {
+    applyZoom({ keepView: false });
+    if ($("planner").hidden) return;
+    render(); // switches between the year grid and the month view
+    centerInGrid(state.focus ?? today);
+  });
   applyZoom({ keepView: false });
 
   const grid = $("grid");
@@ -1643,8 +1840,13 @@ function bind() {
   grid.addEventListener("pointermove", onPointerMove);
   grid.addEventListener("pointerup", onPointerUp);
   grid.addEventListener("pointercancel", () => {
-    if (!cancelFill()) drag = null;
+    if (!cancelFill()) endDrag();
   });
+  // A range selection by touch must not scroll the page or the calendar.
+  grid.addEventListener("touchmove", (e) => {
+    if (drag && drag.mode !== "tap") e.preventDefault();
+  }, { passive: false });
+  grid.addEventListener("contextmenu", (e) => lastPointer === "touch" && e.preventDefault());
   grid.addEventListener("dblclick", (e) => {
     // The target is the grid itself after a pointer capture, so look the day up by position.
     const date = dateAt(e.clientX, e.clientY);

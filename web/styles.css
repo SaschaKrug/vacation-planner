@@ -81,11 +81,12 @@ kbd {
 }
 
 /* ---------- top bar ---------- */
+/* Name on the left, year in the middle, save status + Share + menu on the right. */
 .topbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: 16px;
-  flex-wrap: wrap;
   padding: 10px 20px;
   background: color-mix(in srgb, var(--surface) 82%, transparent);
   -webkit-backdrop-filter: saturate(1.6) blur(14px);
@@ -95,7 +96,7 @@ kbd {
   top: 0;
   z-index: 20;
 }
-.brand { display: flex; align-items: center; gap: 10px; flex: 1 1 220px; min-width: 0; }
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; grid-column: 1; }
 .logo {
   display: grid;
   place-items: center;
@@ -113,6 +114,7 @@ kbd {
   font-weight: 650;
   font-size: 16px;
   letter-spacing: -0.01em;
+  text-overflow: ellipsis;
   border: 1px solid transparent;
   background: transparent;
   border-radius: var(--radius-sm);
@@ -125,7 +127,7 @@ kbd {
 }
 .session-name:hover { background: var(--surface-2); }
 .session-name:focus { border-color: var(--accent); background: var(--surface); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
-.year-nav { display: flex; align-items: center; gap: 4px; }
+.year-nav { display: flex; align-items: center; gap: 4px; grid-column: 2; }
 .year-nav select {
   height: var(--ctl-h);
   font-size: 18px;
@@ -138,14 +140,77 @@ kbd {
   padding: 0 6px;
 }
 .year-nav select:hover { background-color: var(--surface-2); border-color: var(--border); }
+.actions, .topbar .lang-select { grid-column: 3; grid-row: 1; justify-self: end; }
 .actions { display: flex; align-items: center; gap: 8px; }
-.sync-status { color: var(--muted); font-size: 12px; min-width: 64px; text-align: right; }
-.sync-status.error { color: var(--gap); }
+
+/* Save status: a dot (green = saved, amber = busy, red = offline); its text only shows
+   while something is going on, "Saved" is in the tooltip. */
+.sync-status { display: inline-flex; align-items: center; gap: 6px; margin-right: 4px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.sync-status::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.sync-status[data-state=""] { display: none; }
+.sync-status[data-state="saved"]::before { background: var(--ok); }
+.sync-status[data-state="saving"]::before,
+.sync-status[data-state="loading"]::before,
+.sync-status[data-state="updating"]::before { background: #f59e0b; animation: pulse 0.9s ease-in-out infinite alternate; }
+.sync-status[data-state="error"] { color: var(--gap); }
+.sync-status[data-state="error"]::before { background: var(--gap); }
+.sync-status[data-state="saved"] .sync-text { /* visually hidden, still announced */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+@keyframes pulse { to { opacity: 0.35; } }
+
+/* Line icons (inline SVG) */
+.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.i circle { fill: currentColor; }
+.btn.small .i { width: 14px; height: 14px; }
+
+/* Overflow menu (a popover, see positionMenu() in app.js) */
+.menu {
+  display: none;
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  min-width: 220px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-lg);
+  z-index: 30;
+}
+.menu.open { display: flex; flex-direction: column; }
+.menu:popover-open { display: flex; flex-direction: column; }
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+.menu-item:hover { background: var(--surface-2); }
+.menu-icon { width: 20px; flex: none; text-align: center; font-size: 13px; font-weight: 700; color: var(--muted); }
+.menu-item[aria-checked="true"] { font-weight: 600; }
+.menu-item[aria-checked="true"] .menu-icon::before { content: "✓"; color: var(--accent); }
+.menu-sep { height: 1px; margin: 6px 4px; background: var(--border); }
+.menu-label { padding: 4px 10px 2px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 7px;
   min-height: var(--ctl-h);
   border: 1px solid var(--border);
   background: var(--surface);
@@ -187,7 +252,7 @@ kbd {
   transition: background-color 0.15s, color 0.15s, border-color 0.15s;
 }
 .icon-btn:hover { background: var(--surface-2); color: var(--text); border-color: color-mix(in srgb, var(--muted) 45%, var(--border)); }
-.long-label { white-space: pre; } /* keeps its leading space inside the flex button */
+.icon-btn.small { width: 30px; height: 30px; }
 .dialog-head .icon-btn { border-color: transparent; box-shadow: none; background: transparent; }
 .dialog-head .icon-btn:hover { background: var(--surface-2); }
 
@@ -255,19 +320,27 @@ kbd {
 .row input:focus, .copy-row input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 
 /* ---------- planner ---------- */
-.planner { padding: 14px 20px 24px; container-type: inline-size; }
-.toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
+/* Wide screens: type chips (+ edit) and the coverage status above the calendar, the
+   selection bar (+ zoom) below it. The .dock wrapper only matters on phones (see the end). */
+.planner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: 12px;
+  padding: 14px 20px 20px;
+  container-type: inline-size;
 }
-.types { display: flex; flex-wrap: wrap; gap: 6px; }
-.toolbar-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.toolbar-right .check { margin-left: 4px; }
-.zoom { display: inline-flex; align-items: center; gap: 6px; margin-left: 4px; font-size: 13px; user-select: none; }
+.dock { display: contents; }
+.toolbar { grid-row: 1; grid-column: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; min-width: 0; }
+.coverage { grid-row: 1; grid-column: 2; }
+.planner:has(.coverage[hidden]) .toolbar { grid-column: 1 / -1; }
+.readonly-banner { grid-row: 2; grid-column: 1 / -1; }
+.grid-wrap { grid-row: 3; grid-column: 1 / -1; min-width: 0; } /* scrolls instead of widening the page */
+.selbar { grid-row: 4; grid-column: 1 / -1; min-width: 0; }
+
+.types { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.edit-types { border-radius: 999px; }
+.zoom { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; font-size: 13px; color: var(--muted); user-select: none; }
 .zoom-icon { font-size: 13px; opacity: 0.7; }
 .zoom input { width: 96px; margin: 0; accent-color: var(--accent); cursor: pointer; }
 .zoom output { min-width: 4.2em; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -300,9 +373,8 @@ kbd {
   background: color-mix(in srgb, var(--c) 14%, var(--surface));
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 28%, transparent);
 }
-.chip .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chip .count, .chip .key { flex: none; white-space: nowrap; }
-.chip .count { margin-left: auto; } /* count + key sit at the chip's right edge when it is stretched */
+.chip .name { min-width: 0; max-width: 16em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip .count { flex: none; white-space: nowrap; }
 .chip .swatch {
   width: 14px;
   height: 14px;
@@ -310,15 +382,6 @@ kbd {
   flex: none;
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
 }
-.chip .key {
-  font: 500 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: var(--muted);
-  border: 1px solid var(--border);
-  border-bottom-width: 2px;
-  border-radius: 4px;
-  padding: 2px 4px 1px;
-}
-@media (pointer: coarse) { .chip .key { display: none; } }
 .chip .count {
   font-size: 11px;
   font-weight: 600;
@@ -332,7 +395,6 @@ kbd {
 
 /* A year without types of its own (each year has its own set). */
 .types-empty {
-  grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -341,37 +403,18 @@ kbd {
   color: var(--muted);
 }
 
-/* Wide screens: the type chips spread over the full width in equal columns, and the
-   actions share the next row with the coverage banner instead of wrapping on their own. */
-@media (min-width: 821px) {
-  .planner { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; align-items: center; }
-  .toolbar { display: contents; }
-  .types {
-    grid-column: 1 / -1;
-    grid-row: 1;
-    display: grid;
-    --chip-min: 210px; /* read by balanceChips() in app.js, which sets --cols */
-    grid-template-columns: repeat(var(--cols, 4), minmax(0, 1fr));
-    gap: 8px;
-    margin-bottom: 12px;
-  }
-  .chip { min-width: 0; }
-  .toolbar-right { grid-column: 2; grid-row: 2; margin-bottom: 12px; }
-  .coverage { grid-column: 1; grid-row: 2; }
-  .readonly-banner { grid-column: 1 / -1; grid-row: 3; }
-  .grid-wrap { grid-column: 1 / -1; grid-row: 4; min-width: 0; } /* scrolls instead of widening the page */
-  .statusbar { grid-column: 1 / -1; grid-row: 5; min-width: 0; }
-}
-
+/* Coverage status: a compact pill; the full sentence is its tooltip. */
 .coverage {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   margin: 0 0 12px;
-  padding: 7px 12px;
-  min-height: 40px;
-  border-radius: var(--radius);
+  padding: 0 12px;
+  min-height: var(--ctl-h);
+  border-radius: 999px;
+  font-size: 13px;
   font-weight: 500;
+  white-space: nowrap;
   background: color-mix(in srgb, var(--ok) 9%, var(--surface));
   border: 1px solid color-mix(in srgb, var(--ok) 28%, var(--border));
 }
@@ -379,6 +422,8 @@ kbd {
   background: color-mix(in srgb, var(--gap) 9%, var(--surface));
   border-color: color-mix(in srgb, var(--gap) 35%, var(--border));
 }
+.coverage.has-gaps { padding-right: 3px; }
+.coverage .btn.small { min-height: 28px; border-radius: 999px; }
 .coverage .ok { color: var(--ok); }
 .coverage .bad { color: var(--gap); font-weight: 600; }
 
@@ -406,7 +451,7 @@ kbd {
   box-shadow: var(--shadow);
   position: relative;
 }
-.grid {
+.grid.yv {
   display: grid;
   grid-template-columns: var(--month-w) repeat(31, minmax(var(--cell-w), 1fr));
   min-width: calc(var(--month-w) + 31 * var(--cell-w));
@@ -453,7 +498,7 @@ kbd {
   background: var(--accent);
 }
 /* the last row needs no bottom line: the wrapper's border closes the grid */
-.grid > :nth-last-child(-n + 32) { border-bottom: 0; }
+.grid.yv > :nth-last-child(-n + 32) { border-bottom: 0; }
 .cell {
   position: relative;
   height: var(--cell-h);
@@ -481,6 +526,9 @@ kbd {
   pointer-events: none;
 }
 .cell.weekend .wd { opacity: 0.5; }
+/* Weekend shading shows the weeks; letters only once the cells are big enough */
+.grid.yv .cell .wd { display: none; }
+.grid-wrap.show-wd .grid.yv .cell .wd { display: block; }
 .cell.has-fill .wd { color: inherit; opacity: 0.8; }
 /* Entries are drawn as a rounded tile inset in the cell, one stripe per type. */
 .cell .fills {
@@ -596,19 +644,28 @@ kbd {
 }
 .readonly .cell { cursor: default; }
 
-.statusbar {
+/* Selection bar: a hint while nothing is selected, the selection and its actions otherwise.
+   It keeps its height either way, so the calendar doesn't jump. */
+.selbar {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  gap: 16px;
-  flex-wrap: wrap;
+  gap: 10px;
+  min-height: 46px;
   margin-top: 10px;
-  padding: 0 4px;
+  padding: 5px 6px 5px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
 }
-#selection-info { color: var(--text); font-weight: 500; }
-.statusbar kbd { font-size: 10.5px; padding: 1px 4px; }
+.selbar.has-sel { background: var(--surface); border-color: var(--border); box-shadow: var(--shadow-sm); }
+.sel-info { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.selbar.has-sel .sel-info { color: var(--text); font-weight: 500; }
+.sel-actions { display: flex; align-items: center; gap: 8px; color: var(--text); }
+.sel-actions .check { margin: 0 6px; }
+.selbar:not(.has-sel) .sel-actions, .selbar:not(.has-sel) #btn-deselect { display: none; }
+#btn-deselect { border-color: transparent; box-shadow: none; background: transparent; }
+#btn-deselect:hover { background: var(--surface-2); }
 
 /* ---------- dialogs ---------- */
 .dialog {
@@ -634,6 +691,20 @@ kbd {
 .dialog h3 { margin: 22px 0 4px; font-size: 14px; }
 .dialog section + section { border-top: 1px solid var(--border); margin-top: 18px; }
 .muted { color: var(--muted); margin: 4px 0 10px; }
+.tabs { display: flex; gap: 4px; margin: 8px 0 6px; padding: 3px; border-radius: var(--radius); background: var(--surface-2); }
+.tab {
+  flex: 1;
+  min-height: 32px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-weight: 500;
+  cursor: pointer;
+}
+.tab:hover { color: var(--text); }
+.tab[aria-selected="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm); }
+[role="tabpanel"] > section:first-child > h3 { margin-top: 16px; }
 .copy-row { display: flex; gap: 8px; margin: 8px 0; }
 .copy-row input { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--surface-2); }
 .ai-prompt {
@@ -658,7 +729,8 @@ kbd {
 details { margin-top: 10px; }
 summary { cursor: pointer; font-weight: 600; color: var(--accent); }
 details li { margin: 6px 0; }
-.roles-help { margin: 0 0 14px; padding: 10px 12px 10px 28px; color: var(--muted); background: var(--surface-2); border-radius: var(--radius); }
+.roles-details { margin-top: 16px; }
+.roles-help { margin: 8px 0 0; padding: 10px 12px 10px 28px; color: var(--muted); background: var(--surface-2); border-radius: var(--radius); }
 .roles-help li { margin: 3px 0; }
 .roles-help b { color: var(--text); }
 .types-editor { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
@@ -739,6 +811,12 @@ details li { margin: 6px 0; }
 .keys tr:last-child td { border-bottom: 0; }
 .keys td:first-child { white-space: nowrap; font-weight: 500; }
 .keys td:last-child { color: var(--muted); }
+/* Touch gestures or mouse + keyboard, whichever this device has */
+.keys .touch-row { display: none; }
+@media (hover: none) and (pointer: coarse) {
+  .keys .touch-row { display: table-row; }
+  .keys .mouse-row { display: none; }
+}
 
 .toast {
   position: fixed;
@@ -765,124 +843,153 @@ details li { margin: 6px 0; }
 
 .grid .head.corner { left: 0; z-index: 3; border-right: 1px solid var(--border); }
 
-/* ---------- narrow screens ---------- */
-@media (max-width: 820px) {
-  .topbar { position: static; }
-  .planner { display: flex; flex-direction: column; padding-bottom: 0; }
+/* ---------- phones ---------- */
+@media (max-width: 640px) {
+  .emoji-grid { grid-template-columns: repeat(5, 1fr); }
+  .emoji-btn { height: 44px; }
+  .toast { bottom: 150px; }
 
-  /* Entry types stay within thumb reach while scrolling through the year. */
-  .toolbar {
-    order: 1;
+  /* One row: name, year, save dot, Share (icon only), menu. */
+  .topbar { position: static; gap: 6px; padding: 8px 8px 8px 12px; grid-template-columns: minmax(0, 1fr) auto auto; }
+  .brand:has(.session-name:not([hidden])) .logo { display: none; }
+  .logo { width: 28px; height: 28px; font-size: 16px; border-radius: 8px; }
+  .session-name { font-size: 15px; padding: 4px 6px; }
+  .year-nav { gap: 0; }
+  .year-nav .icon-btn { width: 28px; border-color: transparent; box-shadow: none; background: transparent; }
+  .year-nav select { font-size: 16px; padding: 0 6px; background-image: none; }
+  .actions { gap: 6px; }
+  .sync-status { margin: 0 2px; }
+  .sync-status .sync-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .share-btn { width: var(--ctl-h); padding: 0; }
+  .share-btn .label { display: none; }
+  .topbar .lang-select { font-size: 13px; height: 30px; }
+  .menu-item { min-height: 44px; font-size: 15px; }
+
+  /* Calendar first, then the dock with the selection and the type chips at the bottom,
+     within thumb reach. The page itself scrolls. */
+  .planner { display: flex; flex-direction: column; align-items: stretch; padding: 4px 0 0; }
+  .coverage, .readonly-banner { margin: 4px 12px 8px; }
+  .coverage { align-self: flex-start; }
+  .grid-wrap {
+    overflow: visible;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    background: transparent;
+  }
+  .dock {
+    display: block;
     position: sticky;
     bottom: 0;
     z-index: 10;
-    flex-direction: column;
-    flex-wrap: nowrap; /* a wrapping column would size its line to the widest chip row */
-    align-items: stretch;
-    gap: 8px;
-    margin: 10px -20px 0;
-    padding: 10px 20px max(10px, env(safe-area-inset-bottom));
-    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    padding: 8px 0 max(8px, env(safe-area-inset-bottom));
+    background: color-mix(in srgb, var(--surface) 90%, transparent);
     -webkit-backdrop-filter: saturate(1.6) blur(14px);
     backdrop-filter: saturate(1.6) blur(14px);
     border-top: 1px solid var(--border);
-    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.12);
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.1);
   }
-  .statusbar { margin-bottom: 4px; }
-  .toast { bottom: 140px; }
-}
-
-@media (max-width: 640px) {
-  .statusbar .hint { display: none; }
-  .emoji-grid { grid-template-columns: repeat(5, 1fr); }
-  .emoji-btn { height: 44px; }
-
-  /* Two compact rows: name + save status + language + help, then year + actions.
-     The ::after item takes a full line to force the break between them. */
-  .topbar { gap: 6px; padding: 8px 10px; }
-  .topbar::after { content: ""; flex-basis: 100%; order: 4; }
-  .actions { display: contents; }
-  .brand { flex: 1 1 0; order: 0; gap: 8px; }
-  .logo { width: 28px; height: 28px; font-size: 16px; border-radius: 8px; }
-  #sync-status { order: 1; min-width: 0; }
-  .topbar .lang-select { /* beats the base .lang-select rules further down */
-    order: 2;
-    font-size: 13px;
-    height: 30px;
-    padding: 0 24px 0 8px;
-    background-position: right 7px center;
-  }
-  #btn-help { order: 3; width: 30px; height: 30px; font-size: 14px; }
-  .year-nav { order: 5; margin-right: auto; }
-  .year-nav select { font-size: 16px; }
-  #btn-share, #btn-ai, #btn-api { order: 6; padding: 0 12px; }
-  #btn-ai { padding: 0; width: var(--ctl-h); }
-  .long-label { display: none; }
-
-  .planner { padding: 8px 8px 0; container-type: inline-size; }
-  /* The calendar runs edge to edge and shows a window of --days days × months (5 × 5 unless
-     zoomed) with square cells; the rest of the year scrolls inside it, the day numbers and
-     month names stay put. */
-  .grid-wrap {
-    --days: 5;
-    --month-w: 46px;
-    --head-h: 30px;
-    --cell-w: calc((100cqi + 16px - var(--month-w)) / var(--days)); /* 100cqi + 16px = the planner's full width */
-    --cell-h: var(--cell-w);
-    margin: 0 -8px;
-    border-left: 0;
-    border-right: 0;
-    border-radius: 0;
-    box-shadow: none;
-    overflow: auto;
-    overscroll-behavior: contain;
-    max-height: calc(var(--head-h) + min(var(--days), 12) * var(--cell-h) + 2px);
-    scroll-padding: var(--head-h) 0 0 var(--month-w);
-  }
-  .grid {
-    grid-template-columns: var(--month-w) repeat(31, var(--cell-w));
-    min-width: calc(var(--month-w) + 31 * var(--cell-w)); /* sticky labels need the full-size grid box */
-  }
-  .grid .head {
-    height: var(--head-h);
-    padding: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text);
-  }
-  .grid .head.is-today { color: var(--accent); }
-  .grid .month { padding-left: 12px; font-size: 13px; }
-  .grid .month.is-today::before { margin-left: -9px; }
-  .cell { scroll-margin: 0; }
-  .cell .wd { top: 5px; left: 5px; font-size: 11px; }
-  .cell .note-icon { font-size: clamp(20px, var(--cell-h) * 0.3, 32px); }
-
-  .toolbar { margin: 8px -8px 0; padding-left: 8px; padding-right: 8px; }
-  /* One swipeable row of type chips instead of several wrapped rows. */
-  .types {
+  .toolbar {
     flex-wrap: nowrap;
+    gap: 6px;
+    margin: 0;
+    padding: 2px 12px;
     overflow-x: auto;
     scrollbar-width: none;
-    margin: -4px -8px;
-    padding: 4px 8px;
-    scroll-padding: 0 8px;
   }
-  .types::-webkit-scrollbar { display: none; }
-  .chip { flex: none; }
-  .toolbar-right { justify-content: space-between; gap: 8px; font-size: 13px; }
+  .toolbar::-webkit-scrollbar { display: none; }
+  .types { flex: none; flex-wrap: nowrap; }
+  .chip, .edit-types { flex: none; }
+  .zoom { display: none; }
 
-  .coverage { font-size: 13px; padding: 6px 10px; }
+  /* Selection: info + close on the first line, actions (swipeable) on the second. */
+  .selbar {
+    flex-wrap: wrap;
+    gap: 6px 8px;
+    min-height: 0;
+    margin: 0 0 8px;
+    padding: 0 8px 0 14px;
+    border: 0;
+    background: none;
+    box-shadow: none;
+  }
+  .selbar.has-sel { background: none; box-shadow: none; }
+  .planner.hinted .selbar:not(.has-sel), .readonly .selbar:not(.has-sel) { display: none; }
+  .selbar:not(.has-sel) { padding-right: 14px; }
+  .sel-info { font-size: 13px; }
+  .sel-actions {
+    order: 3;
+    flex: 1 0 100%;
+    margin: 0 -8px 0 -14px;
+    padding: 2px 12px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .sel-actions::-webkit-scrollbar { display: none; }
+  .sel-actions .btn { flex: none; }
+  .sel-actions .check { flex: none; white-space: nowrap; }
+
+  /* Month view: one 7-column calendar per month; the month names stick to the top. */
+  .grid.mv { display: block; padding: 0 8px 12px; touch-action: pan-y; }
+  .mv-month + .mv-month { margin-top: 6px; }
+  .mv-title {
+    position: sticky;
+    top: 0;
+    z-index: 6;
+    margin: 0 -8px;
+    padding: 10px 14px 6px;
+    font-size: 16px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+  }
+  .mv-month.is-today .mv-title { color: var(--accent); }
+  .mv-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }
+  .mv-wd { padding: 0 0 4px; text-align: center; font-size: 11px; font-weight: 600; color: var(--muted); }
+  .grid.mv .cell {
+    height: auto;
+    aspect-ratio: 1 / 0.8;
+    border: 0;
+    border-radius: 9px;
+    scroll-margin: 52px 0 170px; /* clear of the sticky month name and the dock */
+  }
+  .grid.mv .cell .wd { top: 6px; left: 7px; font-size: 13px; font-weight: 600; color: var(--text); opacity: 1; }
+  .grid.mv .cell.weekend { background: color-mix(in srgb, var(--cell) 40%, transparent); }
+  .grid.mv .cell.weekend .wd { color: var(--muted); }
+  .grid.mv .cell.has-fill .wd { color: inherit; }
+  .grid.mv .cell .fills { inset: 0; border-radius: 9px; }
+  .grid.mv .cell .note-icon { font-size: 20px; transform: translate(-50%, -30%); }
+  .grid.mv .cell.today::before { inset: 0; border-radius: 9px; }
+  .grid.mv .cell.sel .sel-overlay, .grid.mv .cell.focus .sel-overlay, .grid.mv .cell.fill-preview .sel-overlay { inset: 0; border-radius: 9px; }
+  .grid.mv .cell.has-comment .note-mark { top: 0; right: 0; border-top-right-radius: 9px; }
+  .grid.mv, .grid.mv .cell { -webkit-touch-callout: none; }
+
+  /* Dialogs open as bottom sheets */
+  .dialog, .dialog.wide, .note-dialog {
+    width: 100%;
+    max-width: 100%;
+    margin: auto 0 0;
+    max-height: 92dvh;
+    padding: 14px 16px max(18px, env(safe-area-inset-bottom));
+    border-bottom: 0;
+    border-radius: 18px 18px 0 0;
+  }
+  .dialog[open] { animation: sheet-in 0.22s ease-out; }
 
   /* Type editor: color + name on one line, role + buttons on the next. */
   .types-editor { gap: 10px; }
   .type-row { flex-wrap: wrap; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
   .type-row input[type="text"] { flex-basis: calc(100% - 42px); }
   .type-row select { flex: 1; min-width: 0; }
-  .dialog, .dialog.wide { padding: 14px 16px 18px; width: calc(100vw - 16px); max-height: calc(100vh - 16px); }
   .ai-copy { width: 100%; min-height: 44px; }
+}
+@keyframes sheet-in { from { opacity: 0.6; transform: translateY(40px); } }
+@media (prefers-reduced-motion: reduce) {
+  .dialog[open] { animation: none; }
+  .sync-status::before { animation: none !important; }
 }
 
 /* Custom caret with breathing room instead of the browser's edge-hugging arrow */

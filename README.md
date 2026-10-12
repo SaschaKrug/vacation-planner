@@ -5,10 +5,11 @@ closures, with a coverage check, a REST API and an iCloud / Apple Calendar feed.
 
 **Live:** https://vacation-planner.fa-krug.de/
 
-- All days of a year as 12 rows × 31 days; pick the year at the top.
-- **Zoom:** the 🔍 slider (or `Ctrl/⌘` + `+` / `−` / `0`) sets how many days fit across the
-  calendar – 7 to 31 on wide screens, 3 to 10 on phones (a square window of days × months).
-  Remembered per device.
+- All days of a year as 12 rows × 31 days; pick the year at the top. Phones show one calendar
+  per month instead (Monday to Sunday), with the type chips and the actions for the selected
+  days in a bar at the bottom.
+- **Zoom:** the 🔍 slider below the calendar (or `Ctrl/⌘` + `+` / `−` / `0`) sets how many days
+  fit across it, 7 to 31; zoomed in, the cells also show the weekday. Remembered per device.
 - Your own entry types (name + color), **per year**: every year has its own types, so 2027 can
   have different people, colors or day-care closures than 2026. New planners start with
   *Holiday*, *Vacation* and *Sick*; a year without types offers to copy them from the closest
@@ -22,10 +23,11 @@ closures, with a coverage check, a REST API and an iCloud / Apple Calendar feed.
 - Click/drag to select days (also across months), then click a type or press `1`–`9`.
   `Ctrl/⌘+C`, `X`, `V` copy/cut/paste (pasting onto a larger selection repeats the copied days),
   drag the ▪ fill handle to repeat a selection, `Del` clears, `Ctrl+Z`/`Ctrl+Y` undo/redo,
-  `G` jumps to the next uncovered day.
+  `G` jumps to the next uncovered day, `?` shows all shortcuts. On touch screens: tap a day, or
+  long-press and drag to select a range.
 - No login: every planner has a secret **edit link** (`?s=<id>`) and a separate **view-only link**.
   Anyone with the edit link can change it, so only share it with people who should.
-- **iCloud:** *Share & iCloud* → *Subscribe on this device*, or on a Mac: Calendar → File →
+- **iCloud:** *Share* → *Calendar & iCloud* → *Subscribe on this device*, or on a Mac: Calendar → File →
   New Calendar Subscription → paste the feed URL → Location **iCloud**. The feed uses the
   view-only id, so it never exposes the edit link.
 - **Let an AI agent manage it:** *✨ AI* gives a ready-to-paste prompt with one link for an AI
@@ -85,7 +87,7 @@ deno task check   # type-check, lint, format check
 
 ## API
 
-Base URL: `https://<project-ref>.supabase.co/functions/v1/api` (the *API* button in the app
+Base URL: `https://<project-ref>.supabase.co/functions/v1/api` (*⋯* → *API for scripts* in the app
 shows ready-to-run examples for your planner). The session id from the edit link is the access
 key; the view-only id can only read. Types can be referenced by id or by name
 (case-insensitive). Dates are `YYYY-MM-DD`.
