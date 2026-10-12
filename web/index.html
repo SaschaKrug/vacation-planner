@@ -66,6 +66,11 @@
         </label>
         <button id="btn-range" class="btn small touch-only" aria-pressed="false"
           title="Tap a start day, enable this, then tap the end day" data-i18n-title="toolbar.range_title" data-i18n="toolbar.range">Range select</button>
+        <label class="zoom" title="Zoom: how many days fit in the calendar (Ctrl/⌘ + / − / 0)" data-i18n-title="toolbar.zoom_title">
+          <span class="zoom-icon" aria-hidden="true">🔍</span>
+          <input type="range" id="zoom" aria-label="Zoom" data-i18n-aria-label="toolbar.zoom">
+          <output id="zoom-value" for="zoom"></output>
+        </label>
       </div>
     </section>
     <div id="coverage" class="coverage" hidden></div>
@@ -193,6 +198,7 @@
       <tr><td data-i18n="help.arrows">Arrow keys</td><td data-i18n="help.arrows_do">Move (with <kbd>Shift</kbd>: extend the selection)</td></tr>
       <tr><td data-i18n="help.undo"><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td data-i18n="help.undo_do">Undo / redo</td></tr>
       <tr><td data-i18n="help.note"><kbd>N</kbd> / double-click</td><td data-i18n="help.note_do">Add an icon or comment to the selected days</td></tr>
+      <tr><td data-i18n="help.zoom"><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>+</kbd> / <kbd>−</kbd> / <kbd>0</kbd></td><td data-i18n="help.zoom_do">Zoom the calendar in / out (fewer or more days at once) / reset</td></tr>
       <tr><td><kbd>G</kbd></td><td data-i18n="help.gap_do">Jump to the next day that still needs cover</td></tr>
       <tr><td data-i18n="help.esc"><kbd>Esc</kbd></td><td data-i18n="help.esc_do">Clear the selection</td></tr>
     </table>
