@@ -1301,9 +1301,12 @@ function openAiDialog() {
   const prompt = t(state.readOnly ? "ai.prompt_text_readonly" : "ai.prompt_text", { url });
   $("ai-readonly").hidden = !state.readOnly;
   $("ai-warning").hidden = state.readOnly;
-  $("ai-prompt").value = prompt;
-  $("link-ai").value = url;
+  const box = $("ai-prompt");
+  box.value = prompt;
   $("dlg-ai").showModal();
+  // Show the whole prompt: grow the box to its text (needs layout, so after showModal).
+  box.style.height = "auto";
+  box.style.height = box.scrollHeight + 2 + "px";
 }
 
 function openApiDialog() {

@@ -171,7 +171,8 @@ const STRINGS = {
     "close": "Close",
 
     // AI dialog
-    "top.ai": "✨ AI",
+    "top.ai": '✨<span class="long-label"> AI</span>',
+    "top.ai_label": "AI",
     "top.ai_title": "Let an AI agent manage this planner",
     "ai.title": "Let an AI manage this planner",
     "ai.intro":
@@ -184,7 +185,8 @@ const STRINGS = {
       "Read {url} – it explains how to view and change my vacation planner. Then help me plan with it.",
     "ai.prompt_text_readonly":
       "Read {url} – it explains how to view my vacation planner. Then answer my questions about it.",
-    "ai.link": "AI link",
+    "ai.prompt": "Prompt",
+    "ai.copy": "Copy prompt",
     "ai.warning":
       "Like the edit link, this link is the key: anyone who has it – including the AI service – can change the planner.",
 
@@ -394,7 +396,8 @@ const STRINGS = {
     "copy": "Kopieren",
     "close": "Schließen",
 
-    "top.ai": "✨ KI",
+    "top.ai": '✨<span class="long-label"> KI</span>',
+    "top.ai_label": "KI",
     "top.ai_title": "Einen KI-Agenten diesen Planer verwalten lassen",
     "ai.title": "Planer von einer KI verwalten lassen",
     "ai.intro":
@@ -407,7 +410,8 @@ const STRINGS = {
       "Lies {url} – dort steht, wie du meinen Urlaubsplaner ansehen und ändern kannst. Hilf mir dann bei der Planung.",
     "ai.prompt_text_readonly":
       "Lies {url} – dort steht, wie du meinen Urlaubsplaner ansehen kannst. Beantworte mir dann Fragen dazu.",
-    "ai.link": "KI-Link",
+    "ai.prompt": "Prompt",
+    "ai.copy": "Prompt kopieren",
     "ai.warning":
       "Wie der Bearbeitungslink ist dieser Link der Schlüssel: Wer ihn hat – auch der KI-Dienst –, kann den Planer ändern.",
 
