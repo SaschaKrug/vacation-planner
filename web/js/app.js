@@ -1299,11 +1299,8 @@ function openShareDialog() {
 function openAiDialog() {
   const url = api.agentUrl(state.token);
   const prompt = t(state.readOnly ? "ai.prompt_text_readonly" : "ai.prompt_text", { url });
-  const q = encodeURIComponent(prompt);
   $("ai-readonly").hidden = !state.readOnly;
   $("ai-warning").hidden = state.readOnly;
-  $("ai-chatgpt").href = `https://chatgpt.com/?q=${q}`;
-  $("ai-claude").href = `https://claude.ai/new?q=${q}`;
   $("ai-prompt").value = prompt;
   $("link-ai").value = url;
   $("dlg-ai").showModal();

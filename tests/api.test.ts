@@ -597,7 +597,7 @@ Deno.test("answers CORS preflight", async () => {
   assertEquals(res.headers.get("access-control-allow-origin"), "*");
 });
 
-Deno.test("agent page describes the planner with ready-to-use links", async () => {
+Deno.test("agent page describes the planner with ready-to-use URLs", async () => {
   const { call } = setup();
   // Types only in 2025: the examples use that year instead of the current one.
   const created = await call("POST", "/sessions", { name: "Family", year: 2025 });
@@ -609,80 +609,40 @@ Deno.test("agent page describes the planner with ready-to-use links", async () =
   const doc: string = res.data;
   assert(doc.includes("Family"));
   assert(doc.includes("full edit access"));
-  assert(doc.includes(`${BASE}/sessions/${s.id}/entries`));
+  assert(doc.includes(`POST ${BASE}/sessions/${s.id}/entries`));
   assert(doc.includes("| `vacation` | Vacation | covers | #22c55e |"));
-  // The ready-made GET link works as it is and changes nothing.
-  const link = doc.split("\n").find((l) => l.startsWith(`${BASE}/sessions/${s.id}/agent?`))!;
-  const run = await call("GET", link.slice(BASE.length));
-  assertEquals(run.status, 200);
-  assertEquals(run.data.session.name, "Family");
-  // The encoded example body is the entries example and works with the entries template.
-  const body = /body=(%7B[^`]+)`/.exec(doc)![1];
-  const add = await call("GET", `/sessions/${s.id}/agent/entries?method=POST&body=${body}`);
+  // The example body in the page works against the real endpoint.
+  const body = JSON.parse(/-d '(\{.*\})'/.exec(doc)![1]);
+  assertEquals(body.from, "2025-08-03");
+  const add = await call("POST", `/sessions/${s.id}/entries`, body);
   assertEquals(add.status, 200);
   const entries = await call("GET", `/sessions/${s.id}/entries?year=2025`);
   assert(entries.data["2025-08-04"].includes("vacation"));
 });
 
-Deno.test("agent page for a read-only id has no edit id or write links", async () => {
+Deno.test("agent page for a read-only id has no edit id or write requests", async () => {
   const { call } = setup();
   const s = await newSession(call);
   const res = await call("GET", `/sessions/${s.readId}/agent`);
   assertEquals(res.status, 200);
   assert(res.data.includes("read-only"));
   assert(!res.data.includes(s.id));
-  assert(!res.data.includes("method="));
+  assert(!res.data.includes("POST"));
 });
 
-Deno.test("agent links run any request as GET", async () => {
+Deno.test("agent page only answers GET and doesn't run requests", async () => {
   const { call } = setup();
   const s = await newSession(call);
-  const link = (path: string, method: string, body?: unknown, query = "") => {
-    const params = new URLSearchParams(query);
-    params.set("method", method);
-    if (body !== undefined) params.set("body", JSON.stringify(body));
-    return `/sessions/${s.id}/agent${path}?${params}`;
-  };
-
-  let res = await call(
-    "GET",
-    link("/entries", "POST", { ops: [{ type: "Vacation", dates: ["2026-03-02"] }] }),
-  );
-  assertEquals(res.status, 200);
-  assertEquals(res.headers.get("cache-control"), "no-store");
-
-  res = await call("GET", link("/notes", "post", { date: "2026-12-25", icon: "🎄" }));
-  assertEquals(res.status, 200);
-
-  res = await call("GET", link("", "PATCH", { name: "Renamed by AI" }));
-  assertEquals(res.status, 200);
-  assertEquals(res.data.session.name, "Renamed by AI");
-
-  res = await call("GET", link("/types/sick", "DELETE", undefined, "year=2026"));
-  assertEquals(res.status, 200);
-  assertEquals(res.data, { deleted: "sick", year: 2026 });
-
-  // Plain GETs pass through, with their query.
-  res = await call("GET", `/sessions/${s.id}/agent/entries?year=2026`);
-  assertEquals(res.data["2026-03-02"], ["vacation"]);
-  res = await call("GET", `/sessions/${s.id}/agent/notes?year=2026`);
-  assertEquals(res.data["2026-12-25"], { icon: "🎄", comment: "" });
-});
-
-Deno.test("agent links validate and keep the read-only id read-only", async () => {
-  const { call } = setup();
-  const s = await newSession(call);
-  let res = await call("GET", `/sessions/${s.id}/agent/entries?method=PUT`);
-  assertEquals(res.status, 400);
-  res = await call("GET", `/sessions/${s.id}/agent/types/sick?method=DELETE&body=%7B%7D`);
-  assertEquals(res.status, 400);
-  res = await call("GET", `/sessions/${s.id}/agent/entries?method=POST&body=nope`);
-  assertEquals(res.status, 400);
-  res = await call("POST", `/sessions/${s.id}/agent`, {});
+  let res = await call("POST", `/sessions/${s.id}/agent`, {});
   assertEquals(res.status, 405);
   const body = encodeURIComponent(JSON.stringify({ type: "vacation", date: "2026-03-02" }));
-  res = await call("GET", `/sessions/${s.readId}/agent/entries?method=POST&body=${body}`);
-  assertEquals(res.status, 403);
+  res = await call("GET", `/sessions/${s.id}/agent/entries?method=POST&body=${body}`);
+  assertEquals(res.status, 404);
+  res = await call("GET", `/sessions/${s.id}/agent?method=PATCH&body=%7B%22name%22%3A%22x%22%7D`);
+  assertEquals(res.status, 200);
+  const state = await call("GET", `/sessions/${s.id}?year=2026`);
+  assertEquals(state.data.session.name, "Family");
+  assertEquals(state.data.entries, {});
   res = await call("GET", `/sessions/nosuchsession1234/agent`);
   assertEquals(res.status, 404);
 });

@@ -172,17 +172,12 @@
       <h2 data-i18n="ai.title">Let an AI manage this planner</h2>
       <button class="icon-btn" aria-label="Close" data-i18n-aria-label="close">✕</button>
     </form>
-    <p class="muted" data-i18n="ai.intro">Point an AI assistant at one link: it explains the planner and the API, so the
-      AI can read and change entries, types and notes for you. Changes show up here within seconds.</p>
+    <p class="muted" data-i18n="ai.intro">Point an AI agent at one link: it explains the planner and the API, so the
+      agent can read and change entries, types and notes for you. Changes show up here within seconds.</p>
     <p id="ai-readonly" class="muted" hidden data-i18n="ai.readonly">This is a view-only link, so the AI can only read the planner.</p>
     <h3 data-i18n="ai.quickstart">Quickstart</h3>
-    <div class="ai-open">
-      <a id="ai-chatgpt" class="btn primary" target="_blank" rel="noopener noreferrer" data-i18n="ai.open_chatgpt">Open in ChatGPT</a>
-      <a id="ai-claude" class="btn primary" target="_blank" rel="noopener noreferrer" data-i18n="ai.open_claude">Open in Claude</a>
-    </div>
-    <p class="muted" data-i18n="ai.open_help">Opens a new chat with the prompt below already filled in. The AI needs web
-      access; agents that can send HTTP requests (e.g. Claude Code, Codex, ChatGPT agent) work best.</p>
-    <h3 data-i18n="ai.prompt">Prompt for any AI assistant</h3>
+    <p class="muted" data-i18n="ai.quickstart_help">Copy this prompt into an AI agent that can send HTTP requests, e.g.
+      Claude Code, Codex or ChatGPT agent mode.</p>
     <div class="copy-row"><textarea id="ai-prompt" class="ai-prompt" rows="4" readonly></textarea><button class="btn" data-i18n="copy" data-copy="ai-prompt">Copy</button></div>
     <h3 data-i18n="ai.link">AI link</h3>
     <div class="copy-row"><input id="link-ai" readonly><button class="btn" data-i18n="copy" data-copy="link-ai">Copy</button></div>

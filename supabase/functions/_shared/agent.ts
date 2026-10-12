@@ -1,5 +1,5 @@
-// Instructions for AI assistants: GET /sessions/{id}/agent returns this Markdown page, so a
-// user can hand an AI one URL and it knows the planner, the API and the ready-made links.
+// Instructions for AI agents: GET /sessions/{id}/agent returns this Markdown page, so a user
+// can hand an agent one URL and it knows the planner and the API with ready-to-use URLs.
 
 import type { SessionRow, TypeRow } from "./store.ts";
 
@@ -23,12 +23,6 @@ const ROLE_HELP: Record<string, string> = {
   day_off: "day off",
   none: "normal",
 };
-
-/** A GET link that runs `method` with a JSON body, for AIs that can only open URLs. */
-function agentLink(base: string, token: string, path: string, method: string, body: unknown) {
-  const params = new URLSearchParams({ method, body: JSON.stringify(body) });
-  return `${base}/sessions/${token}/agent${path}?${params}`;
-}
 
 function typesTable(types: TypeRow[]): string {
   if (!types.length) return "_No types in this year yet._";
@@ -67,11 +61,11 @@ All responses are JSON. Dates are \`YYYY-MM-DD\`.
 - \`?from=YYYY-MM-DD&to=YYYY-MM-DD\` works instead of \`?year=\`.`;
 
   if (readOnly) {
-    return `# Vacation planner “${session.name}” – instructions for AI assistants
+    return `# Vacation planner “${session.name}” – instructions for AI agents
 
 This URL gives **read-only** access to a shared year calendar for vacation, public holidays,
 sick days and day-care closures. You can read it and answer questions about it, but not change
-it: ask the user for the edit link's AI URL if they want changes. Today is ${today}.
+it: ask the user for the AI link of the edit link if they want changes. Today is ${today}.
 
 ${concepts()}
 
@@ -92,7 +86,7 @@ ${read}
   };
   const noteOp = { action: "set", date: `${year}-12-25`, icon: "🎄", comment: "Christmas" };
 
-  return `# Vacation planner “${session.name}” – instructions for AI assistants
+  return `# Vacation planner “${session.name}” – instructions for AI agents
 
 The user gave you **full edit access** to their shared year calendar for vacation, public
 holidays, sick days and day-care closures. Help them read and plan it. Today is ${today}.
@@ -153,24 +147,15 @@ ${json(noteOp)} – \`set\` replaces a day's note (icon max. 16 characters, comm
 
 ### Planner name: \`PATCH ${s}\` ${json({ name: session.name })}
 
-## If you can only open URLs (no POST, PATCH or DELETE)
+## Request format
 
-Every request above also works as a plain link: insert \`/agent\` right after the planner id
-and add the query parameters \`method\` and \`body\` (the JSON body, URL-encoded). Opening such a
-link **changes the planner**, so only open the ones you mean to run.
+For example, this would add the vacation from the entries section (only send what the user
+asked for):
 
-- Entries: \`${s}/agent/entries?method=POST&body={URL-encoded JSON}\`
-- Notes: \`${s}/agent/notes?method=POST&body={URL-encoded JSON}\`
-- Add a type: \`${s}/agent/types?year=${year}&method=POST&body={URL-encoded JSON}\`
-- Change a type: \`${s}/agent/types/{type}?year=${year}&method=PATCH&body={URL-encoded JSON}\`
-- Delete a type: \`${s}/agent/types/{type}?year=${year}&method=DELETE\`
-- Rename the planner: \`${s}/agent?method=PATCH&body={URL-encoded JSON}\`
-
-For example, the entries body above becomes
-\`body=${encodeURIComponent(JSON.stringify(addOp))}\`. This link renames the planner to its
-current name, so it changes nothing and is safe to try:
-
-${agentLink(base, token, "", "PATCH", { name: session.name })}
+\`\`\`sh
+curl -X POST "${s}/entries" -H "content-type: application/json" \\
+  -d '${JSON.stringify(addOp)}'
+\`\`\`
 `;
 }
 

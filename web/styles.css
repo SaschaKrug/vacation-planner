@@ -638,7 +638,6 @@ kbd {
 }
 .copy-row .ai-prompt:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .copy-row .ai-prompt + .btn { align-self: flex-start; }
-.ai-open { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 4px; }
 .feed-options { border: 1px solid var(--border); border-radius: var(--radius); margin: 10px 0; padding: 8px 14px 12px; }
 .feed-options legend { padding: 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
 .feed-types { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 8px; }

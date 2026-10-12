@@ -325,10 +325,9 @@ function parseOps<T extends { days: string[] }>(
   return { ops, total };
 }
 
-const AGENT_METHODS = ["GET", "POST", "PATCH", "DELETE"];
 /** How often the web app refreshes an open planner (web/js/app.js POLL_MS), for the AI page. */
 const APP_REFRESH_SECONDS = 15;
-// Agent responses carry the secret id in links and act on GET: never cache or index them.
+// The agent page carries the secret id in its links: never cache or index it.
 const NO_STORE = { "cache-control": "no-store", "x-robots-tag": "noindex" };
 
 export interface HandlerOptions {
@@ -383,31 +382,6 @@ export function createHandler(store: Store, options: HandlerOptions = {}) {
     return url.origin + prefix;
   }
 
-  /**
-   * GET /sessions/{id}/agent/<path>?method=POST&body=<json> runs <method> /sessions/{id}/<path>
-   * with that body, for AI assistants whose tools can only open URLs. Other query parameters
-   * are passed on. Writes still need the edit id.
-   */
-  function agentRequest(url: URL): Request {
-    const method = (url.searchParams.get("method") ?? "GET").toUpperCase();
-    if (!AGENT_METHODS.includes(method)) {
-      throw new HttpError(400, `method must be one of ${AGENT_METHODS.join(", ")}`);
-    }
-    const body = url.searchParams.get("body") ?? undefined;
-    if (body !== undefined && (method === "GET" || method === "DELETE")) {
-      throw new HttpError(400, `${method} takes no body`);
-    }
-    const target = new URL(url);
-    target.pathname = url.pathname.replace(/(\/sessions\/[^/]+)\/agent(?=\/|$)/, "$1");
-    target.searchParams.delete("method");
-    target.searchParams.delete("body");
-    return new Request(target, {
-      method,
-      headers: body === undefined ? {} : { "content-type": "application/json" },
-      body,
-    });
-  }
-
   async function route(req: Request): Promise<Response> {
     const url = new URL(req.url);
     // Strip the function prefix: /functions/v1/api/... or /api/...
@@ -458,13 +432,8 @@ export function createHandler(store: Store, options: HandlerOptions = {}) {
     const token = parts[1];
     const sub = parts[2];
 
-    if (sub === "agent") {
+    if (sub === "agent" && parts.length === 3) {
       if (method !== "GET") throw new HttpError(405, "Method not allowed");
-      if (parts.length > 3 || url.searchParams.has("method")) {
-        const res = await route(agentRequest(url));
-        for (const [k, v] of Object.entries(NO_STORE)) res.headers.set(k, v);
-        return res;
-      }
       const [session, types] = await loadWith(token, false, (id) => store.listTypes(id));
       const doc = buildAgentDoc({
         base: publicBase(url),
