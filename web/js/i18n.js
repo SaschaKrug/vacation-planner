@@ -170,6 +170,27 @@ const STRINGS = {
     "copy": "Copy",
     "close": "Close",
 
+    // AI dialog
+    "top.ai": "✨ AI",
+    "top.ai_title": "Let an AI assistant manage this planner",
+    "ai.title": "Let an AI manage this planner",
+    "ai.intro":
+      "Point an AI assistant at one link: it explains the planner and the API, so the AI can read and change entries, types and notes for you. Changes show up here within seconds.",
+    "ai.readonly": "This is a view-only link, so the AI can only read the planner.",
+    "ai.quickstart": "Quickstart",
+    "ai.open_chatgpt": "Open in ChatGPT",
+    "ai.open_claude": "Open in Claude",
+    "ai.open_help":
+      "Opens a new chat with the prompt below already filled in. The AI needs web access; agents that can send HTTP requests (e.g. Claude Code, Codex, ChatGPT agent) work best.",
+    "ai.prompt": "Prompt for any AI assistant",
+    "ai.prompt_text":
+      "Read {url} – it explains how to view and change my vacation planner. Then help me plan with it.",
+    "ai.prompt_text_readonly":
+      "Read {url} – it explains how to view my vacation planner. Then answer my questions about it.",
+    "ai.link": "AI link",
+    "ai.warning":
+      "Like the edit link, this link is the key: anyone who has it – including the AI service – can change the planner.",
+
     // API dialog
     "api.intro":
       "Fill entries from scripts, shortcuts or other tools. Types can be referenced by id or name and belong to a year: a day uses the types of its year. The session id in the URL is the access key.",
@@ -375,6 +396,26 @@ const STRINGS = {
       "Ein in iCloud gespeichertes Abo (Mac, Ort „iCloud“) erscheint auf all deinen Apple-Geräten und auf iCloud.com.",
     "copy": "Kopieren",
     "close": "Schließen",
+
+    "top.ai": "✨ KI",
+    "top.ai_title": "Einen KI-Assistenten diesen Planer verwalten lassen",
+    "ai.title": "Planer von einer KI verwalten lassen",
+    "ai.intro":
+      "Gib einem KI-Assistenten einen einzigen Link: Er erklärt den Planer und die API, damit die KI Einträge, Arten und Notizen für dich lesen und ändern kann. Änderungen erscheinen hier nach wenigen Sekunden.",
+    "ai.readonly": "Das ist ein Nur-Lese-Link, die KI kann den Planer also nur lesen.",
+    "ai.quickstart": "Schnellstart",
+    "ai.open_chatgpt": "In ChatGPT öffnen",
+    "ai.open_claude": "In Claude öffnen",
+    "ai.open_help":
+      "Öffnet einen neuen Chat, in dem der Prompt unten schon eingetragen ist. Die KI braucht Webzugriff; am besten funktionieren Agenten, die HTTP-Anfragen senden können (z. B. Claude Code, Codex, ChatGPT Agent).",
+    "ai.prompt": "Prompt für jeden KI-Assistenten",
+    "ai.prompt_text":
+      "Lies {url} – dort steht, wie du meinen Urlaubsplaner ansehen und ändern kannst. Hilf mir dann bei der Planung.",
+    "ai.prompt_text_readonly":
+      "Lies {url} – dort steht, wie du meinen Urlaubsplaner ansehen kannst. Beantworte mir dann Fragen dazu.",
+    "ai.link": "KI-Link",
+    "ai.warning":
+      "Wie der Bearbeitungslink ist dieser Link der Schlüssel: Wer ihn hat – auch der KI-Dienst –, kann den Planer ändern.",
 
     "api.intro":
       "Einträge aus Skripten, Kurzbefehlen oder anderen Tools füllen. Arten können über ID oder Namen angegeben werden und gehören zu einem Jahr: Ein Tag nutzt die Arten seines Jahres. Die Session-ID in der URL ist der Zugangsschlüssel.",

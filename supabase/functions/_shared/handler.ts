@@ -2,7 +2,8 @@
 // "api" (https://<project>.supabase.co/functions/v1/api/...) and reused by the
 // local dev server with an in-memory store.
 
-import { dateRange, isValidDate, isWeekend } from "./dates.ts";
+import { buildAgentDoc } from "./agent.ts";
+import { dateRange, formatDate, isValidDate, isWeekend } from "./dates.ts";
 import { buildIcs, type Lang } from "./ics.ts";
 import {
   type EntryRow,
@@ -324,7 +325,19 @@ function parseOps<T extends { days: string[] }>(
   return { ops, total };
 }
 
-export function createHandler(store: Store) {
+const AGENT_METHODS = ["GET", "POST", "PATCH", "DELETE"];
+/** How often the web app refreshes an open planner (web/js/app.js POLL_MS), for the AI page. */
+const APP_REFRESH_SECONDS = 15;
+// Agent responses carry the secret id in links and act on GET: never cache or index them.
+const NO_STORE = { "cache-control": "no-store", "x-robots-tag": "noindex" };
+
+export interface HandlerOptions {
+  /** Public API base for absolute links, e.g. https://<project>.supabase.co/functions/v1/api.
+   * Default: derived from the request URL. */
+  publicBase?: string;
+}
+
+export function createHandler(store: Store, options: HandlerOptions = {}) {
   function checkToken(token: string) {
     if (!TOKEN_RE.test(token)) throw new HttpError(404, "Session not found");
   }
@@ -362,6 +375,37 @@ export function createHandler(store: Store) {
       store.listEntries(sessionId, from, to),
       store.listNotes(sessionId, from, to),
     ]);
+  }
+
+  function publicBase(url: URL): string {
+    if (options.publicBase) return options.publicBase.replace(/\/+$/, "");
+    const prefix = /^(\/functions\/v1)?\/api(?=\/|$)/.exec(url.pathname)?.[0] ?? "";
+    return url.origin + prefix;
+  }
+
+  /**
+   * GET /sessions/{id}/agent/<path>?method=POST&body=<json> runs <method> /sessions/{id}/<path>
+   * with that body, for AI assistants whose tools can only open URLs. Other query parameters
+   * are passed on. Writes still need the edit id.
+   */
+  function agentRequest(url: URL): Request {
+    const method = (url.searchParams.get("method") ?? "GET").toUpperCase();
+    if (!AGENT_METHODS.includes(method)) {
+      throw new HttpError(400, `method must be one of ${AGENT_METHODS.join(", ")}`);
+    }
+    const body = url.searchParams.get("body") ?? undefined;
+    if (body !== undefined && (method === "GET" || method === "DELETE")) {
+      throw new HttpError(400, `${method} takes no body`);
+    }
+    const target = new URL(url);
+    target.pathname = url.pathname.replace(/(\/sessions\/[^/]+)\/agent(?=\/|$)/, "$1");
+    target.searchParams.delete("method");
+    target.searchParams.delete("body");
+    return new Request(target, {
+      method,
+      headers: body === undefined ? {} : { "content-type": "application/json" },
+      body,
+    });
   }
 
   async function route(req: Request): Promise<Response> {
@@ -413,6 +457,27 @@ export function createHandler(store: Store) {
 
     const token = parts[1];
     const sub = parts[2];
+
+    if (sub === "agent") {
+      if (method !== "GET") throw new HttpError(405, "Method not allowed");
+      if (parts.length > 3 || url.searchParams.has("method")) {
+        const res = await route(agentRequest(url));
+        for (const [k, v] of Object.entries(NO_STORE)) res.headers.set(k, v);
+        return res;
+      }
+      const [session, types] = await loadWith(token, false, (id) => store.listTypes(id));
+      const doc = buildAgentDoc({
+        base: publicBase(url),
+        token,
+        session,
+        types,
+        today: formatDate(new Date()),
+        refreshSeconds: APP_REFRESH_SECONDS,
+      });
+      return new Response(doc, {
+        headers: { ...CORS, ...NO_STORE, "content-type": "text/markdown; charset=utf-8" },
+      });
+    }
 
     if (parts.length === 2) {
       const range = rangeFromQuery(url);

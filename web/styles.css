@@ -625,6 +625,20 @@ kbd {
 .muted { color: var(--muted); margin: 4px 0 10px; }
 .copy-row { display: flex; gap: 8px; margin: 8px 0; }
 .copy-row input { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--surface-2); }
+.copy-row .ai-prompt {
+  flex: 1;
+  min-width: 0;
+  resize: vertical;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.copy-row .ai-prompt:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.copy-row .ai-prompt + .btn { align-self: flex-start; }
+.ai-open { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 4px; }
 .feed-options { border: 1px solid var(--border); border-radius: var(--radius); margin: 10px 0; padding: 8px 14px 12px; }
 .feed-options legend { padding: 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
 .feed-types { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 8px; }

@@ -1296,6 +1296,19 @@ function openShareDialog() {
   $("dlg-share").showModal();
 }
 
+function openAiDialog() {
+  const url = api.agentUrl(state.token);
+  const prompt = t(state.readOnly ? "ai.prompt_text_readonly" : "ai.prompt_text", { url });
+  const q = encodeURIComponent(prompt);
+  $("ai-readonly").hidden = !state.readOnly;
+  $("ai-warning").hidden = state.readOnly;
+  $("ai-chatgpt").href = `https://chatgpt.com/?q=${q}`;
+  $("ai-claude").href = `https://claude.ai/new?q=${q}`;
+  $("ai-prompt").value = prompt;
+  $("link-ai").value = url;
+  $("dlg-ai").showModal();
+}
+
 function openApiDialog() {
   const base = api.calendarUrl("x").replace(/\/sessions\/x\/calendar\.ics$/, "");
   const id = state.readOnly ? "<edit-id>" : state.session.id;
@@ -1485,6 +1498,7 @@ function bind() {
   $("session-name").addEventListener("keydown", (e) => e.key === "Enter" && e.target.blur());
 
   $("btn-share").addEventListener("click", openShareDialog);
+  $("btn-ai").addEventListener("click", openAiDialog);
   $("btn-api").addEventListener("click", openApiDialog);
   $("btn-help").addEventListener("click", () => $("dlg-help").showModal());
   $("btn-edit-types").addEventListener("click", openTypesDialog);
