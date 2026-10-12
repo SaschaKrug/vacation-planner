@@ -42,6 +42,10 @@ closures, with a coverage check, a REST API and an iCloud / Apple Calendar feed.
 - **Clone:** *⋯* → *Clone planner* copies the planner with all years, types, entries and notes
   into a new one with its own links; the original stays unchanged. Works from a view-only
   link too, which gives you your own editable copy.
+- **Export / import:** *⋯* → *Export (JSON)* downloads the whole planner (all years, types,
+  entries and notes, but not its links) as a file. *⋯* → *Import from file…* (edit link only)
+  replaces all years, types, entries and notes of the open planner with such a file, e.g. to
+  restore a backup; the planner keeps its name and links. Importing can't be undone.
 - **English and German:** the language follows the browser and can be switched at the top right.
   New planners get default types in that language, and the calendar feed uses it for its texts.
 
@@ -125,6 +129,8 @@ working across years.
 | `GET /sessions/{id}?year=2026` | Planner, the year's types, entries and notes, and `typeYears` (all years with types). `?from=&to=` also works; no filter = all |
 | `PATCH /sessions/{id}` | Rename: `{"name": "..."}` |
 | `POST /sessions/{id}/clone` | Copy the planner (all years, types, entries, notes) into a new one with new ids. Body (optional): `{"name": "..."}`, default *“… (copy)”*. The view-only id works too |
+| `GET /sessions/{id}/export` | The whole planner as a file: `{"format": "vacation-planner", "version": 1, "name", "types": [...], "entries": {...}, "notes": {...}}`, all years, without the planner's ids. The view-only id works too |
+| `POST /sessions/{id}/import?year=2026` | Replace all years, types, entries and notes with those of an export file (the body), in one transaction; name and ids stay. Returns the planner like `GET /sessions/{id}` |
 | `GET /sessions/{id}/entries?year=2026` | `{"2026-08-03": ["vacation", "day-care-closed"], ...}` |
 | `POST /sessions/{id}/entries` | Change entries (see below) |
 | `GET /sessions/{id}/notes?year=2026` | `{"2026-12-25": {"icon": "🎄", "comment": "Christmas"}, ...}` |

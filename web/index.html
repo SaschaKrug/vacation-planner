@@ -41,6 +41,8 @@
     <button id="btn-ai" class="menu-item" role="menuitem"><span class="menu-icon" aria-hidden="true">✨</span><span data-i18n="menu.ai">AI assistant</span></button>
     <button id="btn-api" class="menu-item" role="menuitem"><span class="menu-icon" aria-hidden="true">{ }</span><span data-i18n="menu.api">API for scripts</span></button>
     <button id="btn-clone" class="menu-item" role="menuitem"><span class="menu-icon" aria-hidden="true">⧉</span><span data-i18n="menu.clone">Clone planner</span></button>
+    <button id="btn-export" class="menu-item" role="menuitem"><span class="menu-icon" aria-hidden="true">↓</span><span data-i18n="menu.export">Export (JSON)</span></button>
+    <button id="btn-import" class="menu-item" role="menuitem"><span class="menu-icon" aria-hidden="true">↑</span><span data-i18n="menu.import">Import from file…</span></button>
     <button id="btn-help" class="menu-item" role="menuitem"><span class="menu-icon" aria-hidden="true">?</span><span data-i18n="menu.help">Help &amp; shortcuts</span></button>
     <div class="menu-sep" role="separator"></div>
     <div id="menu-view" class="desktop-only" role="group">
@@ -260,6 +262,7 @@
     </table>
   </dialog>
 
+  <input type="file" id="import-file" accept=".json,application/json" hidden>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 </body>
 </html>

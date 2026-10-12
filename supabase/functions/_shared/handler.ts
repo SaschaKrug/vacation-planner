@@ -38,7 +38,14 @@ const MAX_DAYS_PER_REQUEST = 4000;
 const MAX_RANGE_DAYS = 3 * 366;
 const MAX_ICON = 16; // UTF-16 code units: enough for flags and ZWJ emoji
 const MAX_COMMENT = 500;
+const MAX_IMPORT_YEARS = 50;
+const MAX_IMPORT_DAYS = 20000; // days with entries, and days with notes
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+// Type ids come from slug() and uniqueId(); imports must look the same.
+const TYPE_ID_RE = /^[a-z0-9][a-z0-9-]{0,47}$/;
+/** Marks the JSON of GET /sessions/{id}/export, which POST /sessions/import reads back. */
+const EXPORT_FORMAT = "vacation-planner";
+const EXPORT_VERSION = 1;
 // Tokens come from randomToken(); the Supabase store relies on them being alphanumeric.
 const TOKEN_RE = /^[A-Za-z0-9]{10,64}$/;
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
@@ -245,6 +252,90 @@ function sessionState(
     entries: groupEntries(rows),
     notes: notesMap(notes),
   };
+}
+
+/** The whole planner as a file: all years, types, entries and notes, but never its ids. */
+function exportData(session: SessionRow, types: TypeRow[], rows: EntryRow[], notes: NoteRow[]) {
+  return {
+    format: EXPORT_FORMAT,
+    version: EXPORT_VERSION,
+    exportedAt: new Date().toISOString(),
+    name: session.name,
+    types: types.map(publicType),
+    entries: groupEntries(rows),
+    notes: notesMap(notes),
+  };
+}
+
+function objectOf(raw: unknown, what: string): Record<string, unknown> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new HttpError(400, `${what} must be an object`);
+  }
+  return raw as Record<string, unknown>;
+}
+
+function dayMap(v: unknown, field: string): [string, unknown][] {
+  if (v === undefined) return [];
+  const list = Object.entries(objectOf(v, field));
+  if (list.length > MAX_IMPORT_DAYS) throw new HttpError(400, `Too many days in ${field}`);
+  for (const [day] of list) {
+    if (!isValidDate(day)) throw new HttpError(400, `Invalid date "${day}" in ${field}`);
+  }
+  return list;
+}
+
+/** Validates an export file (see exportData) for importing into a planner. */
+function parseImport(body: Record<string, unknown>) {
+  if (body.format !== EXPORT_FORMAT) throw new HttpError(400, "Not a vacation planner export");
+  if (body.version !== EXPORT_VERSION) {
+    throw new HttpError(400, `Unsupported export version ${body.version}`);
+  }
+  if (!Array.isArray(body.types)) throw new HttpError(400, "types must be an array");
+  const types: Omit<TypeRow, "session_id">[] = [];
+  const keys = new Set<string>();
+  const perYear = new Map<number, number>();
+  for (const [i, raw] of body.types.entries()) {
+    const t = objectOf(raw, "Each type");
+    const year = cleanYear(t.year, "type year");
+    if (typeof t.id !== "string" || !TYPE_ID_RE.test(t.id)) {
+      throw new HttpError(400, `Invalid type id "${t.id}"`);
+    }
+    if (keys.has(`${year}|${t.id}`)) {
+      throw new HttpError(400, `Duplicate type "${t.id}" in ${year}`);
+    }
+    keys.add(`${year}|${t.id}`);
+    perYear.set(year, (perYear.get(year) ?? 0) + 1);
+    if (perYear.get(year)! > MAX_TYPES) throw new HttpError(400, `Too many entry types in ${year}`);
+    types.push({
+      year,
+      id: t.id,
+      name: cleanName(t.name),
+      color: cleanColor(t.color),
+      role: cleanRole(t.role),
+      position: Number.isInteger(t.position) ? t.position as number : i,
+    });
+  }
+  if (perYear.size > MAX_IMPORT_YEARS) throw new HttpError(400, "Too many years");
+
+  const entries: EntryRow[] = [];
+  for (const [day, ids] of dayMap(body.entries, "entries")) {
+    if (!Array.isArray(ids)) throw new HttpError(400, `entries of ${day} must be an array`);
+    for (const id of new Set(ids)) {
+      if (typeof id !== "string" || !keys.has(`${yearOf(day)}|${id}`)) {
+        throw new HttpError(400, `Unknown entry type "${id}" in ${yearOf(day)}`);
+      }
+      entries.push({ day, type_id: id });
+    }
+  }
+
+  const notes: NoteRow[] = [];
+  for (const [day, raw] of dayMap(body.notes, "notes")) {
+    const n = objectOf(raw, `The note of ${day}`);
+    const icon = cleanNoteText(n.icon, "icon", MAX_ICON);
+    const comment = cleanNoteText(n.comment, "comment", MAX_COMMENT);
+    if (icon || comment) notes.push({ day, icon, comment });
+  }
+  return { types, entries, notes };
 }
 
 function opObject(raw: unknown): Record<string, unknown> {
@@ -548,6 +639,34 @@ export function createHandler(store: Store, options: HandlerOptions = {}) {
       await store.addEntries(session.id, rows);
       await store.upsertNotes(session.id, notes);
       return json(sessionState(session, session.id, copies, {}, rows, notes), 201);
+    }
+
+    if (sub === "export" && parts.length === 3) {
+      // The view-only id may export too: it can read all of that anyway.
+      if (method !== "GET") throw new HttpError(405, "Method not allowed");
+      const [session, [types, rows, notes]] = await loadWith(
+        token,
+        false,
+        (id) => listAll(id, {}),
+      );
+      return json(exportData(session, types, rows, notes), 200, {
+        ...NO_STORE,
+        "content-disposition": `attachment; filename="${slug(session.name)}.json"`,
+      });
+    }
+
+    if (sub === "import" && parts.length === 3) {
+      // Replaces all years, types, entries and notes with those of an export file; the
+      // name and the links stay. Answers like GET /sessions/{id} (with ?year= etc.).
+      if (method !== "POST") throw new HttpError(405, "Method not allowed");
+      const range = rangeFromQuery(url);
+      const session = await loadSession(token, true);
+      const data = parseImport(await readBody(req));
+      const types = data.types.map((t) => ({ ...t, session_id: session.id }));
+      await store.replaceContents(session.id, types, data.entries, data.notes);
+      const [all, rows, notes] = await listAll(session.id, range);
+      const updated = { ...session, updated_at: new Date().toISOString() };
+      return json(sessionState(updated, token, all, range, rows, notes));
     }
 
     if (sub === "calendar.ics" && parts.length === 3 && method === "GET") {

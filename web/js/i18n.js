@@ -29,6 +29,8 @@ const STRINGS = {
     "menu.ai": "AI assistant",
     "menu.api": "API for scripts",
     "menu.clone": "Clone planner",
+    "menu.export": "Export (JSON)",
+    "menu.import": "Import from file…",
     "menu.help": "Help &amp; shortcuts",
     "menu.weekdays": "Always show weekdays",
     "menu.weekdays_title": "Show the weekday letters on the days at every zoom level",
@@ -128,6 +130,11 @@ const STRINGS = {
     "clone.confirm":
       "Create a copy of “{name}” with all years, types, entries and notes?\n\nThe copy gets its own new links; this planner stays unchanged.",
     "clone.name": "{name} (copy)",
+    "toast.export_failed": "Couldn't export the planner: {msg}",
+    "toast.import_invalid": "This isn't a planner export (a .json file from ⋯ → Export)",
+    "toast.import_failed": "Couldn't import the file: {msg}",
+    "import.confirm":
+      "Replace everything in “{name}” with the contents of “{file}”?\n\nAll years, types, entries and notes of this planner are overwritten; the name and the links stay. This can't be undone – export first to keep a copy.",
     "toast.rename_failed": "Couldn't rename: {msg}",
     "toast.copied": "Copied to clipboard",
 
@@ -292,6 +299,8 @@ const STRINGS = {
     "menu.ai": "KI-Assistent",
     "menu.api": "API für Skripte",
     "menu.clone": "Planer duplizieren",
+    "menu.export": "Exportieren (JSON)",
+    "menu.import": "Aus Datei importieren…",
     "menu.help": "Hilfe &amp; Tastenkürzel",
     "menu.weekdays": "Wochentage immer anzeigen",
     "menu.weekdays_title": "Die Wochentag-Buchstaben in jeder Zoomstufe auf den Tagen anzeigen",
@@ -393,6 +402,11 @@ const STRINGS = {
     "clone.confirm":
       "Eine Kopie von „{name}“ mit allen Jahren, Typen, Einträgen und Notizen erstellen?\n\nDie Kopie bekommt eigene, neue Links; dieser Planer bleibt unverändert.",
     "clone.name": "{name} (Kopie)",
+    "toast.export_failed": "Planer konnte nicht exportiert werden: {msg}",
+    "toast.import_invalid": "Das ist kein Planer-Export (eine .json-Datei aus ⋯ → Exportieren)",
+    "toast.import_failed": "Datei konnte nicht importiert werden: {msg}",
+    "import.confirm":
+      "Alles in „{name}“ durch den Inhalt von „{file}“ ersetzen?\n\nAlle Jahre, Typen, Einträge und Notizen dieses Planers werden überschrieben; Name und Links bleiben. Das lässt sich nicht rückgängig machen – vorher exportieren, um eine Kopie zu behalten.",
     "toast.rename_failed": "Umbenennen fehlgeschlagen: {msg}",
     "toast.copied": "In die Zwischenablage kopiert",
 
