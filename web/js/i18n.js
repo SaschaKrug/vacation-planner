@@ -30,6 +30,8 @@ const STRINGS = {
     "menu.api": "API for scripts",
     "menu.clone": "Clone planner",
     "menu.help": "Help &amp; shortcuts",
+    "menu.undo_key": "Ctrl/⌘+Z",
+    "menu.redo_key": "Ctrl/⌘+Y",
 
     // landing
     "landing.title": "Plan the whole year at a glance",
@@ -57,9 +59,7 @@ const STRINGS = {
     "toolbar.multi_title": "Tap days to add them to the selection or remove them",
     "toolbar.history": "Undo / redo",
     "toolbar.undo": "Undo",
-    "toolbar.undo_title": "Undo (Ctrl/⌘+Z)",
     "toolbar.redo": "Redo",
-    "toolbar.redo_title": "Redo (Ctrl/⌘+Y)",
     "toolbar.zoom": "Zoom",
     "toolbar.zoom_title": "Zoom: how many days fit in the calendar (Ctrl/⌘ + / − / 0)",
     "toolbar.zoom_days": ({ n }) => `${n} ${s(n, "day", "days")}`,
@@ -240,7 +240,7 @@ const STRINGS = {
     "help.multi": "Multi-select",
     "help.multi_do":
       "Turn it on, then tap days to add or remove them; long-press + drag adds a range",
-    "help.undo_touch": "↶ / ↷",
+    "help.undo_touch": "⋯ menu",
     "help.help_do": "Show this help",
     "help.click": "Click / drag",
     "help.click_do": "Select a day / a range of days (across months)",
@@ -291,6 +291,8 @@ const STRINGS = {
     "menu.api": "API für Skripte",
     "menu.clone": "Planer duplizieren",
     "menu.help": "Hilfe &amp; Tastenkürzel",
+    "menu.undo_key": "Strg/⌘+Z",
+    "menu.redo_key": "Strg/⌘+Y",
 
     "landing.title": "Das ganze Jahr auf einen Blick planen",
     "landing.lead":
@@ -318,9 +320,7 @@ const STRINGS = {
       "Tage antippen, um sie zur Auswahl hinzuzufügen oder daraus zu entfernen",
     "toolbar.history": "Rückgängig / wiederholen",
     "toolbar.undo": "Rückgängig",
-    "toolbar.undo_title": "Rückgängig (Strg/⌘+Z)",
     "toolbar.redo": "Wiederholen",
-    "toolbar.redo_title": "Wiederholen (Strg/⌘+Y)",
     "toolbar.zoom": "Zoom",
     "toolbar.zoom_title": "Zoom: wie viele Tage in den Kalender passen (Strg/⌘ + / − / 0)",
     "toolbar.zoom_days": ({ n }) => `${n} ${s(n, "Tag", "Tage")}`,
@@ -503,7 +503,7 @@ const STRINGS = {
     "help.multi": "Mehrfachauswahl",
     "help.multi_do":
       "Einschalten, dann Tage antippen, um sie hinzuzufügen oder zu entfernen; lange drücken + ziehen fügt einen Bereich hinzu",
-    "help.undo_touch": "↶ / ↷",
+    "help.undo_touch": "⋯ Menü",
     "help.help_do": "Diese Hilfe zeigen",
     "help.click": "Klicken / ziehen",
     "help.click_do": "Einen Tag / einen Zeitraum auswählen (auch über Monate hinweg)",

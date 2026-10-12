@@ -200,6 +200,10 @@ kbd {
   cursor: pointer;
 }
 .menu-item:hover { background: var(--surface-2); }
+.menu-item:disabled { opacity: 0.45; cursor: default; }
+.menu-item:disabled:hover { background: none; }
+.menu-kbd { margin-left: auto; padding: 0 0 0 16px; border: 0; background: none; box-shadow: none; font: inherit; font-size: 12px; color: var(--muted); }
+@media (hover: none) and (pointer: coarse) { .menu-kbd { display: none; } }
 .menu-icon { width: 20px; flex: none; text-align: center; font-size: 13px; font-weight: 700; color: var(--muted); }
 .menu-item[aria-checked="true"] { font-weight: 600; }
 .menu-item[aria-checked="true"] .menu-icon::before { content: "✓"; color: var(--accent); }
@@ -340,10 +344,6 @@ kbd {
 
 .types { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
 .edit-types { border-radius: 999px; }
-.history { display: flex; gap: 4px; margin-left: auto; }
-.history[hidden] { display: none; }
-.history .icon-btn:disabled { opacity: 0.4; cursor: default; }
-.history .icon-btn:disabled:hover { background: var(--surface); color: var(--muted); border-color: var(--border); }
 .zoom { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; font-size: 13px; color: var(--muted); user-select: none; }
 .zoom-icon { font-size: 13px; opacity: 0.7; }
 .zoom input { width: 96px; margin: 0; accent-color: var(--accent); cursor: pointer; }
@@ -905,18 +905,6 @@ details li { margin: 6px 0; }
   .toolbar::-webkit-scrollbar { display: none; }
   .types { flex: none; flex-wrap: nowrap; }
   .chip, .edit-types { flex: none; }
-  /* Undo / redo stay at the start of the chip row while the chips scroll past. */
-  .history {
-    order: -1;
-    flex: none;
-    position: sticky;
-    left: -12px;
-    z-index: 1;
-    margin: 0 0 0 -12px;
-    padding: 0 6px 0 12px;
-    background: var(--surface);
-    border-right: 1px solid var(--border);
-  }
   .zoom { display: none; }
 
   /* Selection: info + close on the first line, actions (swipeable) on the second. */
