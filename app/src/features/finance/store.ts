@@ -197,6 +197,13 @@ export class FinanceStore {
     this.changed();
   }
 
+  /** Reloads the categories, and what is shown since they name its transactions. */
+  refreshCategories() {
+    if (!this.opened) return;
+    this.loadOverview();
+    this.reload();
+  }
+
   setPeriod(period: Partial<Period>) {
     this.period = { ...this.period, ...period };
     this.limit = PAGE;

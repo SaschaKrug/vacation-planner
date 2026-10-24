@@ -312,6 +312,38 @@ Deno.test("the assistant reads the finances", async () => {
   assertMatch(text, /Income 1000, expenses 25/);
 });
 
+Deno.test("the assistant adds categories, with undo, and deletes them only when confirmed", async () => {
+  const t = await configured();
+  const ev = await chat(t, "add category Pets");
+  assertEquals(ev.find((e) => e.event === "tool")!.data.name, "manage_categories");
+  const change = ev.find((e) => e.event === "change")!.data;
+  assertEquals([change.kind, change.summary], ["categories", "Added the category “Pets”"]);
+  const cats = async () => (await t.call("GET", `/families/${t.f.id}/finance`)).data.categories;
+  const pets = (await cats()).find((c: any) => c.name === "Pets");
+  assertEquals([pets.id, pets.kind, pets.icon], ["pets", "expense", "🐾"]);
+
+  // Undo through the family's own API.
+  for (const step of change.undo) {
+    assertEquals(
+      (await t.call(step.method, `/families/${t.f.id}${step.path}`, step.body)).status,
+      200,
+    );
+  }
+  assert(!(await cats()).some((c: any) => c.name === "Pets"));
+
+  // Deleting needs the user's OK.
+  await chat(t, "add category Pets");
+  const del = await chat(t, "delete category Pets");
+  const result = del.find((e) => e.event === "tool_result")!.data;
+  assertEquals(result.ok, false);
+  assertMatch(result.summary, /Ask the user to confirm/);
+  assert((await cats()).some((c: any) => c.name === "Pets"));
+
+  // Read-only chats can't add any.
+  const ro = await configured({}, { allowWrites: false });
+  assert(!(await chat(ro, "add category Pets")).some((e) => e.event === "tool"));
+});
+
 /** Adds transactions; returns their ids in order. */
 async function addTransactions(t: Awaited<ReturnType<typeof family>>, ops: unknown[]) {
   const res = await t.call("POST", `/families/${t.f.id}/finance/transactions`, { ops });

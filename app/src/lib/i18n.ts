@@ -537,6 +537,7 @@ const STRINGS: Record<Lang, Dict> = {
     "chat.tool.manage_entry_types": "Changing entry types",
     "chat.tool.list_transactions": "Reading transactions",
     "chat.tool.finance_summary": "Summing up the finances",
+    "chat.tool.manage_categories": "Changing categories",
     "chat.tool.change_transactions": "Changing transactions",
     "ai_settings.edit_only": "The AI assistant can only be set up and used with the edit link.",
     "ai_settings.server_not_ready":
@@ -1100,6 +1101,7 @@ const STRINGS: Record<Lang, Dict> = {
     "chat.tool.manage_entry_types": "Ändert Arten",
     "chat.tool.list_transactions": "Liest Buchungen",
     "chat.tool.finance_summary": "Rechnet die Finanzen zusammen",
+    "chat.tool.manage_categories": "Ändert Kategorien",
     "chat.tool.change_transactions": "Ändert Buchungen",
     "ai_settings.edit_only":
       "Der KI-Assistent lässt sich nur mit dem Bearbeitungslink einrichten und nutzen.",
