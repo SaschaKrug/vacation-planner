@@ -5,11 +5,14 @@
 // Routes are /families/{token}/...; /sessions/{token}/... is the name from before families
 // and stays as an alias (calendar subscriptions and scripts point there).
 
+import { type AiEnv, handleAi } from "./ai.ts";
+import type { Fetch } from "./ai/net.ts";
 import { type Access, ACCESS_RANK, accessOf, type Ctx, type Loaded } from "./context.ts";
 import { createFamily, handleFamily } from "./families.ts";
 import { handleFinance } from "./finance.ts";
 import { CORS, HttpError, json } from "./http.ts";
 import { clientAddress, type RateLimiter } from "./rate_limit.ts";
+import { SecretBox } from "./secrets.ts";
 import type { Store } from "./store.ts";
 import { handleVacation } from "./vacation.ts";
 
@@ -31,6 +34,10 @@ export const RATE_LIMITS = {
   /** Changes (POST / PATCH / DELETE) per client; the app batches edits made in quick
    *  succession, so this leaves plenty of room for fast clicking. */
   write: { max: 300, seconds: 300 },
+  /** AI chats, model lists and tests per client, and per family (they cost the family's
+   *  tokens and run outgoing requests). */
+  ai: { max: 60, seconds: 300 },
+  aiFamily: { max: 300, seconds: 3600 },
 };
 export type RateLimits = typeof RATE_LIMITS;
 
@@ -49,11 +56,27 @@ export interface HandlerOptions {
   /** The client's rate-limit key. Default: its address (see clientAddress). */
   clientKey?: (req: Request) => string | Promise<string>;
   limits?: RateLimits;
+  /** 32 random bytes, base64: encrypts the stored AI keys. Without it keys can't be saved. */
+  aiSecret?: string;
+  /** For the AI endpoint, web search and pages; tests pass a fake. Default: fetch. */
+  fetch?: Fetch;
+  /** Lets AI requests reach localhost and private networks (local development only). */
+  allowPrivateNetwork?: boolean;
+  /** Resolves host names for the private-address check (tests). */
+  resolve?: (host: string) => Promise<string[]>;
 }
 
 export function createHandler(store: Store, options: HandlerOptions = {}) {
   const limits = options.limits ?? RATE_LIMITS;
   const clientKey = options.clientKey ?? clientAddress;
+  const ai: AiEnv = {
+    secrets: options.aiSecret ? new SecretBox(options.aiSecret) : null,
+    net: {
+      fetch: options.fetch ?? fetch,
+      allowPrivate: options.allowPrivateNetwork,
+      resolve: options.resolve,
+    },
+  };
 
   /** Counts the request against a limit; 429 once the window's limit is used up. */
   async function limit(name: keyof RateLimits, key: string) {
@@ -133,6 +156,10 @@ export function createHandler(store: Store, options: HandlerOptions = {}) {
         await limit("create", client);
         await limit("createAll", "all");
       } else await limit("write", client);
+      if (parts[2] === "ai" && parts[3] !== "settings") {
+        await limit("ai", client);
+        await limit("aiFamily", parts[1]);
+      }
     }
 
     if (parts.length === 1) {
@@ -152,7 +179,8 @@ export function createHandler(store: Store, options: HandlerOptions = {}) {
       load: (need) => load(token, need),
       loadWith: (need, query) => loadWith(token, need, query),
     };
-    const res = handleFamily(ctx) ?? handleVacation(ctx) ?? handleFinance(ctx);
+    const res = handleFamily(ctx) ?? handleVacation(ctx) ?? handleFinance(ctx) ??
+      handleAi(ctx, ai);
     if (!res) throw new HttpError(404, "Not found");
     return await res;
   }

@@ -156,8 +156,14 @@ export class FinanceStore {
   }
 
   private reload() {
+    if (!this.opened) return; // nothing shown yet: it loads when the page opens
     this.loadList();
     if (this.summary) this.loadSummary();
+  }
+
+  /** Reloads what is shown, e.g. after the assistant changed transactions. */
+  refresh() {
+    this.reload();
   }
 
   setPeriod(period: Partial<Period>) {
