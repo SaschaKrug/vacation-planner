@@ -1,5 +1,6 @@
 import { assert, assertEquals, assertMatch } from "jsr:@std/assert@1";
 import { mockAi } from "../dev/mock_ai.ts";
+import { parseAnswer, similarKey } from "../supabase/functions/_shared/ai/categorize.ts";
 import { htmlToText, isPrivateAddress } from "../supabase/functions/_shared/ai/net.ts";
 import { createHandler, type HandlerOptions } from "../supabase/functions/_shared/handler.ts";
 import { MemoryRateLimiter } from "../supabase/functions/_shared/rate_limit.ts";
@@ -36,6 +37,12 @@ const fakeFetch = ((input: string | URL | Request, init?: RequestInit) => {
     );
   }
   if (url.hostname === "api.tavily.com") {
+    const query = JSON.parse(String(init?.body ?? "{}")).query ?? "";
+    if (/zorbex/i.test(query)) {
+      return Promise.resolve(Response.json({
+        results: [{ title: "Zorbex", url: "https://zorbex.test", content: "A leisure park" }],
+      }));
+    }
     return Promise.resolve(Response.json({
       results: [{ title: "Ferien Bayern 2027", url: "https://pages.test/ferien", content: "…" }],
     }));
@@ -303,6 +310,132 @@ Deno.test("the assistant reads the finances", async () => {
   assertEquals(ev.find((e) => e.event === "tool")!.data.name, "finance_summary");
   const text = ev.filter((e) => e.event === "text").map((e) => e.data.delta).join("");
   assertMatch(text, /Income 1000, expenses 25/);
+});
+
+/** Adds transactions; returns their ids in order. */
+async function addTransactions(t: Awaited<ReturnType<typeof family>>, ops: unknown[]) {
+  const res = await t.call("POST", `/families/${t.f.id}/finance/transactions`, { ops });
+  assertEquals(res.status, 200, res.data);
+  return res.data.added as string[];
+}
+
+async function categoryOf(t: Awaited<ReturnType<typeof family>>, ids: string[]) {
+  const res = await t.call("GET", `/families/${t.f.id}/finance/transactions?limit=1000`);
+  const byId = new Map(res.data.transactions.map((x: any) => [x.id, x.categoryId]));
+  return ids.map((id) => byId.get(id));
+}
+
+Deno.test("sorts uncategorized transactions into fitting categories, with undo", async () => {
+  const t = await configured();
+  const ids = await addTransactions(t, [
+    { date: "2026-02-01", amountCents: -4520, payee: "Supermarket", description: "groceries" },
+    { date: "2026-02-02", amountCents: -1200, payee: "City", description: "Mobility pass" },
+    // Income can't go to an expense category, whatever the model says.
+    { date: "2026-02-03", amountCents: 900, payee: "Groceries refund" },
+    { date: "2026-02-04", amountCents: -999, payee: "Something odd" },
+    // Already sorted: stays as it is, and is shown to the model as an example.
+    { date: "2026-01-15", amountCents: -5000, payee: "Pharmacy", categoryId: "health" },
+  ]);
+  const res = await t.call("POST", `${t.ai}/categorize`, { from: "2026-02-01", to: "2026-02-28" });
+  assertEquals(res.status, 200, res.data);
+  assertEquals([res.data.changed, res.data.considered, res.data.remaining], [2, 4, 0]);
+  assertEquals(await categoryOf(t, ids), ["groceries", "mobility", null, null, "health"]);
+  assertEquals(aiBody.temperature, 0);
+  assertMatch(aiBody.messages[0].content, /Pharmacy -> health/);
+  assertMatch(aiBody.messages[1].content, /^1 \| 2026-02-04 \| -9\.99 \| Something odd \| $/m);
+
+  const undo = await t.call("POST", `/families/${t.f.id}/finance/transactions`, {
+    ops: res.data.inverse,
+  });
+  assertEquals(undo.status, 200);
+  assertEquals(await categoryOf(t, ids), [null, null, null, null, "health"]);
+});
+
+Deno.test("categorizes given transactions, or a range page by page", async () => {
+  const t = await configured();
+  const ids = await addTransactions(
+    t,
+    Array.from({ length: 205 }, (_, i) => ({
+      date: "2026-03-01",
+      amountCents: -100 - i,
+      payee: i % 2 ? "Unknown shop" : "Leisure park",
+    })),
+  );
+  const one = await t.call("POST", `${t.ai}/categorize`, { ids: ids.slice(0, 2) });
+  assertEquals([one.data.changed, one.data.considered, one.data.remaining], [1, 2, 0]);
+
+  // 204 left open: 200 now, the rest on the next call (skipping the ones left uncategorized).
+  const first = await t.call("POST", `${t.ai}/categorize`, {});
+  assertEquals([first.data.considered, first.data.remaining], [200, 4]);
+  const left = first.data.considered - first.data.changed;
+  const next = await t.call("POST", `${t.ai}/categorize`, { skip: left });
+  assertEquals([next.data.considered, next.data.remaining], [4, 0]);
+  const cats = await categoryOf(t, ids);
+  assertEquals(cats.filter((c) => c === "leisure").length, 103);
+  assertEquals(cats.filter((c) => c === null).length, 102);
+});
+
+Deno.test("sorts like similar transactions without AI", async () => {
+  const t = await family(); // no AI settings
+  const ids = await addTransactions(t, [
+    { date: "2026-01-02", amountCents: -3000, payee: "REWE Markt 1234", categoryId: "groceries" },
+    { date: "2026-01-09", amountCents: -2000, payee: "Rewe Markt 99", categoryId: "groceries" },
+    { date: "2026-01-10", amountCents: -900, payee: "Kiosk", categoryId: "leisure" },
+    { date: "2026-01-11", amountCents: -900, payee: "Kiosk", categoryId: "shopping" },
+    { date: "2026-02-01", amountCents: -4520, payee: "REWE MARKT 5678" },
+    // The family sorted the kiosk both ways: no clear answer.
+    { date: "2026-02-02", amountCents: -800, payee: "Kiosk" },
+    // Money back from the supermarket doesn't go into an expense category.
+    { date: "2026-02-03", amountCents: 500, payee: "Rewe Markt 1" },
+  ]);
+  requests.length = 0;
+  const res = await t.call("POST", `${t.ai}/categorize`, { from: "2026-02-01" });
+  assertEquals(res.status, 200, res.data);
+  assertEquals([res.data.changed, res.data.matched, res.data.ai], [1, 1, false]);
+  assertEquals(res.data.assignments[0].source, "similar");
+  assertEquals((await categoryOf(t, ids)).slice(4), ["groceries", null, null]);
+  assertEquals(requests.length, 0);
+  assertEquals(
+    similarKey({ payee: "", description: "SEPA 4711 Stadtwerke München GmbH" }),
+    "sepa stadtwerke münchen",
+  );
+});
+
+Deno.test("looks up unknown payees on the web when search is set up", async () => {
+  const t = await configured({}, { searchProvider: "tavily", searchKey: "tvly-key" });
+  const ids = await addTransactions(t, [
+    { date: "2026-02-01", amountCents: -2400, payee: "Zorbex" },
+  ]);
+  requests.length = 0;
+  const res = await t.call("POST", `${t.ai}/categorize`, {});
+  assertEquals([res.data.changed, res.data.matched], [1, 0]);
+  assertEquals(await categoryOf(t, ids), ["leisure"]);
+  assert(requests.some((r) => r.startsWith("https://api.tavily.com")));
+  // The model got the search results back, and could have searched more.
+  assertEquals(aiBody.tool_choice, "auto");
+  assertMatch(aiBody.messages[0].content, /web_search/);
+  assertEquals(aiBody.messages.at(-1).role, "tool");
+});
+
+Deno.test("categorizing needs the edit link and valid input", async () => {
+  const t = await family();
+  assertEquals((await t.call("POST", `/families/${t.f.readId}/ai/categorize`, {})).status, 403);
+  assertEquals((await t.call("POST", `${t.ai}/categorize`, { ids: ["x"] })).status, 400);
+  assertEquals((await t.call("POST", `${t.ai}/categorize`, { from: "March" })).status, 400);
+  assertEquals((await t.call("POST", `${t.ai}/categorize`, { skip: -1 })).status, 400);
+  // Nothing to do: no request to the model.
+  requests.length = 0;
+  const none = await t.call("POST", `${t.ai}/categorize`, {});
+  assertEquals([none.status, none.data.considered, requests.length], [200, 0, 0]);
+});
+
+Deno.test("reads the model's answer even when it is wrapped", () => {
+  assertEquals(parseAnswer('Sure!\n```json\n{"1": "groceries", "2": null}\n```'), {
+    "1": "groceries",
+    "2": null,
+  });
+  assertEquals(parseAnswer("no idea"), {});
+  assertEquals(parseAnswer("[1, 2]"), {});
 });
 
 Deno.test("chat needs settings, the edit link and a clean history", async () => {

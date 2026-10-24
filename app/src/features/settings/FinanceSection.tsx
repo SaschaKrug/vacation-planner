@@ -42,7 +42,13 @@ export function FinanceSection() {
   }, [sees, finance]);
 
   if (!planner.family) return null;
-  if (!sees) return <p className="text-sm text-muted-foreground">{t("finance.calendar_only")}</p>;
+  if (!sees) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        {t("finance.calendar_only")}
+      </p>
+    );
+  }
   const edit = !planner.readOnly;
   const cats = finance.categories;
 
@@ -51,7 +57,12 @@ export function FinanceSection() {
   }
 
   async function remove(c: Category) {
-    if (await confirm(t("finance.category_delete_confirm", { name: c.name }), t("types.delete"))) {
+    if (
+      await confirm(
+        t("finance.category_delete_confirm", { name: c.name }),
+        t("types.delete"),
+      )
+    ) {
       finance.deleteCategory(c.id);
     }
   }
@@ -107,7 +118,10 @@ export function FinanceSection() {
             >
               <Plus /> {t("finance.add_category")}
             </Button>
-            <Button variant="outline" onClick={() => finance.addDefaultCategories()}>
+            <Button
+              variant="outline"
+              onClick={() => finance.addDefaultCategories()}
+            >
               {t("finance.add_defaults")}
             </Button>
           </div>
@@ -121,15 +135,19 @@ export function FinanceSection() {
         >
           <ul className="divide-y rounded-lg border">
             {finance.mappings.map((m) => (
-              <li key={m.signature} className="flex items-center gap-2 px-3 py-2 text-sm">
-                <code className="min-w-0 flex-1 truncate text-xs">{m.signature}</code>
+              <li
+                key={m.signature}
+                className="flex items-center gap-2 px-3 py-2 text-sm"
+              >
+                <code className="min-w-0 flex-1 truncate text-xs">
+                  {m.signature}
+                </code>
                 <Button
                   variant="ghost"
                   size="icon"
                   className="size-8"
                   title={t("types.delete")}
-                  onClick={() =>
-                    finance.deleteMapping(m.signature)}
+                  onClick={() => finance.deleteMapping(m.signature)}
                 >
                   <Trash2 />
                 </Button>

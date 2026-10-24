@@ -94,7 +94,11 @@ export function LeftSidebar() {
             <SidebarMenuItem>
               <NavLink to={`${base}/finance`} onClick={closeOnMobile}>
                 {({ isActive }) => (
-                  <SidebarMenuButton asChild isActive={isActive} tooltip={t("nav.finance")}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={isActive}
+                    tooltip={t("nav.finance")}
+                  >
                     <span>
                       <Wallet />
                       <span>{t("nav.finance")}</span>

@@ -5,6 +5,7 @@
 import { toast } from "sonner";
 import {
   api,
+  type CategorizeResult,
   type Category,
   type FinanceOverview,
   type FinanceSummary,
@@ -27,6 +28,8 @@ export interface Filter {
 }
 
 const PAGE = 200;
+const CATEGORIZE_BATCH = 200; // the most the API sorts in one call
+const MAX_OPS = 2000; // the most ops POST /finance/transactions takes
 
 function pad(n: number) {
   return String(n).padStart(2, "0");
@@ -46,6 +49,9 @@ export class FinanceStore {
   filter: Filter = { q: "", category: "", kind: "" };
   limit = PAGE;
   rev = 0;
+  /** How far the AI is with sorting transactions into categories (null when idle). */
+  categorizing: { done: number; total: number } | null = null;
+  private categorizeQueue: Promise<void> = Promise.resolve();
   private listeners = new Set<() => void>();
   private opened = false;
   private listSeq = 0;
@@ -213,7 +219,9 @@ export class FinanceStore {
 
   private async undo(inverse: TransactionOp[]) {
     try {
-      await api.changeTransactions(this.token, inverse);
+      for (let i = 0; i < inverse.length; i += MAX_OPS) {
+        await api.changeTransactions(this.token, inverse.slice(i, i + MAX_OPS));
+      }
       this.reload();
       toast(t("finance.undone"));
     } catch (err) {
@@ -233,6 +241,85 @@ export class FinanceStore {
       });
     } else toast(t("finance.imported_none", { skipped: res.duplicates.length }));
     return res;
+  }
+
+  /** Sorts the period's uncategorized transactions into categories (like similar ones, the
+   *  rest with the AI), in batches; the toast offers to undo it. Does nothing while a run is
+   *  going on. */
+  autoCategorize() {
+    if (this.categorizing) return Promise.resolve();
+    const { from, to } = this.range();
+    return this.categorize(async (call) => {
+      let skip = 0; // the ones earlier batches left uncategorized
+      let done = 0;
+      let total = 0;
+      for (;;) {
+        const res = await call({ from, to, skip });
+        done += res.considered;
+        total ||= res.considered + res.remaining;
+        this.progress(done, total);
+        if (!res.considered || !res.remaining) return;
+        skip += res.considered - res.changed;
+      }
+    });
+  }
+
+  /** Sorts the given transactions (e.g. just imported) into categories. Waits for a run that
+   *  is going on. */
+  categorizeIds(ids: string[]) {
+    if (!ids.length) return Promise.resolve();
+    return this.categorize(async (call) => {
+      this.progress(0, ids.length);
+      for (let i = 0; i < ids.length; i += CATEGORIZE_BATCH) {
+        await call({ ids: ids.slice(i, i + CATEGORIZE_BATCH) });
+        this.progress(Math.min(i + CATEGORIZE_BATCH, ids.length), ids.length);
+      }
+    });
+  }
+
+  private progress(done: number, total: number) {
+    this.categorizing = { done, total };
+    this.emit();
+  }
+
+  /** Runs one categorize job after the ones before it; `run` makes the calls. Reports with a
+   *  toast whose undo reverts all of the job's calls. */
+  private categorize(
+    run: (
+      call: (body: Parameters<typeof api.categorize>[1]) => Promise<CategorizeResult>,
+    ) => Promise<void>,
+  ) {
+    const job = async () => {
+      this.progress(0, 0);
+      const inverses: TransactionOp[][] = [];
+      let changed = 0;
+      let matched = 0;
+      let error = "";
+      try {
+        await run(async (body) => {
+          const res = await api.categorize(this.token, { ...body, lang: getLang() });
+          inverses.push(res.inverse);
+          changed += res.changed;
+          matched += res.matched;
+          return res;
+        });
+      } catch (err) {
+        error = (err as Error).message;
+      }
+      this.categorizing = null;
+      if (changed) {
+        this.reload();
+        // The last call's inverse first.
+        const inverse = inverses.reverse().flat();
+        toast(t("finance.categorized", { n: changed, matched }), {
+          action: { label: t("finance.undo"), onClick: () => this.undo(inverse) },
+        });
+      } else this.emit();
+      if (error) toast(t("finance.categorize_failed", { msg: error }));
+      else if (!changed) toast(t("finance.categorized_none"));
+    };
+    this.categorizeQueue = this.categorizeQueue.then(job);
+    return this.categorizeQueue;
   }
 
   // ------------------------------------------------------------- categories + settings

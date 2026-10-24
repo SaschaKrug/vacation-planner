@@ -65,7 +65,9 @@ export function ChatPanel() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "j") {
+      if (
+        (e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "j"
+      ) {
         e.preventDefault();
         if (isMobile) setSheetOpen((v) => !v);
         else setOpen(!open);
@@ -87,7 +89,10 @@ export function ChatPanel() {
           <Sparkles />
         </Button>
         <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-          <SheetContent side="right" className="w-full gap-0 p-0 sm:max-w-md [&>button]:hidden">
+          <SheetContent
+            side="right"
+            className="w-full gap-0 p-0 sm:max-w-md [&>button]:hidden"
+          >
             <SheetTitle className="sr-only">{t("chat.title")}</SheetTitle>
             <ChatView onClose={() => setSheetOpen(false)} />
           </SheetContent>
@@ -151,7 +156,9 @@ function ChatView({ onClose }: { onClose: () => void }) {
   const ready = settings?.configured;
 
   const send = (value = text) => {
-    if ((!value.trim() && !attachments.length) || pending.length || chat.busy) return;
+    if ((!value.trim() && !attachments.length) || pending.length || chat.busy) {
+      return;
+    }
     chat.send(value, attachments);
     setText("");
     setAttachments([]);
@@ -192,7 +199,9 @@ function ChatView({ onClose }: { onClose: () => void }) {
         e.dataTransfer.dropEffect = "copy";
       }}
       onDragLeave={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+        if (
+          !e.currentTarget.contains(e.relatedTarget as Node | null)
+        ) setDragging(false);
       }}
       onDrop={(e) => {
         if (!hasFiles(e)) return;
@@ -232,7 +241,10 @@ function ChatView({ onClose }: { onClose: () => void }) {
               </div>
             )}
             {chat.chats.map((c) => (
-              <DropdownMenuItem key={c.id} onSelect={() => chat.open(c.id)}>
+              <DropdownMenuItem
+                key={c.id}
+                onSelect={() => chat.open(c.id)}
+              >
                 <span className="min-w-0 flex-1 truncate">{c.title}</span>
                 <span className="text-xs text-muted-foreground">
                   {new Date(c.updatedAt).toLocaleDateString(getLang(), {
@@ -269,7 +281,12 @@ function ChatView({ onClose }: { onClose: () => void }) {
         >
           <Plus />
         </Button>
-        <Button variant="ghost" size="icon" aria-label={t("chat.close")} onClick={onClose}>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={t("chat.close")}
+          onClick={onClose}
+        >
           <X />
         </Button>
       </header>
@@ -369,7 +386,9 @@ function ChatView({ onClose }: { onClose: () => void }) {
                 attach(images);
               }}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                if (
+                  e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing
+                ) {
                   e.preventDefault();
                   send();
                 }
@@ -393,14 +412,17 @@ function ChatView({ onClose }: { onClose: () => void }) {
                   type="submit"
                   size="icon"
                   aria-label={t("chat.send")}
-                  disabled={!ready || pending.length > 0 || (!text.trim() && !attachments.length)}
+                  disabled={!ready || pending.length > 0 ||
+                    (!text.trim() && !attachments.length)}
                 >
                   <SendHorizontal />
                 </Button>
               )}
           </div>
         </div>
-        <p className="mt-1.5 px-1 text-[11px] text-muted-foreground">{t("chat.hint")}</p>
+        <p className="mt-1.5 px-1 text-[11px] text-muted-foreground">
+          {t("chat.hint")}
+        </p>
       </form>
     </div>
   );
@@ -413,7 +435,9 @@ function SetupHint() {
       <p className="font-medium">{t("chat.setup_title")}</p>
       <p className="mt-1 text-muted-foreground">{t("chat.setup_text")}</p>
       <Button size="sm" className="mt-3" asChild>
-        <Link to={`/f/${chat.token}/settings/ai`}>{t("chat.setup_button")}</Link>
+        <Link to={`/f/${chat.token}/settings/ai`}>
+          {t("chat.setup_button")}
+        </Link>
       </Button>
     </div>
   );
@@ -423,16 +447,17 @@ function Suggestions({ onPick }: { onPick: (text: string) => void }) {
   return (
     <div className="space-y-2">
       <p className="text-muted-foreground">{t("chat.intro")}</p>
-      {["chat.example_gaps", "chat.example_holidays", "chat.example_spending"].map((k) => (
-        <button
-          key={k}
-          type="button"
-          className="block w-full rounded-lg border bg-card px-3 py-2 text-left hover:bg-accent"
-          onClick={() => onPick(t(k))}
-        >
-          {t(k)}
-        </button>
-      ))}
+      {["chat.example_gaps", "chat.example_holidays", "chat.example_spending"]
+        .map((k) => (
+          <button
+            key={k}
+            type="button"
+            className="block w-full rounded-lg border bg-card px-3 py-2 text-left hover:bg-accent"
+            onClick={() => onPick(t(k))}
+          >
+            {t(k)}
+          </button>
+        ))}
     </div>
   );
 }
@@ -451,7 +476,9 @@ const TOOL_ICONS: Record<string, typeof Search> = {
 
 function toolLabel(item: Item & { kind: "tool" }) {
   const a = item.args ?? {};
-  if (item.name === "web_search") return t("chat.tool.web_search", { q: String(a.query ?? "") });
+  if (item.name === "web_search") {
+    return t("chat.tool.web_search", { q: String(a.query ?? "") });
+  }
   if (item.name === "fetch_page") {
     let host = String(a.url ?? "");
     try {
@@ -471,7 +498,13 @@ function PendingChip(
   return (
     <div className="relative">
       {a.kind === "image"
-        ? <img src={a.url} alt={a.name} className="size-12 rounded-md border object-cover" />
+        ? (
+          <img
+            src={a.url}
+            alt={a.name}
+            className="size-12 rounded-md border object-cover"
+          />
+        )
         : (
           <div
             className="flex h-12 max-w-40 items-center gap-1.5 rounded-md border bg-muted px-2 text-xs"
@@ -510,7 +543,11 @@ function SentAttachment({ attachment: a }: { attachment: ItemAttachment }) {
         </DialogTrigger>
         <DialogContent className="p-2 sm:max-w-4xl">
           <DialogTitle className="sr-only">{a.name}</DialogTitle>
-          <img src={a.url} alt={a.name} className="max-h-[85vh] w-full rounded object-contain" />
+          <img
+            src={a.url}
+            alt={a.name}
+            className="max-h-[85vh] w-full rounded object-contain"
+          />
         </DialogContent>
       </Dialog>
     );
@@ -530,7 +567,9 @@ function SentAttachment({ attachment: a }: { attachment: ItemAttachment }) {
   );
 }
 
-function ItemView({ item, onUndo }: { item: Item; onUndo: (id: string) => void }) {
+function ItemView(
+  { item, onUndo }: { item: Item; onUndo: (id: string) => void },
+) {
   if (item.kind === "user") {
     return (
       <div className="ml-8 space-y-2 rounded-2xl rounded-br-md bg-primary px-3 py-2 text-primary-foreground">
@@ -554,7 +593,10 @@ function ItemView({ item, onUndo }: { item: Item; onUndo: (id: string) => void }
   if (item.kind === "tool") {
     const Icon = TOOL_ICONS[item.name] ?? Sparkles;
     return (
-      <div className="flex items-center gap-2 text-xs text-muted-foreground" title={item.summary}>
+      <div
+        className="flex items-center gap-2 text-xs text-muted-foreground"
+        title={item.summary}
+      >
         <Icon className="size-3.5 shrink-0" />
         <span className="min-w-0 truncate">{toolLabel(item)}</span>
         {item.status === "running" && <Loader2 className="size-3 shrink-0 animate-spin" />}
@@ -571,11 +613,22 @@ function ItemView({ item, onUndo }: { item: Item; onUndo: (id: string) => void }
       )}
     >
       <Check className="size-4 shrink-0 text-ok" />
-      <span className={cn("min-w-0 flex-1", item.undone && "line-through")}>{item.summary}</span>
+      <span className={cn("min-w-0 flex-1", item.undone && "line-through")}>
+        {item.summary}
+      </span>
       {item.undone
-        ? <span className="text-xs text-muted-foreground">{t("chat.undone")}</span>
+        ? (
+          <span className="text-xs text-muted-foreground">
+            {t("chat.undone")}
+          </span>
+        )
         : (
-          <Button size="sm" variant="outline" className="h-7" onClick={() => onUndo(item.id)}>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7"
+            onClick={() => onUndo(item.id)}
+          >
             <Undo2 /> {t("finance.undo")}
           </Button>
         )}

@@ -38,7 +38,8 @@ export function FamilyLayout() {
           else store.load({ quiet: true });
         },
         () => ({
-          page: /\/(finance|settings)/.exec(location.pathname)?.[1] ?? "vacation",
+          page: /\/(finance|settings)/.exec(location.pathname)?.[1] ??
+            "vacation",
           year: store.year,
         }),
       ),

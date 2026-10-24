@@ -25,7 +25,10 @@ import { centsToInput, parseMoney } from "@/lib/money";
 
 /** Adds a transaction, or edits one. */
 export function TransactionDialog(
-  { transaction, onClose }: { transaction: Transaction | null; onClose: () => void },
+  { transaction, onClose }: {
+    transaction: Transaction | null;
+    onClose: () => void;
+  },
 ) {
   const finance = useFinance();
   const lang = getLang();
@@ -37,7 +40,9 @@ export function TransactionDialog(
     transaction ? centsToInput(transaction.amountCents, lang) : "",
   );
   const [payee, setPayee] = useState(transaction?.payee ?? "");
-  const [description, setDescription] = useState(transaction?.description ?? "");
+  const [description, setDescription] = useState(
+    transaction?.description ?? "",
+  );
   const [category, setCategory] = useState(transaction?.categoryId ?? "none");
   const [note, setNote] = useState(transaction?.note ?? "");
   const [error, setError] = useState("");
@@ -47,8 +52,12 @@ export function TransactionDialog(
   async function save(e: React.FormEvent) {
     e.preventDefault();
     const cents = parseMoney(amount);
-    if (cents === null || cents === 0) return setError(t("finance.amount_invalid"));
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return setError(t("finance.date_invalid"));
+    if (cents === null || cents === 0) {
+      return setError(t("finance.amount_invalid"));
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return setError(t("finance.date_invalid"));
+    }
     const fields = {
       date,
       amountCents: kind === "expense" ? -Math.abs(cents) : Math.abs(cents),
@@ -73,9 +82,14 @@ export function TransactionDialog(
       <DialogContent className="sm:max-w-md">
         <form className="grid gap-4" onSubmit={save}>
           <DialogHeader>
-            <DialogTitle>{t(transaction ? "finance.edit_title" : "finance.add_title")}</DialogTitle>
+            <DialogTitle>
+              {t(transaction ? "finance.edit_title" : "finance.add_title")}
+            </DialogTitle>
           </DialogHeader>
-          <Tabs value={kind} onValueChange={(v) => setKind(v as "expense" | "income")}>
+          <Tabs
+            value={kind}
+            onValueChange={(v) => setKind(v as "expense" | "income")}
+          >
             <TabsList className="w-full">
               <TabsTrigger value="expense">{t("finance.expense")}</TabsTrigger>
               <TabsTrigger value="income">{t("finance.income")}</TabsTrigger>
@@ -94,12 +108,20 @@ export function TransactionDialog(
             </label>
             <label className="grid gap-1.5 text-sm font-medium">
               {t("finance.date")}
-              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+              <Input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+              />
             </label>
           </div>
           <label className="grid gap-1.5 text-sm font-medium">
             {t(kind === "income" ? "finance.payer" : "finance.payee")}
-            <Input maxLength={200} value={payee} onChange={(e) => setPayee(e.target.value)} />
+            <Input
+              maxLength={200}
+              value={payee}
+              onChange={(e) => setPayee(e.target.value)}
+            />
           </label>
           <label className="grid gap-1.5 text-sm font-medium">
             {t("finance.description")}
@@ -116,9 +138,13 @@ export function TransactionDialog(
                 <SelectValue />
               </SelectTrigger>
               <SelectContent position="popper" className="max-h-80">
-                <SelectItem value="none">{t("finance.uncategorized")}</SelectItem>
+                <SelectItem value="none">
+                  {t("finance.uncategorized")}
+                </SelectItem>
                 {categories.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>{c.icon} {c.name}</SelectItem>
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.icon} {c.name}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -134,7 +160,9 @@ export function TransactionDialog(
           </label>
           {error && <p className="text-sm text-gap">{error}</p>}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose}>{t("note.cancel")}</Button>
+            <Button type="button" variant="outline" onClick={onClose}>
+              {t("note.cancel")}
+            </Button>
             <Button type="submit">{t("note.save")}</Button>
           </DialogFooter>
         </form>

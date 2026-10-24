@@ -6,6 +6,9 @@
 //   "spend" / "finance"                   -> finance_summary for this year
 //   "search <words>"                      -> web_search
 //   a URL                                 -> fetch_page
+// Asked to sort transactions into categories (the categorize prompt), it picks the category
+// whose id or name occurs in a row's payee or description, searching the web once for a payee
+// it can't place.
 // After a tool result it says what happened; anything else is echoed. A message with images
 // (content parts) gets "I see 2 images." before the echo.
 
@@ -58,6 +61,32 @@ function reply(stream: boolean, content: string, call?: { name: string; args: un
   return new Response(body, { headers: { "content-type": "text/event-stream" } });
 }
 
+/** The categorize prompt: a category whose id or name occurs in a row's payee or description,
+ *  else in what a web search for its payee found; unknown payees are searched once. */
+function categorize(stream: boolean, system: string, messages: Msg[], canSearch: boolean) {
+  const categories = [...system.matchAll(/^- ([a-z0-9-]+): (?:[^\w\s]\S* )?([^(\n]+?) \(/gmu)];
+  const match = (text: string) =>
+    categories.find(([, id, name]) => text.includes(id) || text.includes(name.toLowerCase()))
+      ?.[1] ?? null;
+  const found = new Map<string, string>();
+  for (const m of messages.filter((m) => m.role === "tool")) {
+    const result = JSON.parse(textOf(m.content));
+    found.set(result.query, JSON.stringify(result.results ?? []).toLowerCase());
+  }
+  const answer: Record<string, string | null> = {};
+  const unknown: string[] = [];
+  for (const line of textOf(messages[1].content).split("\n")) {
+    const [n, , , payee = "", description = ""] = line.split(" | ");
+    answer[n] = match(`${payee} ${description}`.toLowerCase()) ??
+      match(found.get(payee) ?? "");
+    if (!answer[n] && payee && !found.has(payee)) unknown.push(payee);
+  }
+  if (canSearch && unknown.length && !found.size) {
+    return reply(stream, "", { name: "web_search", args: { query: unknown[0] } });
+  }
+  return reply(stream, "```json\n" + JSON.stringify(answer) + "\n```");
+}
+
 export async function mockAi(req: Request): Promise<Response> {
   const path = new URL(req.url).pathname.replace(/^.*\/v1/, "");
   if (req.method === "GET" && path === "/models") {
@@ -73,6 +102,16 @@ export async function mockAi(req: Request): Promise<Response> {
   const tools = new Set(
     (body.tools ?? []).map((t: { function: { name: string } }) => t.function.name),
   );
+
+  const system = textOf(messages[0]?.content);
+  if (system.startsWith("You sort bank transactions into categories.")) {
+    return categorize(
+      stream,
+      system,
+      messages,
+      tools.has("web_search") && body.tool_choice !== "none",
+    );
+  }
 
   if (last.role === "tool") {
     const result = JSON.parse(textOf(last.content) || "{}");
@@ -94,7 +133,6 @@ export async function mockAi(req: Request): Promise<Response> {
     ? last.content.filter((p) => p.type === "image_url").length
     : 0;
   const lower = text.toLowerCase();
-  const system = textOf(messages[0]?.content);
   const today = /Today is (\d{4}-\d{2}-\d{2})/.exec(system)?.[1] ??
     new Date().toISOString().slice(0, 10);
   const dates = text.match(/\d{4}-\d{2}-\d{2}/g) ?? [];

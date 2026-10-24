@@ -42,7 +42,8 @@ export function parseMoney(input: string, decimal?: "," | "."): number | null {
     negative = true; // "12,50-" (some banks)
     s = s.slice(0, -1);
   }
-  const sep = decimal ?? (/[,.]\d{1,2}$/.exec(s)?.[0][0] as "," | "." | undefined);
+  const sep = decimal ??
+    (/[,.]\d{1,2}$/.exec(s)?.[0][0] as "," | "." | undefined);
   let int = s, frac = "";
   if (sep) {
     const i = s.lastIndexOf(sep);
@@ -52,7 +53,9 @@ export function parseMoney(input: string, decimal?: "," | "."): number | null {
     }
   }
   int = int.replace(/[,.]/g, "");
-  if (!/^\d*$/.test(int) || !/^\d{0,2}$/.test(frac) || (!int && !frac)) return null;
+  if (!/^\d*$/.test(int) || !/^\d{0,2}$/.test(frac) || (!int && !frac)) {
+    return null;
+  }
   const cents = Number(int || "0") * 100 + Number(frac.padEnd(2, "0") || "0");
   return negative ? -cents : cents;
 }

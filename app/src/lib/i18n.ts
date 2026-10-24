@@ -439,6 +439,21 @@ const STRINGS: Record<Lang, Dict> = {
       `Imported ${n} ${s(n, "transaction", "transactions")}` +
       (Number(skipped) ? ` (${skipped} already there)` : ""),
     "finance.imported_none": ({ skipped }) => `Nothing new: all ${skipped} were already there`,
+    "finance.import_categorize":
+      "Sort the new transactions into categories (like similar ones, the rest with AI)",
+    "finance.import_categorize_similar":
+      "Sort the new transactions into categories like similar earlier ones",
+    "finance.auto_categorize": "Auto-categorize",
+    "finance.auto_categorize_help":
+      "Sort this period's uncategorized transactions into your categories: like similar earlier ones, the rest with AI (it may look up unknown payees on the web)",
+    "finance.auto_categorize_similar":
+      "Sort this period's uncategorized transactions like similar earlier ones (set up the AI assistant to sort the rest too)",
+    "finance.categorizing": ({ done, total }) => `Categorizing… ${done} of ${total}`,
+    "finance.categorized": ({ n, matched }) =>
+      `Sorted ${n} ${s(n, "transaction", "transactions")} into categories` +
+      (Number(matched) ? ` (${matched} like similar ones)` : ""),
+    "finance.categorized_none": "Nothing could be categorized",
+    "finance.categorize_failed": "The AI couldn't categorize: {msg}",
     // ---- AI assistant
     "settings.ai": "AI assistant",
     "chat.history": "Chats",
@@ -941,6 +956,21 @@ const STRINGS: Record<Lang, Dict> = {
       `${n} ${s(n, "Buchung", "Buchungen")} importiert` +
       (Number(skipped) ? ` (${skipped} waren schon da)` : ""),
     "finance.imported_none": ({ skipped }) => `Nichts Neues: alle ${skipped} waren schon da`,
+    "finance.import_categorize":
+      "Die neuen Buchungen in Kategorien einsortieren (wie ähnliche, den Rest mit KI)",
+    "finance.import_categorize_similar":
+      "Die neuen Buchungen wie ähnliche frühere in Kategorien einsortieren",
+    "finance.auto_categorize": "Automatisch einsortieren",
+    "finance.auto_categorize_help":
+      "Die Buchungen ohne Kategorie in diesem Zeitraum einsortieren: wie ähnliche frühere, den Rest mit KI (sie kann unbekannte Empfänger im Web nachschlagen)",
+    "finance.auto_categorize_similar":
+      "Die Buchungen ohne Kategorie in diesem Zeitraum wie ähnliche frühere einsortieren (mit eingerichtetem KI-Assistenten auch den Rest)",
+    "finance.categorizing": ({ done, total }) => `Sortiere ein… ${done} von ${total}`,
+    "finance.categorized": ({ n, matched }) =>
+      `${n} ${s(n, "Buchung", "Buchungen")} in Kategorien einsortiert` +
+      (Number(matched) ? ` (${matched} wie ähnliche)` : ""),
+    "finance.categorized_none": "Keine Buchung konnte einsortiert werden",
+    "finance.categorize_failed": "Die KI konnte nicht einsortieren: {msg}",
     // ---- AI assistant
     "settings.ai": "KI-Assistent",
     "chat.history": "Chats",

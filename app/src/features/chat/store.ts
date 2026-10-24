@@ -57,7 +57,13 @@ const withoutImages = (c: Chat): Chat => ({
   history: keepImages(c.history, 0, "(an image that is no longer stored)"),
   items: c.items.map((it) =>
     it.kind === "user" && it.attachments
-      ? { ...it, attachments: it.attachments.map((a) => ({ kind: a.kind, name: a.name })) }
+      ? {
+        ...it,
+        attachments: it.attachments.map((a) => ({
+          kind: a.kind,
+          name: a.name,
+        })),
+      }
       : it
   ),
 });
@@ -227,13 +233,19 @@ export class ChatStore {
           break;
         case "tool":
           answer = null; // text after the tool goes into a new bubble
-          update((items) => [...items, { kind: "tool", ...e.data, status: "running" }]);
+          update((
+            items,
+          ) => [...items, { kind: "tool", ...e.data, status: "running" }]);
           break;
         case "tool_result":
           update((items) =>
             items.map((it) =>
               it.kind === "tool" && it.id === e.data.id
-                ? { ...it, status: e.data.ok ? "ok" : "error", summary: e.data.summary }
+                ? {
+                  ...it,
+                  status: e.data.ok ? "ok" : "error",
+                  summary: e.data.summary,
+                }
                 : it
             )
           );
@@ -252,7 +264,9 @@ export class ChatStore {
           c.history = [...c.history, ...e.data.messages];
           break;
         case "error":
-          update((items) => [...items, { kind: "error", text: e.data.message }]);
+          update((
+            items,
+          ) => [...items, { kind: "error", text: e.data.message }]);
           break;
       }
     };
@@ -261,7 +275,11 @@ export class ChatStore {
       await api.chat(
         this.token,
         {
-          messages: keepImages(c.history, MAX_IMAGES, "(an earlier image, no longer sent)"),
+          messages: keepImages(
+            c.history,
+            MAX_IMAGES,
+            "(an earlier image, no longer sent)",
+          ),
           lang: getLang(),
           today: today(),
           ...this.context(),
@@ -292,7 +310,9 @@ export class ChatStore {
     if (!chat || !item || item.kind !== "change" || item.undone) return;
     try {
       await api.undo(this.token, item.undo);
-      chat.items = chat.items.map((it) => (it === item ? { ...item, undone: true } : it));
+      chat.items = chat.items.map((
+        it,
+      ) => (it === item ? { ...item, undone: true } : it));
       // Tell the assistant, so it doesn't assume the change is still there.
       chat.history = [
         ...chat.history,

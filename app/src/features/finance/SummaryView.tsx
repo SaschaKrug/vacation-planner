@@ -10,7 +10,9 @@ import { StatTiles } from "./FinancePage";
 export function SummaryView() {
   const finance = useFinance();
   const summary = finance.summary;
-  if (!summary) return <div className="h-64 animate-pulse rounded-xl bg-muted" />;
+  if (!summary) {
+    return <div className="h-64 animate-pulse rounded-xl bg-muted" />;
+  }
   if (!summary.count) {
     return (
       <p className="rounded-xl border bg-card p-8 text-center text-sm text-muted-foreground">
@@ -48,7 +50,13 @@ function niceTicks(max: number, count = 4) {
   const pow = 10 ** Math.floor(Math.log10(raw));
   const step = [1, 2, 2.5, 5, 10].map((f) => f * pow).find((s) => s >= raw)!;
   const top = Math.ceil(max / step) * step;
-  return { top, ticks: Array.from({ length: Math.round(top / step) + 1 }, (_, i) => i * step) };
+  return {
+    top,
+    ticks: Array.from(
+      { length: Math.round(top / step) + 1 },
+      (_, i) => i * step,
+    ),
+  };
 }
 
 /** A bar with 4px rounded ends away from the baseline. */
@@ -142,11 +150,21 @@ function MonthlyChart({ summary }: { summary: FinanceSummary }) {
                 )}
                 {/* 2px surface gap between the two bars of a month */}
                 <path
-                  d={barPath(cx - barW - 1, y(m.incomeCents), barW, y(0) - y(m.incomeCents))}
+                  d={barPath(
+                    cx - barW - 1,
+                    y(m.incomeCents),
+                    barW,
+                    y(0) - y(m.incomeCents),
+                  )}
                   fill="var(--series-1)"
                 />
                 <path
-                  d={barPath(cx + 1, y(m.expenseCents), barW, y(0) - y(m.expenseCents))}
+                  d={barPath(
+                    cx + 1,
+                    y(m.expenseCents),
+                    barW,
+                    y(0) - y(m.expenseCents),
+                  )}
                   fill="var(--series-2)"
                 />
                 {i % labelEvery === 0 && (
@@ -189,7 +207,9 @@ function MonthlyChart({ summary }: { summary: FinanceSummary }) {
                 : "translateX(12px)",
             }}
           >
-            <div className="mb-1 font-semibold">{monthName(hovered.month, "long")}</div>
+            <div className="mb-1 font-semibold">
+              {monthName(hovered.month, "long")}
+            </div>
             <Row
               color="var(--series-1)"
               label={t("finance.income")}
@@ -203,9 +223,14 @@ function MonthlyChart({ summary }: { summary: FinanceSummary }) {
             <div className="mt-1 flex justify-between gap-4 border-t pt-1">
               <span className="text-muted-foreground">{t("finance.net")}</span>
               <span className="font-medium tabular-nums">
-                {formatMoney(hovered.incomeCents - hovered.expenseCents, summary.currency, lang, {
-                  sign: true,
-                })}
+                {formatMoney(
+                  hovered.incomeCents - hovered.expenseCents,
+                  summary.currency,
+                  lang,
+                  {
+                    sign: true,
+                  },
+                )}
               </span>
             </div>
           </div>
@@ -219,9 +244,15 @@ function MonthlyChart({ summary }: { summary: FinanceSummary }) {
           <thead className="text-left text-xs text-muted-foreground">
             <tr>
               <th className="py-1 font-medium">{t("finance.month")}</th>
-              <th className="py-1 text-right font-medium">{t("finance.income")}</th>
-              <th className="py-1 text-right font-medium">{t("finance.expenses")}</th>
-              <th className="py-1 text-right font-medium">{t("finance.net")}</th>
+              <th className="py-1 text-right font-medium">
+                {t("finance.income")}
+              </th>
+              <th className="py-1 text-right font-medium">
+                {t("finance.expenses")}
+              </th>
+              <th className="py-1 text-right font-medium">
+                {t("finance.net")}
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y tabular-nums">
@@ -231,9 +262,14 @@ function MonthlyChart({ summary }: { summary: FinanceSummary }) {
                 <td className="py-1 text-right">{money(m.incomeCents)}</td>
                 <td className="py-1 text-right">{money(m.expenseCents)}</td>
                 <td className="py-1 text-right">
-                  {formatMoney(m.incomeCents - m.expenseCents, summary.currency, lang, {
-                    sign: true,
-                  })}
+                  {formatMoney(
+                    m.incomeCents - m.expenseCents,
+                    summary.currency,
+                    lang,
+                    {
+                      sign: true,
+                    },
+                  )}
                 </td>
               </tr>
             ))}
@@ -244,11 +280,17 @@ function MonthlyChart({ summary }: { summary: FinanceSummary }) {
   );
 }
 
-function Row({ color, label, value }: { color: string; label: string; value: string }) {
+function Row(
+  { color, label, value }: { color: string; label: string; value: string },
+) {
   return (
     <div className="flex items-center justify-between gap-4">
       <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-        <span className="size-2 rounded-sm" style={{ backgroundColor: color }} /> {label}
+        <span
+          className="size-2 rounded-sm"
+          style={{ backgroundColor: color }}
+        />{" "}
+        {label}
       </span>
       <span className="font-medium tabular-nums">{value}</span>
     </div>
@@ -269,10 +311,17 @@ function CategoryBreakdown({ summary }: { summary: FinanceSummary }) {
     <section className="rounded-xl border bg-card p-4">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="font-semibold">{t("finance.by_category")}</h2>
-        <Tabs value={kind} onValueChange={(v) => setKind(v as "expense" | "income")}>
+        <Tabs
+          value={kind}
+          onValueChange={(v) => setKind(v as "expense" | "income")}
+        >
           <TabsList className="h-8">
-            <TabsTrigger value="expense" className="text-xs">{t("finance.expenses")}</TabsTrigger>
-            <TabsTrigger value="income" className="text-xs">{t("finance.income")}</TabsTrigger>
+            <TabsTrigger value="expense" className="text-xs">
+              {t("finance.expenses")}
+            </TabsTrigger>
+            <TabsTrigger value="income" className="text-xs">
+              {t("finance.income")}
+            </TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
@@ -289,7 +338,10 @@ function CategoryBreakdown({ summary }: { summary: FinanceSummary }) {
               <span className="truncate">
                 {cat ? `${cat.icon ? cat.icon + " " : ""}${cat.name}` : t("finance.uncategorized")}
               </span>
-              <span className="h-3 overflow-hidden rounded-r-[4px]" title={`${share}%`}>
+              <span
+                className="h-3 overflow-hidden rounded-r-[4px]"
+                title={`${share}%`}
+              >
                 <span
                   className="block h-full rounded-r-[4px] bg-(--series-1)"
                   style={{ width: `${Math.max(1, (c[key] / max) * 100)}%` }}
