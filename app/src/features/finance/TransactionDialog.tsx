@@ -44,6 +44,12 @@ export function TransactionDialog(
     transaction?.description ?? "",
   );
   const [category, setCategory] = useState(transaction?.categoryId ?? "none");
+  // A new one goes to the account the list shows, else the first one.
+  const [account, setAccount] = useState(() => {
+    if (transaction) return transaction.accountId ?? "none";
+    const shown = finance.filter.account;
+    return shown || finance.accounts[0]?.id || "none";
+  });
   const [note, setNote] = useState(transaction?.note ?? "");
   const [error, setError] = useState("");
 
@@ -64,6 +70,7 @@ export function TransactionDialog(
       payee,
       description,
       categoryId: category === "none" ? null : category,
+      accountId: account === "none" ? null : account,
       note,
     };
     const ok = await finance.change(
@@ -131,6 +138,22 @@ export function TransactionDialog(
               onChange={(e) => setDescription(e.target.value)}
             />
           </label>
+          {(finance.accounts.length > 0 || account !== "none") && (
+            <label className="grid gap-1.5 text-sm font-medium">
+              {t("finance.account")}
+              <Select value={account} onValueChange={setAccount}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent position="popper" className="max-h-80">
+                  <SelectItem value="none">{t("finance.no_account")}</SelectItem>
+                  {finance.accounts.map((a) => (
+                    <SelectItem key={a.id} value={a.id}>{a.icon} {a.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+          )}
           <label className="grid gap-1.5 text-sm font-medium">
             {t("finance.category")}
             <Select value={category} onValueChange={setCategory}>

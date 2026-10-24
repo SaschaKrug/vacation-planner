@@ -177,29 +177,50 @@ function concepts(): string {
   Notes are independent of entries.`;
 }
 
-/** The finances: transactions (integer cents, negative = money out), categories, summary. */
+/** The finances: transactions (integer cents, negative = money out), categories, accounts,
+ *  transfers, summary. */
 function financeDoc(s: string, year: number, edit: boolean): string {
   const f = `${s}/finance`;
   const read = `## Finances
 
 The family also keeps a transactions log. Amounts are integer **cents**, negative for money
-going out (\`-4599\` = −45.99 in the family's currency).
+going out (\`-4599\` = −45.99 in the family's currency). A transaction can belong to one of
+the family's **accounts** (\`accountId\`). Transactions sharing a \`transferId\` are the legs of
+one **transfer** between the family's own accounts (e.g. 500 out of checking, 500 into
+savings): every income / expense total counts a transfer once by its net (here 0), in the
+month of its earliest leg, so only money leaving or reaching the family counts.
 
-- Currency and categories: ${f}
+- Currency, categories and accounts (with \`balanceCents\`): ${f}
 - Transactions (newest first): ${f}/transactions?from=${year}-01-01&to=${year}-12-31 –
-  also \`category=<id>\` (or \`none\`), \`kind=income|expense\`, \`q=<text>\`, \`limit\`, \`offset\`.
+  also \`account=<id>\` (or \`none\`), \`category=<id>\` (or \`none\`),
+  \`kind=income|expense|transfer\`, \`q=<text>\`, \`limit\`, \`offset\`.
   Returns \`{"transactions": [...], "total", "incomeCents", "expenseCents"}\`.
 - Per month and category: ${f}/summary?from=${year}-01-01&to=${year}-12-31
+- Likely transfers not combined yet (same amount out of one account and into another, at most
+  4 days apart): ${f}/transfers/suggestions?from=${year}-01-01&to=${year}-12-31 –
+  \`{"pairs": [{"out": {...}, "in": {...}}]}\`
 `;
   if (!edit) return read;
   return `${read}
 Changing: \`POST ${f}/transactions\` with \`{"ops": [...]}\` (applied in order):
 
-- \`{"action": "add", "date": "${year}-03-02", "amountCents": -4599, "payee": "Supermarket", "description": "", "categoryId": "groceries", "note": ""}\`
+- \`{"action": "add", "date": "${year}-03-02", "amountCents": -4599, "payee": "Supermarket", "description": "", "categoryId": "groceries", "accountId": "checking", "note": ""}\`
 - \`{"action": "update", "id": "<uuid>", "categoryId": "groceries"}\` (any of the fields above)
 - \`{"action": "delete", "ids": ["<uuid>", ...]}\`
+- \`{"action": "link", "ids": ["<uuid>", "<uuid>", ...]}\`: combines the transactions into one
+  transfer
+- \`{"action": "unlink", "ids": ["<uuid>"]}\`: splits the transfers they belong to again
 
 The response has \`inverse\`: ops that undo the request (send them to the same endpoint).
-Categories are referenced by id or name. Ask before deleting or changing many transactions.
+Categories and accounts are referenced by id or name. Ask before deleting or changing many
+transactions.
+
+\`POST ${f}/transfers/auto\` with \`{"from": "${year}-01-01", "to": "${year}-12-31"}\` (both
+optional) combines every suggested transfer in the range; the response has \`linked\` and
+\`inverse\` like above.
+
+Accounts: \`POST ${f}/accounts\` \`{"name", "color": "#22c55e", "icon", "openingCents"}\`,
+\`PATCH ${f}/accounts/<id>\` with any of these and \`position\`, \`DELETE ${f}/accounts/<id>\`
+(its transactions stay, without an account).
 `;
 }

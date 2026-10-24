@@ -404,9 +404,9 @@ const STRINGS: Record<Lang, Dict> = {
     "finance.danger_zone": "Danger zone",
     "finance.clear": "Delete all finance data",
     "finance.clear_help":
-      "Deletes all transactions, categories and saved bank formats of this family and resets the currency. The calendar stays as it is.",
+      "Deletes all transactions, accounts, categories and saved bank formats of this family and resets the currency. The calendar stays as it is.",
     "finance.clear_confirm":
-      "Delete all finance data?\n\nAll transactions, categories and saved bank formats are deleted for everyone in this family. This can't be undone — export the family first under Data if you might need them again.",
+      "Delete all finance data?\n\nAll transactions, accounts, categories and saved bank formats are deleted for everyone in this family. This can't be undone — export the family first under Data if you might need them again.",
     "finance.cleared": "All finance data deleted",
     "finance.import_title": "Import a bank statement",
     "finance.import_help":
@@ -439,6 +439,47 @@ const STRINGS: Record<Lang, Dict> = {
       `Imported ${n} ${s(n, "transaction", "transactions")}` +
       (Number(skipped) ? ` (${skipped} already there)` : ""),
     "finance.imported_none": ({ skipped }) => `Nothing new: all ${skipped} were already there`,
+    // Accounts and transfers
+    "finance.account": "Account",
+    "finance.accounts": "Accounts",
+    "finance.accounts_help":
+      "Your bank accounts, cash or cards. A transaction can belong to one; the balance is the opening balance plus all of its transactions.",
+    "finance.all_accounts": "All accounts",
+    "finance.no_account": "No account",
+    "finance.add_account": "Add account",
+    "finance.new_account": "Account {n}",
+    "finance.account_delete_confirm":
+      "Delete the account “{name}”?\n\nIts transactions stay, without an account.",
+    "finance.opening": "Opening balance",
+    "finance.balance": "Balance",
+    "finance.transfer": "Transfer",
+    "finance.transfers": "Transfers",
+    "finance.transfer_amount_hint":
+      "Part of a transfer: it counts only once, as the sum of its bookings",
+    "finance.unlink": "Split up the transfer",
+    "finance.unlinked": "Transfer split up",
+    "finance.linked": "Combined as a transfer",
+    "finance.linked_pairs": ({ n }) => `${n} ${s(n, "transfer", "transfers")} combined`,
+    "finance.select": "Select",
+    "finance.selected": "{n} selected · net {net}",
+    "finance.combine": "Combine as transfer",
+    "finance.combine_zero": "Adds up to 0: it won't count as income or expense.",
+    "finance.combine_income": "It will count once, as {amount} of income.",
+    "finance.combine_expense": "It will count once, as {amount} of expenses.",
+    "finance.clear_selection": "Clear selection",
+    "finance.find_transfers": "Find transfers",
+    "finance.find_transfers_help":
+      "The same amount leaving one of your accounts and arriving in another within a few days. Combined, the two count as nothing: the money stayed in the family.",
+    "finance.no_suggestions":
+      "No likely transfers in this period. A transfer is the same amount going out of one account and into another, at most 4 days apart.",
+    "finance.combine_n": ({ n }) => `Combine ${n}`,
+    "finance.auto_combine": "Auto-combine",
+    "finance.auto_combine_help":
+      "Combine every likely transfer between your accounts in this period, without a review",
+    "finance.no_transfers_found": "No transfers found",
+    "finance.import_auto_transfers": "Combine transfers between accounts automatically",
+    "finance.import_transfers": ({ n }) => `${n} ${s(n, "transfer", "transfers")} will be combined`,
+    "finance.imported_transfers": ({ n }) => ` · ${n} ${s(n, "transfer", "transfers")} combined`,
     "finance.import_categorize":
       "Sort the new transactions into categories (like similar ones, the rest with AI)",
     "finance.import_categorize_similar":
@@ -921,9 +962,9 @@ const STRINGS: Record<Lang, Dict> = {
     "finance.danger_zone": "Gefahrenzone",
     "finance.clear": "Alle Finanzdaten löschen",
     "finance.clear_help":
-      "Löscht alle Buchungen, Kategorien und gespeicherten Bankformate dieser Familie und setzt die Währung zurück. Der Kalender bleibt unverändert.",
+      "Löscht alle Buchungen, Konten, Kategorien und gespeicherten Bankformate dieser Familie und setzt die Währung zurück. Der Kalender bleibt unverändert.",
     "finance.clear_confirm":
-      "Alle Finanzdaten löschen?\n\nAlle Buchungen, Kategorien und gespeicherten Bankformate werden für alle in dieser Familie gelöscht. Das lässt sich nicht rückgängig machen – exportiere die Familie vorher unter Daten, falls du sie noch brauchst.",
+      "Alle Finanzdaten löschen?\n\nAlle Buchungen, Konten, Kategorien und gespeicherten Bankformate werden für alle in dieser Familie gelöscht. Das lässt sich nicht rückgängig machen – exportiere die Familie vorher unter Daten, falls du sie noch brauchst.",
     "finance.cleared": "Alle Finanzdaten gelöscht",
     "finance.import_title": "Kontoauszug importieren",
     "finance.import_help":
@@ -957,6 +998,49 @@ const STRINGS: Record<Lang, Dict> = {
       `${n} ${s(n, "Buchung", "Buchungen")} importiert` +
       (Number(skipped) ? ` (${skipped} waren schon da)` : ""),
     "finance.imported_none": ({ skipped }) => `Nichts Neues: alle ${skipped} waren schon da`,
+    // Konten und Umbuchungen
+    "finance.account": "Konto",
+    "finance.accounts": "Konten",
+    "finance.accounts_help":
+      "Eure Bankkonten, Bargeld oder Karten. Eine Buchung kann zu einem gehören; der Kontostand ist der Anfangsstand plus alle seine Buchungen.",
+    "finance.all_accounts": "Alle Konten",
+    "finance.no_account": "Ohne Konto",
+    "finance.add_account": "Konto hinzufügen",
+    "finance.new_account": "Konto {n}",
+    "finance.account_delete_confirm":
+      "Das Konto „{name}“ löschen?\n\nSeine Buchungen bleiben erhalten, ohne Konto.",
+    "finance.opening": "Anfangsstand",
+    "finance.balance": "Kontostand",
+    "finance.transfer": "Umbuchung",
+    "finance.transfers": "Umbuchungen",
+    "finance.transfer_amount_hint":
+      "Teil einer Umbuchung: sie zählt nur einmal, als Summe ihrer Buchungen",
+    "finance.unlink": "Umbuchung auflösen",
+    "finance.unlinked": "Umbuchung aufgelöst",
+    "finance.linked": "Als Umbuchung zusammengefasst",
+    "finance.linked_pairs": ({ n }) => `${n} ${s(n, "Umbuchung", "Umbuchungen")} zusammengefasst`,
+    "finance.select": "Auswählen",
+    "finance.selected": "{n} ausgewählt · Summe {net}",
+    "finance.combine": "Als Umbuchung zusammenfassen",
+    "finance.combine_zero": "Ergibt 0: zählt weder als Einnahme noch als Ausgabe.",
+    "finance.combine_income": "Zählt einmal, als Einnahme von {amount}.",
+    "finance.combine_expense": "Zählt einmal, als Ausgabe von {amount}.",
+    "finance.clear_selection": "Auswahl aufheben",
+    "finance.find_transfers": "Umbuchungen finden",
+    "finance.find_transfers_help":
+      "Derselbe Betrag geht von einem eurer Konten ab und kommt innerhalb weniger Tage auf einem anderen an. Zusammengefasst zählen beide nichts: das Geld ist in der Familie geblieben.",
+    "finance.no_suggestions":
+      "Keine wahrscheinlichen Umbuchungen in diesem Zeitraum. Eine Umbuchung ist derselbe Betrag, der von einem Konto abgeht und auf einem anderen ankommt, höchstens 4 Tage auseinander.",
+    "finance.combine_n": ({ n }) => `${n} zusammenfassen`,
+    "finance.auto_combine": "Automatisch zusammenfassen",
+    "finance.auto_combine_help":
+      "Alle wahrscheinlichen Umbuchungen zwischen euren Konten in diesem Zeitraum zusammenfassen, ohne Prüfung",
+    "finance.no_transfers_found": "Keine Umbuchungen gefunden",
+    "finance.import_auto_transfers": "Umbuchungen automatisch zusammenfassen",
+    "finance.import_transfers": ({ n }) =>
+      `${n} ${s(n, "Umbuchung wird", "Umbuchungen werden")} zusammengefasst`,
+    "finance.imported_transfers": ({ n }) =>
+      ` · ${n} ${s(n, "Umbuchung", "Umbuchungen")} zusammengefasst`,
     "finance.import_categorize":
       "Die neuen Buchungen in Kategorien einsortieren (wie ähnliche, den Rest mit KI)",
     "finance.import_categorize_similar":

@@ -36,6 +36,10 @@ export interface CsvMapping {
   decimal: "," | ".";
   payee: number | null;
   description: number[];
+  /** The account this bank's statements are imported into. */
+  accountId?: string;
+  /** Whether transfers between accounts are combined on import (on when unset). */
+  autoTransfers?: boolean;
 }
 
 export interface ParsedRow {

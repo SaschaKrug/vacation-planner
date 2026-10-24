@@ -2,7 +2,7 @@
 // events streamed to the app (server-sent events).
 
 import { HttpError, objectOf } from "../http.ts";
-import type { CategoryRow, FamilyRow, TypeRow } from "../store.ts";
+import type { AccountRow, CategoryRow, FamilyRow, TypeRow } from "../store.ts";
 import {
   type ChatMessage,
   type ContentPart,
@@ -43,6 +43,7 @@ export function systemPrompt(input: {
   family: FamilyRow;
   types: TypeRow[];
   categories: CategoryRow[];
+  accounts: AccountRow[];
   currency: string;
   today: string;
   year: number;
@@ -63,6 +64,9 @@ export function systemPrompt(input: {
   const cats = input.categories.length
     ? input.categories.map((c) => `${c.id} (“${c.name}”, ${c.kind})`).join(", ")
     : "(none)";
+  const accounts = input.accounts.length
+    ? input.accounts.map((a) => `${a.id} (“${a.name}”)`).join(", ")
+    : "(none)";
   return `You are the assistant inside the Family Planner of the family “${family.name}”.
 Today is ${today} (${weekday}). The user is looking at the ${input.page} page, year ${year}.
 Answer in ${LANGUAGES[input.lang] ?? "the user's language"}, briefly and friendly.
@@ -77,7 +81,10 @@ ${typeList}
 
 ## Finances
 A transactions log in ${input.currency}. Amounts in tools are integer cents, negative for money
-going out (-4599 = −45.99). Categories: ${cats}.
+going out (-4599 = −45.99). Categories: ${cats}. Accounts: ${accounts}.
+Transactions on different accounts that are one transfer between the family's own accounts
+(500 out of checking, 500 into savings) are linked as a transfer (same transferId); totals count
+a transfer once by its net, so moving money between accounts counts nothing.
 
 ## How to work
 - Use the tools to look things up; don't guess what's in the calendar or the finances.

@@ -9,9 +9,12 @@ import {
   financeSummary,
   findCategory,
   findTransactions,
+  linkTransferPairs,
+  listAccounts,
   newCategory,
   publicCategory,
   publicTransaction,
+  transferPairs,
 } from "../finance.ts";
 import { cleanName, HttpError, objectOf, slug } from "../http.ts";
 import type { SearchProvider, Store, TypeRow } from "../store.ts";
@@ -76,6 +79,7 @@ const PHRASES = {
     categoryAdded: (name: string) => `Added the category “${name}”`,
     categoryChanged: (name: string) => `Changed the category “${name}”`,
     transactions: (n: number) => `${n} ${n === 1 ? "transaction" : "transactions"} changed`,
+    transfers: (n: number) => `${n} ${n === 1 ? "transfer" : "transfers"} combined`,
   },
   de: {
     days: (n: number) => `${n} ${n === 1 ? "Tag" : "Tage"} geändert`,
@@ -87,6 +91,7 @@ const PHRASES = {
     categoryAdded: (name: string) => `Kategorie „${name}“ hinzugefügt`,
     categoryChanged: (name: string) => `Kategorie „${name}“ geändert`,
     transactions: (n: number) => `${n} ${n === 1 ? "Buchung" : "Buchungen"} geändert`,
+    transfers: (n: number) => `${n} ${n === 1 ? "Umbuchung" : "Umbuchungen"} zusammengefasst`,
   },
 };
 
@@ -420,14 +425,15 @@ export const TOOLS: Record<string, Tool> = {
     spec: {
       name: "list_transactions",
       description:
-        'Lists transactions (newest first) with totals. Amounts are integer cents, negative = money out. Filters: from/to (YYYY-MM-DD), category (id, name or "none"), kind (income | expense), q (text in payee, description, note).',
+        'Lists transactions (newest first) with totals. Amounts are integer cents, negative = money out. Legs of a transfer between the family\'s accounts share a transferId; totals count a transfer once by its net (500 moved between two accounts counts 0). Filters: from/to (YYYY-MM-DD), account (id, name or "none"), category (id, name or "none"), kind (income | expense | transfer: legs of transfers), q (text in payee, description, note).',
       parameters: {
         type: "object",
         properties: {
           from: { type: "string" },
           to: { type: "string" },
+          account: { type: "string" },
           category: { type: "string" },
-          kind: { type: "string", enum: ["income", "expense"] },
+          kind: { type: "string", enum: ["income", "expense", "transfer"] },
           q: { type: "string" },
           limit: { type: "integer", description: "Default 50, at most 200" },
         },
@@ -435,22 +441,21 @@ export const TOOLS: Record<string, Tool> = {
     },
     async run(args, { store, familyId }) {
       const query = new URLSearchParams();
-      for (const k of ["from", "to", "category", "kind", "q"]) {
+      for (const k of ["from", "to", "account", "category", "kind", "q"]) {
         if (typeof args[k] === "string" && args[k]) query.set(k, args[k] as string);
       }
-      const rows = await findTransactions(store, familyId, query);
+      const { rows, groups, incomeCents, expenseCents } = await findTransactions(
+        store,
+        familyId,
+        query,
+      );
       const limit = Math.min(200, Math.max(1, Number(args.limit) || 50));
-      let income = 0, expense = 0;
-      for (const t of rows) {
-        if (t.amount_cents > 0) income += t.amount_cents;
-        else expense -= t.amount_cents;
-      }
       return {
         result: {
           total: rows.length,
-          incomeCents: income,
-          expenseCents: expense,
-          transactions: rows.slice(0, limit).map(publicTransaction),
+          incomeCents,
+          expenseCents,
+          transactions: rows.slice(0, limit).map((t) => publicTransaction(t, groups)),
         },
         summary: `${rows.length} transactions`,
       };
@@ -461,7 +466,7 @@ export const TOOLS: Record<string, Tool> = {
     spec: {
       name: "finance_summary",
       description:
-        "Income and expenses (integer cents) per month and per category between two days, plus the currency and the categories.",
+        "Income and expenses (integer cents) per month and per category between two days (a transfer between the family's accounts counts once by its net), plus the currency, the categories and the accounts with their current balances.",
       parameters: {
         type: "object",
         properties: { from: { type: "string" }, to: { type: "string" } },
@@ -470,12 +475,13 @@ export const TOOLS: Record<string, Tool> = {
     },
     async run(args, { store, familyId }) {
       const { from, to } = range(args);
-      const [summary, categories] = await Promise.all([
+      const [summary, categories, accounts] = await Promise.all([
         financeSummary(store, familyId, from, to),
         store.listCategories(familyId),
+        listAccounts(store, familyId),
       ]);
       return {
-        result: { ...summary, categoryNames: categories.map(publicCategory) },
+        result: { ...summary, categoryNames: categories.map(publicCategory), accounts },
         summary: `${from} – ${to}`,
       };
     },
@@ -561,11 +567,11 @@ export const TOOLS: Record<string, Tool> = {
     spec: {
       name: "change_transactions",
       description:
-        'Adds, changes or deletes transactions. Ops: {"action": "add", "date", "amountCents" (integer, negative = money out), "payee", "description", "categoryId" (id or name), "note"}, {"action": "update", "id", ...fields}, {"action": "delete", "ids": [...]}.',
+        'Adds, changes, deletes, links or unlinks transactions. Ops: {"action": "add", "date", "amountCents" (integer, negative = money out), "payee", "description", "categoryId" (id or name), "accountId" (id or name), "note"}, {"action": "update", "id", ...fields}, {"action": "delete", "ids": [...]}, {"action": "link", "ids": [at least 2]}: the transactions become the legs of one transfer between the family\'s accounts (e.g. 500 out of checking and 500 into savings), counted once by their net, {"action": "unlink", "ids": [...]}: dissolves the transfers these transactions belong to.',
       parameters: opsSchema({
         type: "object",
         properties: {
-          action: { type: "string", enum: ["add", "update", "delete"] },
+          action: { type: "string", enum: ["add", "update", "delete", "link", "unlink"] },
           id: { type: "string" },
           ids: { type: "array", items: { type: "string" } },
           date: { type: "string" },
@@ -573,6 +579,11 @@ export const TOOLS: Record<string, Tool> = {
           payee: { type: "string" },
           description: { type: "string" },
           categoryId: { type: ["string", "null"] },
+          accountId: { type: ["string", "null"] },
+          transferId: {
+            type: ["string", "null"],
+            description: "Rarely needed: use link / unlink to combine or split transfers.",
+          },
           note: { type: "string" },
         },
         required: ["action"],
@@ -595,6 +606,54 @@ export const TOOLS: Record<string, Tool> = {
           ? {
             kind: "transactions",
             summary: PHRASES[lang].transactions(res.changed),
+            undo: [{ method: "POST", path: "/finance/transactions", body: { ops: res.inverse } }],
+          }
+          : undefined,
+      };
+    },
+  },
+
+  combine_transfers: {
+    write: true,
+    spec: {
+      name: "combine_transfers",
+      description:
+        "Finds transfers between the family's accounts (money out of one account and the same amount into another within 4 days, not yet combined) and links each pair, so it counts once by its net (0). from/to (YYYY-MM-DD) limit the range; without them the whole history.",
+      parameters: {
+        type: "object",
+        properties: {
+          from: { type: "string" },
+          to: { type: "string" },
+          confirmed: {
+            type: "boolean",
+            description: "Set only after the user confirmed a big change you described to them.",
+          },
+        },
+      },
+    },
+    async run(args, { store, familyId, lang }) {
+      for (const k of ["from", "to"]) {
+        if (args[k] !== undefined && !isValidDate(args[k])) {
+          throw new HttpError(400, "from/to must be YYYY-MM-DD");
+        }
+      }
+      const pairs = await transferPairs(
+        store,
+        familyId,
+        args.from as string | undefined,
+        args.to as string | undefined,
+      );
+      if (pairs.length > CONFIRM_TRANSACTIONS / 2) {
+        needConfirm(args, `This combines ${pairs.length} transfers.`);
+      }
+      const res = await linkTransferPairs(store, pairs);
+      return {
+        result: { ok: true, linked: res.linked },
+        summary: `${res.linked} transfers combined`,
+        change: res.linked
+          ? {
+            kind: "transactions",
+            summary: PHRASES[lang].transfers(res.linked),
             undo: [{ method: "POST", path: "/finance/transactions", body: { ops: res.inverse } }],
           }
           : undefined,

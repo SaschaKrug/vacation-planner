@@ -11,9 +11,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useFinance, usePlanner } from "@/features/family/context";
-import type { Category, CategoryKind } from "@/lib/api";
+import type { Account, Category, CategoryKind } from "@/lib/api";
 import { nextColor } from "@/lib/core";
-import { t } from "@/lib/i18n";
+import { getLang, t } from "@/lib/i18n";
+import { centsToInput, formatMoney, parseMoney } from "@/lib/money";
 import { SettingsCard } from "./SettingsPage";
 
 const CURRENCIES = [
@@ -51,6 +52,7 @@ export function FinanceSection() {
   }
   const edit = !planner.readOnly;
   const cats = finance.categories;
+  const accounts = finance.accounts;
 
   async function clearAll() {
     if (await confirm(t("finance.clear_confirm"), t("finance.clear"))) finance.clearAll();
@@ -64,6 +66,12 @@ export function FinanceSection() {
       )
     ) {
       finance.deleteCategory(c.id);
+    }
+  }
+
+  async function removeAccount(a: Account) {
+    if (await confirm(t("finance.account_delete_confirm", { name: a.name }), t("types.delete"))) {
+      finance.deleteAccount(a.id);
     }
   }
 
@@ -84,6 +92,40 @@ export function FinanceSection() {
             ))}
           </SelectContent>
         </Select>
+      </SettingsCard>
+      <SettingsCard
+        title={t("finance.accounts")}
+        scope="family"
+        description={t("finance.accounts_help")}
+      >
+        <div className="space-y-2">
+          {accounts.map((a, i) => (
+            <AccountRow
+              key={a.id}
+              account={a}
+              currency={finance.currency}
+              first={i === 0}
+              last={i === accounts.length - 1}
+              disabled={!edit}
+              onChange={(patch) => finance.updateAccount(a.id, patch)}
+              onMove={(dir) => finance.moveAccount(i, dir)}
+              onDelete={() => removeAccount(a)}
+            />
+          ))}
+        </div>
+        {edit && (
+          <Button
+            variant="outline"
+            onClick={() =>
+              finance.addAccount({
+                name: t("finance.new_account", { n: accounts.length + 1 }),
+                color: nextColor(accounts.map((a) => ({ ...a, role: "none" }))),
+                icon: "",
+              })}
+          >
+            <Plus /> {t("finance.add_account")}
+          </Button>
+        )}
       </SettingsCard>
       <SettingsCard
         title={t("finance.categories")}
@@ -236,6 +278,120 @@ function CategoryRow(
           {KINDS.map((k) => <SelectItem key={k} value={k}>{t(`finance.kind_${k}`)}</SelectItem>)}
         </SelectContent>
       </Select>
+      {!disabled && (
+        <>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8"
+            title={t("types.up")}
+            disabled={first}
+            onClick={() => onMove(-1)}
+          >
+            <ArrowUp />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8"
+            title={t("types.down")}
+            disabled={last}
+            onClick={() => onMove(1)}
+          >
+            <ArrowDown />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8"
+            title={t("types.delete")}
+            onClick={onDelete}
+          >
+            <Trash2 />
+          </Button>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Cents as an editable string, with a minus for a negative balance. */
+function balanceInput(cents: number) {
+  return (cents < 0 ? "-" : "") + centsToInput(cents, getLang());
+}
+
+function AccountRow(
+  { account, currency, first, last, disabled, onChange, onMove, onDelete }: {
+    account: Account;
+    currency: string;
+    first: boolean;
+    last: boolean;
+    disabled: boolean;
+    onChange: (patch: Partial<Account>) => void;
+    onMove: (dir: -1 | 1) => void;
+    onDelete: () => void;
+  },
+) {
+  const [name, setName] = useState(account.name);
+  const [icon, setIcon] = useState(account.icon);
+  const [opening, setOpening] = useState(balanceInput(account.openingCents));
+  useEffect(() => setName(account.name), [account.name]);
+  useEffect(() => setIcon(account.icon), [account.icon]);
+  useEffect(() => setOpening(balanceInput(account.openingCents)), [account.openingCents]);
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 border-b pb-2 last:border-0">
+      <input
+        type="color"
+        className="h-9 w-10 shrink-0 cursor-pointer rounded-md border bg-card p-1 disabled:cursor-default"
+        title={t("types.color")}
+        value={account.color}
+        disabled={disabled}
+        onChange={(e) => onChange({ color: e.target.value })}
+      />
+      <Input
+        className="w-12 shrink-0 px-1 text-center"
+        aria-label={t("note.icon")}
+        maxLength={16}
+        value={icon}
+        disabled={disabled}
+        onChange={(e) => setIcon(e.target.value)}
+        onBlur={() => icon.trim() !== account.icon && onChange({ icon: icon.trim() })}
+      />
+      <Input
+        className="min-w-32 flex-1"
+        aria-label={t("types.name")}
+        maxLength={80}
+        value={name}
+        disabled={disabled}
+        onChange={(e) => setName(e.target.value)}
+        onBlur={() => {
+          const next = name.trim();
+          if (!next) setName(account.name);
+          else if (next !== account.name) onChange({ name: next });
+        }}
+        onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+      />
+      <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <span className="shrink-0">{t("finance.opening")}</span>
+        <Input
+          className="w-28 text-right tabular-nums"
+          inputMode="decimal"
+          aria-label={`${t("finance.opening")} (${currency})`}
+          title={`${t("finance.balance")}: ${
+            formatMoney(account.balanceCents, currency, getLang())
+          }`}
+          value={opening}
+          disabled={disabled}
+          onChange={(e) => setOpening(e.target.value)}
+          onBlur={() => {
+            const cents = opening.trim() ? parseMoney(opening) : 0;
+            if (cents === null) setOpening(balanceInput(account.openingCents));
+            else if (cents !== account.openingCents) onChange({ openingCents: cents });
+          }}
+          onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+        />
+      </label>
       {!disabled && (
         <>
           <Button

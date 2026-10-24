@@ -76,6 +76,7 @@ export function FinancePage() {
             <TabsTrigger value="overview">{t("finance.overview")}</TabsTrigger>
           </TabsList>
           <TabsContent value="transactions" className="mt-4 space-y-4">
+            {finance.accounts.length > 0 && <AccountCards />}
             {list && (
               <StatTiles
                 income={list.incomeCents}
@@ -126,6 +127,43 @@ export function StatTiles(
           </div>
           {tile.hint && <div className="text-xs text-muted-foreground">{tile.hint}</div>}
         </div>
+      ))}
+    </div>
+  );
+}
+
+/** The accounts with their balances; picking one shows only its transactions. */
+function AccountCards() {
+  const finance = useFinance();
+  const lang = getLang();
+  const active = finance.filter.account;
+  return (
+    <div className="flex gap-2 overflow-x-auto pb-1 sm:gap-3">
+      {finance.accounts.map((a) => (
+        <button
+          key={a.id}
+          type="button"
+          aria-pressed={active === a.id}
+          title={t("finance.balance")}
+          className={cn(
+            "w-40 shrink-0 rounded-xl border bg-card px-3 py-2.5 text-left transition-colors hover:bg-accent sm:w-48 sm:px-4 sm:py-3",
+            active === a.id && "border-primary ring-1 ring-primary",
+          )}
+          onClick={() => finance.setFilter({ account: active === a.id ? "" : a.id })}
+        >
+          <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: a.color }} />
+            <span className="truncate">{a.icon ? `${a.icon} ` : ""}{a.name}</span>
+          </div>
+          <div
+            className={cn(
+              "mt-0.5 truncate text-sm font-semibold tabular-nums sm:text-lg",
+              a.balanceCents < 0 && "text-gap",
+            )}
+          >
+            {formatMoney(a.balanceCents, finance.currency, lang)}
+          </div>
+        </button>
       ))}
     </div>
   );

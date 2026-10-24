@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import type {
+  AccountRow,
   AiSettingsRow,
   CategoryRow,
   EntryRow,
@@ -19,6 +20,11 @@ const CHUNK = 200; // keeps `in (...)` filters well below URL length limits
 function check<T>(res: { data: T; error: { message: string } | null }): T {
   if (res.error) throw new Error(res.error.message);
   return res.data;
+}
+
+/** Supabase returns bigint columns as strings. */
+function txRow(r: TransactionRow): TransactionRow {
+  return { ...r, amount_cents: Number(r.amount_cents) };
 }
 
 function chunks<T>(list: T[], size: number): T[][] {
@@ -161,6 +167,7 @@ export class SupabaseStore implements Store {
           ? {
             currency: finance.currency,
             categories: finance.categories.map(({ family_id: _, ...c }) => c),
+            accounts: finance.accounts.map(({ family_id: _, ...a }) => a),
             transactions: finance.transactions.map(({ family_id: _, created_at: __, ...t }) => t),
           }
           : null,
@@ -201,6 +208,36 @@ export class SupabaseStore implements Store {
     );
   }
 
+  async listAccounts(familyId: string) {
+    const rows = check(
+      await this.db.from("finance_accounts").select("*").eq("family_id", familyId)
+        .order("position"),
+    ) as AccountRow[] | null;
+    return (rows ?? []).map((r) => ({ ...r, opening_cents: Number(r.opening_cents) }));
+  }
+
+  async upsertAccounts(rows: AccountRow[]) {
+    if (!rows.length) return;
+    check(
+      await this.db.from("finance_accounts").upsert(rows, { onConflict: "family_id,id" }),
+    );
+  }
+
+  async deleteAccount(familyId: string, id: string) {
+    // Transactions keep their rows: ON DELETE SET NULL clears their account.
+    check(
+      await this.db.from("finance_accounts").delete().eq("family_id", familyId).eq("id", id),
+    );
+  }
+
+  async accountTotals(familyId: string) {
+    const rows = check(
+      await this.db.from("finance_account_totals").select("account_id,total_cents")
+        .eq("family_id", familyId),
+    ) as { account_id: string; total_cents: number | string }[] | null;
+    return new Map((rows ?? []).map((r) => [r.account_id, Number(r.total_cents)]));
+  }
+
   async listTransactions(familyId: string, from?: string, to?: string) {
     const out: TransactionRow[] = [];
     for (let offset = 0;; offset += PAGE) {
@@ -211,7 +248,7 @@ export class SupabaseStore implements Store {
         await q.order("day", { ascending: false }).order("created_at", { ascending: false })
           .order("id").range(offset, offset + PAGE - 1),
       ) as TransactionRow[];
-      out.push(...rows.map((r) => ({ ...r, amount_cents: Number(r.amount_cents) })));
+      out.push(...rows.map(txRow));
       if (rows.length < PAGE) return out;
     }
   }
@@ -222,7 +259,23 @@ export class SupabaseStore implements Store {
       const rows = check(
         await this.db.from("transactions").select("*").eq("family_id", familyId).in("id", part),
       ) as TransactionRow[];
-      out.push(...rows.map((r) => ({ ...r, amount_cents: Number(r.amount_cents) })));
+      out.push(...rows.map(txRow));
+    }
+    return out;
+  }
+
+  async listTransfers(familyId: string, transferIds: string[]) {
+    const out: TransactionRow[] = [];
+    for (const part of chunks(transferIds, CHUNK)) {
+      // Paged, as a chunk of groups can have more legs than one response holds.
+      for (let offset = 0;; offset += PAGE) {
+        const rows = check(
+          await this.db.from("transactions").select("*").eq("family_id", familyId)
+            .in("transfer_id", part).order("id").range(offset, offset + PAGE - 1),
+        ) as TransactionRow[];
+        out.push(...rows.map(txRow));
+        if (rows.length < PAGE) break;
+      }
     }
     return out;
   }
@@ -240,7 +293,9 @@ export class SupabaseStore implements Store {
   }
 
   async clearFinance(familyId: string) {
-    for (const table of ["transactions", "finance_categories", "family_settings"]) {
+    for (
+      const table of ["transactions", "finance_accounts", "finance_categories", "family_settings"]
+    ) {
       check(await this.db.from(table).delete().eq("family_id", familyId));
     }
   }
