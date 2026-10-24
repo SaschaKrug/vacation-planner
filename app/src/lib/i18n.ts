@@ -468,6 +468,15 @@ const STRINGS: Record<Lang, Dict> = {
       `Imported ${n} ${s(n, "transaction", "transactions")}` +
       (Number(skipped) ? ` (${skipped} already there)` : ""),
     "finance.imported_none": ({ skipped }) => `Nothing new: all ${skipped} were already there`,
+    "finance.import_categorize": "Sort the new transactions into categories with AI",
+    "finance.auto_categorize": "Auto-categorize",
+    "finance.auto_categorize_help":
+      "Let the AI sort this period's uncategorized transactions into your categories",
+    "finance.categorizing": ({ done, total }) => `Categorizing… ${done} of ${total}`,
+    "finance.categorized": ({ n }) =>
+      `Sorted ${n} ${s(n, "transaction", "transactions")} into categories`,
+    "finance.categorized_none": "Nothing could be categorized",
+    "finance.categorize_failed": "The AI couldn't categorize: {msg}",
     // ---- AI assistant
     "settings.ai": "AI assistant",
     "chat.history": "Chats",
@@ -1000,6 +1009,15 @@ const STRINGS: Record<Lang, Dict> = {
       `${n} ${s(n, "Buchung", "Buchungen")} importiert` +
       (Number(skipped) ? ` (${skipped} waren schon da)` : ""),
     "finance.imported_none": ({ skipped }) => `Nichts Neues: alle ${skipped} waren schon da`,
+    "finance.import_categorize": "Die neuen Buchungen mit KI in Kategorien einsortieren",
+    "finance.auto_categorize": "Mit KI einsortieren",
+    "finance.auto_categorize_help":
+      "Die Buchungen ohne Kategorie in diesem Zeitraum von der KI in deine Kategorien einsortieren lassen",
+    "finance.categorizing": ({ done, total }) => `Sortiere ein… ${done} von ${total}`,
+    "finance.categorized": ({ n }) =>
+      `${n} ${s(n, "Buchung", "Buchungen")} in Kategorien einsortiert`,
+    "finance.categorized_none": "Keine Buchung konnte einsortiert werden",
+    "finance.categorize_failed": "Die KI konnte nicht einsortieren: {msg}",
     // ---- AI assistant
     "settings.ai": "KI-Assistent",
     "chat.history": "Chats",

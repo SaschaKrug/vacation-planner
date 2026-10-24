@@ -88,6 +88,15 @@ export interface TransactionResult {
   inverse: TransactionOp[];
 }
 
+/** What one POST /ai/categorize call did; `inverse` undoes it. */
+export interface CategorizeResult {
+  changed: number; // how many got a category
+  considered: number; // how many the model looked at (at most 200)
+  remaining: number; // uncategorized ones after these, not looked at yet
+  inverse: TransactionOp[];
+  assignments: { id: string; categoryId: string }[];
+}
+
 export interface AiSettings {
   configured: boolean;
   baseUrl: string;
@@ -263,6 +272,11 @@ export const api = {
     request<{ models: string[] }>("POST", `${fam(token)}/ai/models`, body),
   aiTest: (token: string) =>
     request<{ ok: boolean; model: string; reply: string }>("POST", `${fam(token)}/ai/test`, {}),
+  /** Lets the model sort uncategorized transactions (the given ids, or those of a range). */
+  categorize: (
+    token: string,
+    body: { ids?: string[]; from?: string; to?: string; skip?: number; lang?: "en" | "de" },
+  ) => request<CategorizeResult>("POST", `${fam(token)}/ai/categorize`, body),
   /** Runs undo steps in order (they are relative to the family). */
   undo: async (token: string, steps: UndoStep[]) => {
     for (const step of steps) await request(step.method, fam(token) + step.path, step.body);

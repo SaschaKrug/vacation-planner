@@ -79,7 +79,9 @@ export function Markdown({ text }: { text: string }) {
     }
     if (line.startsWith("```")) {
       const code: string[] = [];
-      for (i++; i < lines.length && !lines[i].startsWith("```"); i++) code.push(lines[i]);
+      for (i++; i < lines.length && !lines[i].startsWith("```"); i++) {
+        code.push(lines[i]);
+      }
       i++;
       blocks.push(
         <pre
@@ -91,7 +93,9 @@ export function Markdown({ text }: { text: string }) {
     }
     const heading = /^(#{1,4})\s+(.*)$/.exec(line);
     if (heading) {
-      blocks.push(<p key={k} className="font-semibold">{inline(heading[2], k)}</p>);
+      blocks.push(
+        <p key={k} className="font-semibold">{inline(heading[2], k)}</p>,
+      );
       i++;
       continue;
     }
@@ -100,7 +104,12 @@ export function Markdown({ text }: { text: string }) {
       const items: ReactNode[] = [];
       for (; i < lines.length && /^\s*([-*•]|\d+[.)])\s+/.test(lines[i]); i++) {
         items.push(
-          <li key={i}>{inline(lines[i].replace(/^\s*([-*•]|\d+[.)])\s+/, ""), `${k}-${i}`)}</li>,
+          <li key={i}>
+            {inline(
+              lines[i].replace(/^\s*([-*•]|\d+[.)])\s+/, ""),
+              `${k}-${i}`,
+            )}
+          </li>,
         );
       }
       blocks.push(
@@ -113,7 +122,8 @@ export function Markdown({ text }: { text: string }) {
     const para: string[] = [];
     for (
       ;
-      i < lines.length && lines[i].trim() && !/^(```|#{1,4}\s|\s*([-*•]|\d+[.)])\s)/.test(lines[i]);
+      i < lines.length && lines[i].trim() &&
+      !/^(```|#{1,4}\s|\s*([-*•]|\d+[.)])\s)/.test(lines[i]);
       i++
     ) {
       para.push(lines[i]);
@@ -127,5 +137,9 @@ export function Markdown({ text }: { text: string }) {
       </p>,
     );
   }
-  return <div className="space-y-2 leading-relaxed [overflow-wrap:anywhere]">{blocks}</div>;
+  return (
+    <div className="space-y-2 leading-relaxed [overflow-wrap:anywhere]">
+      {blocks}
+    </div>
+  );
 }

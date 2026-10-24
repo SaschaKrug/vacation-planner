@@ -32,7 +32,9 @@ export function AiSection() {
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState("");
   const [models, setModels] = useState<string[] | null>(null);
-  const [searchProvider, setSearchProvider] = useState<AiSettings["searchProvider"]>("none");
+  const [searchProvider, setSearchProvider] = useState<
+    AiSettings["searchProvider"]
+  >("none");
   const [searchKey, setSearchKey] = useState("");
   const [busy, setBusy] = useState<"" | "save" | "models" | "test">("");
   const [test, setTest] = useState<{ ok: boolean; text: string } | null>(null);
@@ -55,14 +57,25 @@ export function AiSection() {
   }, [token, planner.readOnly]);
 
   if (planner.readOnly) {
-    return <p className="text-sm text-muted-foreground">{t("ai_settings.edit_only")}</p>;
+    return (
+      <p className="text-sm text-muted-foreground">
+        {t("ai_settings.edit_only")}
+      </p>
+    );
   }
-  if (!settings) return <Loader2 className="size-5 animate-spin text-muted-foreground" />;
+  if (!settings) {
+    return <Loader2 className="size-5 animate-spin text-muted-foreground" />;
+  }
 
   async function save(patch: AiSettingsPatch = {}) {
     setBusy("save");
     try {
-      const body: AiSettingsPatch = { baseUrl, model, searchProvider, ...patch };
+      const body: AiSettingsPatch = {
+        baseUrl,
+        model,
+        searchProvider,
+        ...patch,
+      };
       if (apiKey) body.apiKey = apiKey;
       if (searchKey) body.searchKey = searchKey;
       apply(await api.saveAiSettings(token, body));
@@ -76,7 +89,10 @@ export function AiSection() {
   async function loadModels() {
     setBusy("models");
     try {
-      const res = await api.aiModels(token, { baseUrl, ...(apiKey ? { apiKey } : {}) });
+      const res = await api.aiModels(token, {
+        baseUrl,
+        ...(apiKey ? { apiKey } : {}),
+      });
       setModels(res.models);
       if (!model && res.models.length) setModel(res.models[0]);
       if (!res.models.length) toast(t("ai_settings.no_models"));
@@ -93,7 +109,10 @@ export function AiSection() {
       const res = await api.aiTest(token);
       setTest({
         ok: true,
-        text: t("ai_settings.test_ok", { model: res.model, reply: res.reply || "…" }),
+        text: t("ai_settings.test_ok", {
+          model: res.model,
+          reply: res.reply || "…",
+        }),
       });
     } catch (err) {
       setTest({ ok: false, text: (err as Error).message });
@@ -101,7 +120,8 @@ export function AiSection() {
     setBusy("");
   }
 
-  const dirty = baseUrl !== settings.baseUrl || model !== settings.model || !!apiKey ||
+  const dirty = baseUrl !== settings.baseUrl || model !== settings.model ||
+    !!apiKey ||
     searchProvider !== settings.searchProvider || !!searchKey;
 
   return (
@@ -116,7 +136,10 @@ export function AiSection() {
         scope="family"
         description={t("ai_settings.endpoint_help")}
       >
-        <Field label={t("ai_settings.base_url")} help={t("ai_settings.base_url_help")}>
+        <Field
+          label={t("ai_settings.base_url")}
+          help={t("ai_settings.base_url_help")}
+        >
           <Input
             value={baseUrl}
             placeholder="https://api.openai.com/v1"
@@ -169,7 +192,10 @@ export function AiSection() {
             )}
           </div>
         </Field>
-        <Field label={t("ai_settings.model")} help={t("ai_settings.model_help")}>
+        <Field
+          label={t("ai_settings.model")}
+          help={t("ai_settings.model_help")}
+        >
           <div className="flex gap-2">
             {models?.length
               ? (
@@ -178,9 +204,9 @@ export function AiSection() {
                     <SelectValue placeholder={t("ai_settings.pick_model")} />
                   </SelectTrigger>
                   <SelectContent position="popper" className="max-h-80">
-                    {[...new Set([model, ...models].filter(Boolean))].map((m) => (
-                      <SelectItem key={m} value={m}>{m}</SelectItem>
-                    ))}
+                    {[...new Set([model, ...models].filter(Boolean))].map((
+                      m,
+                    ) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
                   </SelectContent>
                 </Select>
               )
@@ -192,7 +218,11 @@ export function AiSection() {
                   onChange={(e) => setModel(e.target.value)}
                 />
               )}
-            <Button variant="outline" disabled={!baseUrl || !!busy} onClick={loadModels}>
+            <Button
+              variant="outline"
+              disabled={!baseUrl || !!busy}
+              onClick={loadModels}
+            >
               {busy === "models" ? <Loader2 className="animate-spin" /> : <RefreshCw />}
               {t("ai_settings.load_models")}
             </Button>
@@ -236,7 +266,9 @@ export function AiSection() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="none">{t("ai_settings.search_off")}</SelectItem>
+              <SelectItem value="none">
+                {t("ai_settings.search_off")}
+              </SelectItem>
               <SelectItem value="tavily">Tavily</SelectItem>
               <SelectItem value="brave">Brave Search</SelectItem>
             </SelectContent>
@@ -258,7 +290,11 @@ export function AiSection() {
             />
           </Field>
         )}
-        <Button className="justify-self-start" disabled={!!busy || !dirty} onClick={() => save()}>
+        <Button
+          className="justify-self-start"
+          disabled={!!busy || !dirty}
+          onClick={() => save()}
+        >
           {t("note.save")}
         </Button>
       </SettingsCard>
@@ -276,7 +312,9 @@ export function AiSection() {
             onCheckedChange={(v) => save({ allowWrites: v })}
           />
         </label>
-        <p className="text-xs text-muted-foreground">{t("ai_settings.privacy")}</p>
+        <p className="text-xs text-muted-foreground">
+          {t("ai_settings.privacy")}
+        </p>
       </SettingsCard>
     </>
   );

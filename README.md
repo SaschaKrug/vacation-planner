@@ -73,6 +73,10 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   read-only.
 - **Attach** images (screenshots, photos) and text files (e.g. CSV) to a message; images need a
   model with vision support.
+- **Auto-categorize** on the finance page sorts the period's uncategorized transactions into
+  categories with the same model (it sees the categories and how similar payees were sorted
+  before; only categories that fit income / expense are used, unsure rows stay open). After a
+  CSV import it can sort the new rows right away. *Undo* in the toast puts them back.
 - Chats are kept on the device (the last 20 per family).
 - The server runs the tool loop: the app streams the answer from the Edge Function, which talks
   to the model. Requests to private networks are refused (also after redirects), pages are
@@ -158,7 +162,7 @@ deleted. Over the limit, it answers `429` with a `Retry-After` header.
 | --- | --- |
 | New families (`POST /families`, `…/clone`) per client | 20 per hour |
 | New families of all clients together | 500 per hour |
-| AI requests (chat, model list, test) per client | 60 per 5 minutes |
+| AI requests (chat, model list, test, categorize) per client | 60 per 5 minutes |
 | AI requests per family | 300 per hour |
 | Changes (`POST`, `PATCH`, `DELETE`) per client | 300 per 5 minutes |
 
@@ -260,6 +264,7 @@ All need the edit id.
 | `PUT /families/{id}/ai/settings` | Any of `{"baseUrl", "apiKey", "model", "searchProvider": "none" \| "tavily" \| "brave", "searchKey", "allowWrites"}`; `""` removes a key |
 | `POST /families/{id}/ai/models` | The API's models: `{"models": [...]}`; `{"baseUrl", "apiKey"}` in the body try values before saving them |
 | `POST /families/{id}/ai/test` | One short completion with the saved settings |
+| `POST /families/{id}/ai/categorize` | `{"ids": [...]}` or `{"from", "to", "skip"}`, and `"lang"`: the model sorts uncategorized transactions (the given ones, at most 200, or those in the range after the first `skip`) into categories, at most 200 per request → `{"changed", "considered", "remaining", "inverse", "assignments": [{"id", "categoryId"}]}`; `remaining` are the range's uncategorized rows not looked at yet (call again with `skip` + the ones left open), `inverse` undoes it via `/finance/transactions` |
 | `POST /families/{id}/ai/chat` | `{"messages": [...], "lang", "today", "year", "page"}` (OpenAI format, the last one the user's; a user message's `content` may be parts: `{"type": "text", "text"}` and up to 4 `{"type": "image_url", "image_url": {"url": "data:image/png;base64,…"}}`, the newest 8 images are sent) → `text/event-stream` with `text`, `tool`, `tool_result`, `change` (with `undo`: requests against the family that undo it), `messages` (to append to the history), `done` / `error` |
 
 ### Links

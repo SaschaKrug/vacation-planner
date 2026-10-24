@@ -16,20 +16,31 @@ import { formatMoney } from "@/lib/money";
 import { cn } from "@/lib/utils";
 
 export function CategoryLabel({ category }: { category?: Category }) {
-  if (!category) return <span className="text-muted-foreground">{t("finance.uncategorized")}</span>;
+  if (!category) {
+    return (
+      <span className="text-muted-foreground">
+        {t("finance.uncategorized")}
+      </span>
+    );
+  }
   return (
     <span className="inline-flex min-w-0 items-center gap-1.5">
       <span
         className="size-2.5 shrink-0 rounded-full"
         style={{ backgroundColor: category.color }}
       />
-      <span className="truncate">{category.icon ? `${category.icon} ` : ""}{category.name}</span>
+      <span className="truncate">
+        {category.icon ? `${category.icon} ` : ""}
+        {category.name}
+      </span>
     </span>
   );
 }
 
 /** The filtered transactions of the period, newest first; categories can be set inline. */
-export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void }) {
+export function TransactionsView(
+  { onEdit }: { onEdit?: (t: Transaction) => void },
+) {
   const finance = useFinance();
   const planner = usePlanner();
   const [q, setQ] = useState(finance.filter.q);
@@ -77,7 +88,9 @@ export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void
         <Select
           value={finance.filter.kind || "all"}
           onValueChange={(v) =>
-            finance.setFilter({ kind: v === "all" ? "" : v as "income" | "expense" })}
+            finance.setFilter({
+              kind: v === "all" ? "" : v as "income" | "expense",
+            })}
         >
           <SelectTrigger className="w-36" aria-label={t("finance.kind")}>
             <SelectValue />
@@ -108,15 +121,23 @@ export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void
               className="text-xs text-muted-foreground tabular-nums sm:text-sm"
               dateTime={tx.date}
             >
-              {new Intl.DateTimeFormat(lang, { day: "2-digit", month: "short", year: "numeric" })
+              {new Intl.DateTimeFormat(lang, {
+                day: "2-digit",
+                month: "short",
+                year: "numeric",
+              })
                 .format(
                   new Date(tx.date + "T00:00:00"),
                 )}
             </time>
             <div className="col-start-1 col-end-3 row-start-2 min-w-0 sm:col-auto sm:row-auto">
-              <div className="truncate font-medium">{tx.payee || tx.description || "—"}</div>
+              <div className="truncate font-medium">
+                {tx.payee || tx.description || "—"}
+              </div>
               {tx.payee && tx.description && (
-                <div className="truncate text-xs text-muted-foreground">{tx.description}</div>
+                <div className="truncate text-xs text-muted-foreground">
+                  {tx.description}
+                </div>
               )}
             </div>
             <div className="col-start-1 col-end-3 row-start-3 min-w-0 text-sm sm:col-auto sm:row-auto">
@@ -126,7 +147,11 @@ export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void
                     value={tx.categoryId ?? "none"}
                     onValueChange={(v) =>
                       finance.change(
-                        [{ action: "update", id: tx.id, categoryId: v === "none" ? null : v }],
+                        [{
+                          action: "update",
+                          id: tx.id,
+                          categoryId: v === "none" ? null : v,
+                        }],
                         t("finance.saved"),
                       )}
                   >
@@ -135,24 +160,37 @@ export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void
                       className="h-8 w-full border-transparent shadow-none hover:border-input"
                       aria-label={t("finance.category")}
                     >
-                      <CategoryLabel category={finance.categoryById(tx.categoryId)} />
+                      <CategoryLabel
+                        category={finance.categoryById(tx.categoryId)}
+                      />
                     </SelectTrigger>
                     <SelectContent position="popper" className="max-h-80">
-                      <SelectItem value="none">{t("finance.uncategorized")}</SelectItem>
+                      <SelectItem value="none">
+                        {t("finance.uncategorized")}
+                      </SelectItem>
                       {finance.categories
                         .filter((c) =>
-                          c.kind === "both" || (c.kind === "income") === tx.amountCents > 0
+                          c.kind === "both" ||
+                          (c.kind === "income") === tx.amountCents > 0
                         )
                         .map((c) => (
-                          <SelectItem key={c.id} value={c.id}>{c.icon} {c.name}</SelectItem>
+                          <SelectItem key={c.id} value={c.id}>
+                            {c.icon} {c.name}
+                          </SelectItem>
                         ))}
                     </SelectContent>
                   </Select>
                 )
-                : <CategoryLabel category={finance.categoryById(tx.categoryId)} />}
+                : (
+                  <CategoryLabel
+                    category={finance.categoryById(tx.categoryId)}
+                  />
+                )}
             </div>
             <div className="col-start-3 row-start-1 text-right font-semibold whitespace-nowrap tabular-nums sm:col-auto sm:row-auto">
-              {formatMoney(tx.amountCents, finance.currency, lang, { sign: tx.amountCents > 0 })}
+              {formatMoney(tx.amountCents, finance.currency, lang, {
+                sign: tx.amountCents > 0,
+              })}
             </div>
             <div className="col-start-3 row-span-2 row-start-2 flex justify-end gap-0.5 sm:col-auto sm:row-auto">
               {tx.imported && (
@@ -191,8 +229,14 @@ export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void
       </ul>
       {list && list.total > list.transactions.length && (
         <div className="border-t p-3 text-center">
-          <Button variant="outline" size="sm" onClick={() => finance.showMore()}>
-            {t("finance.show_more", { n: list.total - list.transactions.length })}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => finance.showMore()}
+          >
+            {t("finance.show_more", {
+              n: list.total - list.transactions.length,
+            })}
           </Button>
         </div>
       )}

@@ -6,6 +6,8 @@
 //   "spend" / "finance"                   -> finance_summary for this year
 //   "search <words>"                      -> web_search
 //   a URL                                 -> fetch_page
+// Asked to sort transactions into categories (the categorize prompt), it picks the category
+// whose id or name occurs in a row's payee or description.
 // After a tool result it says what happened; anything else is echoed. A message with images
 // (content parts) gets "I see 2 images." before the echo.
 
@@ -90,11 +92,23 @@ export async function mockAi(req: Request): Promise<Response> {
   }
 
   const text = textOf(last.content);
+  const system = textOf(messages[0]?.content);
+  if (system.startsWith("You sort bank transactions into categories.")) {
+    const categories = [...system.matchAll(/^- ([a-z0-9-]+): (?:[^\w\s]\S* )?([^(\n]+?) \(/gmu)];
+    const answer: Record<string, string | null> = {};
+    for (const line of text.split("\n")) {
+      const [n, , , payee = "", description = ""] = line.split(" | ");
+      const words = `${payee} ${description}`.toLowerCase();
+      answer[n] = categories.find(([, id, name]) =>
+        words.includes(id) || words.includes(name.toLowerCase())
+      )?.[1] ?? null;
+    }
+    return reply(stream, "```json\n" + JSON.stringify(answer) + "\n```");
+  }
   const images = Array.isArray(last.content)
     ? last.content.filter((p) => p.type === "image_url").length
     : 0;
   const lower = text.toLowerCase();
-  const system = textOf(messages[0]?.content);
   const today = /Today is (\d{4}-\d{2}-\d{2})/.exec(system)?.[1] ??
     new Date().toISOString().slice(0, 10);
   const dates = text.match(/\d{4}-\d{2}-\d{2}/g) ?? [];

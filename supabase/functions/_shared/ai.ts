@@ -1,15 +1,24 @@
 // The AI assistant's routes under /families/{id}/ai: settings (keys stored encrypted, never
-// returned), the endpoint's model list, a connection test and the chat. All need the edit link:
+// returned), the endpoint's model list, a connection test, the chat and sorting transactions
+// into categories. All need the edit link:
 // the assistant spends the family's AI tokens and can change things.
 
 import { type ChatMessage, listModels, type Provider, streamChat } from "./ai/provider.ts";
 import { checkUrl, type NetOptions } from "./ai/net.ts";
+import { suggestCategories } from "./ai/categorize.ts";
 import { cleanHistory, runChat, sseResponse, systemPrompt } from "./ai/chat.ts";
 import type { Ctx } from "./context.ts";
 import { formatDate, isValidDate } from "./dates.ts";
+import { applyTransactionOps } from "./finance.ts";
 import { CORS, HttpError, json, NO_STORE, readBody } from "./http.ts";
 import type { SecretBox } from "./secrets.ts";
-import { type AiSettingsRow, SEARCH_PROVIDERS, type SearchProvider, type Store } from "./store.ts";
+import {
+  type AiSettingsRow,
+  SEARCH_PROVIDERS,
+  type SearchProvider,
+  type Store,
+  type TransactionRow,
+} from "./store.ts";
 
 export interface AiEnv {
   /** Encrypts the stored keys; without it (no AI_CONFIG_KEY) keys can't be saved. */
@@ -18,6 +27,9 @@ export interface AiEnv {
 }
 
 const PAGES = ["vacation", "finance", "settings"];
+/** Transactions one categorize request sends to the model. */
+const MAX_CATEGORIZE = 200;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 function emptyRow(familyId: string): AiSettingsRow {
   return {
@@ -102,6 +114,8 @@ export function handleAi(ctx: Ctx, env: AiEnv): Promise<Response> | null {
       return test(ctx, env);
     case "POST chat":
       return chat(ctx, env);
+    case "POST categorize":
+      return categorize(ctx, env);
   }
   return Promise.reject(new HttpError(404, "Not found"));
 }
@@ -246,4 +260,71 @@ async function chat({ store, req, load }: Ctx, env: AiEnv) {
       }),
     CORS,
   );
+}
+
+/** POST /ai/categorize {ids?, from?, to?, skip?, lang?}: the model sorts uncategorized
+ *  transactions (the given ones, or those in the range after the first `skip`) into categories,
+ *  at most 200 per request. Returns `inverse` (ops for /finance/transactions that undo it) and
+ *  `remaining`, the uncategorized rows in the range it didn't look at yet. */
+async function categorize({ store, req, load }: Ctx, env: AiEnv) {
+  const { family } = await load("edit");
+  const body = await readBody(req);
+  const row = await loadRow(store, family.id);
+  if (!row.base_url || !row.model) throw new HttpError(400, "The AI assistant isn't set up yet");
+  const p = await provider(row, env);
+
+  let candidates: TransactionRow[];
+  let remaining = 0;
+  if (body.ids !== undefined) {
+    const ids = body.ids;
+    if (
+      !Array.isArray(ids) || ids.length > MAX_CATEGORIZE ||
+      ids.some((id) => typeof id !== "string" || !UUID_RE.test(id))
+    ) {
+      throw new HttpError(400, `ids must be at most ${MAX_CATEGORIZE} transaction ids`);
+    }
+    candidates = (await store.getTransactions(family.id, ids)).filter((t) => !t.category_id);
+  } else {
+    const from = body.from ?? undefined, to = body.to ?? undefined;
+    for (const d of [from, to]) {
+      if (d !== undefined && !isValidDate(d)) {
+        throw new HttpError(400, "from/to must be YYYY-MM-DD");
+      }
+    }
+    const skip = body.skip ?? 0;
+    if (!Number.isInteger(skip) || (skip as number) < 0) {
+      throw new HttpError(400, "skip must be a whole number");
+    }
+    const open = (await store.listTransactions(family.id, from as string, to as string))
+      .filter((t) => !t.category_id).slice(skip as number);
+    candidates = open.slice(0, MAX_CATEGORIZE);
+    remaining = open.length - candidates.length;
+  }
+
+  const [categories, all] = await Promise.all([
+    store.listCategories(family.id),
+    candidates.length ? store.listTransactions(family.id) : [],
+  ]);
+  const picked = candidates.length
+    ? await suggestCategories({
+      provider: p,
+      net: env.net,
+      categories,
+      rows: candidates,
+      sorted: all.filter((t) => t.category_id),
+      lang: body.lang === "de" ? "de" : "en",
+      signal: req.signal,
+    })
+    : new Map<string, string>();
+  const ops = [...picked].map(([id, categoryId]) => ({ action: "update", id, categoryId }));
+  const { inverse } = ops.length
+    ? await applyTransactionOps(store, family.id, ops)
+    : { inverse: [] };
+  return json({
+    changed: ops.length,
+    considered: candidates.length,
+    remaining,
+    inverse,
+    assignments: [...picked].map(([id, categoryId]) => ({ id, categoryId })),
+  });
 }

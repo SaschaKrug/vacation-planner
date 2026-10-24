@@ -1,5 +1,5 @@
 import { FileUp } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -19,7 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { useFinance } from "@/features/family/context";
+import { useChat, useFinance } from "@/features/family/context";
 import { api } from "@/lib/api";
 import {
   type CsvMapping,
@@ -42,14 +42,22 @@ type Step =
   | { name: "review"; bytes: Uint8Array; fileName: string; duplicates: number[] };
 
 /** Imports a bank statement: pick the file, check how its columns map, then import the rows
- *  that aren't there yet. Mappings are remembered per bank (by the file's header). */
+ *  that aren't there yet. Mappings are remembered per bank (by the file's header); the new
+ *  transactions can be sorted into categories by the AI afterwards. */
 export function ImportDialog({ onClose }: { onClose: () => void }) {
   const finance = useFinance();
+  const chat = useChat();
   const [step, setStep] = useState<Step>({ name: "file" });
   const [mapping, setMapping] = useState<CsvMapping | null>(null);
   const [remember, setRemember] = useState(true);
+  const [categorize, setCategorize] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const aiReady = !!chat.settings?.configured;
+
+  useEffect(() => {
+    chat.loadSettings();
+  }, [chat]);
 
   const bytes = step.name === "file" ? null : step.bytes;
   const text = useMemo(
@@ -96,7 +104,9 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
   async function run() {
     setBusy(true);
     try {
-      await finance.importRows(rowsToSend());
+      const res = await finance.importRows(rowsToSend());
+      // Runs on after the dialog closed; its toast reports.
+      if (aiReady && categorize) finance.categorizeIds(res.ids);
       if (remember && mapping?.signature) await finance.saveMapping(mapping);
       onClose();
     } catch (err) {
@@ -177,6 +187,15 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
                   onCheckedChange={(v) => setRemember(!!v)}
                 />
                 {t("finance.import_remember")}
+              </label>
+            )}
+            {aiReady && (
+              <label className="flex items-center gap-2">
+                <Checkbox
+                  checked={categorize}
+                  onCheckedChange={(v) => setCategorize(!!v)}
+                />
+                {t("finance.import_categorize")}
               </label>
             )}
           </div>
