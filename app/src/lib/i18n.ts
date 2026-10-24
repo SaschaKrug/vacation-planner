@@ -401,6 +401,13 @@ const STRINGS: Record<Lang, Dict> = {
     "finance.mappings": "Saved bank formats",
     "finance.mappings_help":
       "How the columns of a bank's CSV files map, remembered by their header row. Remove one to set it up again on the next import.",
+    "finance.danger_zone": "Danger zone",
+    "finance.clear": "Delete all finance data",
+    "finance.clear_help":
+      "Deletes all transactions, categories and saved bank formats of this family and resets the currency. The calendar stays as it is.",
+    "finance.clear_confirm":
+      "Delete all finance data?\n\nAll transactions, categories and saved bank formats are deleted for everyone in this family. This can't be undone — export the family first under Data if you might need them again.",
+    "finance.cleared": "All finance data deleted",
     "finance.import_title": "Import a bank statement",
     "finance.import_help":
       "Export the transactions from your online banking as a CSV file and pick it here. Rows that were imported before are skipped.",
@@ -895,6 +902,13 @@ const STRINGS: Record<Lang, Dict> = {
     "finance.mappings": "Gespeicherte Bankformate",
     "finance.mappings_help":
       "Wie die Spalten der CSV-Dateien einer Bank zugeordnet werden, erkannt an der Kopfzeile. Entferne eins, um es beim nächsten Import neu einzustellen.",
+    "finance.danger_zone": "Gefahrenzone",
+    "finance.clear": "Alle Finanzdaten löschen",
+    "finance.clear_help":
+      "Löscht alle Buchungen, Kategorien und gespeicherten Bankformate dieser Familie und setzt die Währung zurück. Der Kalender bleibt unverändert.",
+    "finance.clear_confirm":
+      "Alle Finanzdaten löschen?\n\nAlle Buchungen, Kategorien und gespeicherten Bankformate werden für alle in dieser Familie gelöscht. Das lässt sich nicht rückgängig machen – exportiere die Familie vorher unter Daten, falls du sie noch brauchst.",
+    "finance.cleared": "Alle Finanzdaten gelöscht",
     "finance.import_title": "Kontoauszug importieren",
     "finance.import_help":
       "Exportiere die Umsätze aus deinem Online-Banking als CSV-Datei und wähle sie hier aus. Schon importierte Zeilen werden übersprungen.",

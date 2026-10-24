@@ -46,6 +46,10 @@ export function FinanceSection() {
   const edit = !planner.readOnly;
   const cats = finance.categories;
 
+  async function clearAll() {
+    if (await confirm(t("finance.clear_confirm"), t("finance.clear"))) finance.clearAll();
+  }
+
   async function remove(c: Category) {
     if (await confirm(t("finance.category_delete_confirm", { name: c.name }), t("types.delete"))) {
       finance.deleteCategory(c.id);
@@ -132,6 +136,18 @@ export function FinanceSection() {
               </li>
             ))}
           </ul>
+        </SettingsCard>
+      )}
+      {edit && (
+        <SettingsCard
+          title={t("finance.danger_zone")}
+          scope="family"
+          description={t("finance.clear_help")}
+          danger
+        >
+          <Button variant="destructive" className="justify-self-start" onClick={clearAll}>
+            <Trash2 /> {t("finance.clear")}
+          </Button>
         </SettingsCard>
       )}
     </>
