@@ -10,7 +10,7 @@ import {
   type RateLimiter,
 } from "../supabase/functions/_shared/rate_limit.ts";
 import { MemoryStore } from "../supabase/functions/_shared/store.ts";
-import { runTool, TOOLS } from "../supabase/functions/_shared/ai/tools.ts";
+import { MAX_TOOL_RESULT, runTool, TOOLS } from "../supabase/functions/_shared/ai/tools.ts";
 
 const BASE = "http://localhost/functions/v1/api";
 
@@ -1813,7 +1813,7 @@ Deno.test("the AI tools know accounts and transfers", async () => {
 
   await ops({ action: "link", ids: [a, b] });
   const listed = await run("list_transactions", { account: "Checking", kind: "expense" });
-  assertEquals((listed.result as any).transactions.map((t: any) => t.amountCents), [-700, -42]);
+  assertEquals((listed.result as any).rows.map((t: any) => t[2]), [-700, -42]);
   const transfers = await run("list_transactions", { kind: "transfer" });
   assertEquals((transfers.result as any).total, 2);
   const summary = await run("finance_summary", { from: "2026-03-01", to: "2026-03-31" });
@@ -1833,4 +1833,40 @@ Deno.test("the AI tools know accounts and transfers", async () => {
   const unlinked = await run("change_transactions", { ops: [{ action: "unlink", id: a }] });
   assertEquals((unlinked.result as any).changed, 2);
   assertEquals((await run("list_transactions", { kind: "transfer" }) as any).result.total, 0);
+});
+
+Deno.test("the AI tool lists many transactions in few calls, page by page", async () => {
+  const { store, s, add } = await accountsFamily();
+  const long = "SEPA-Lastschrift Mandatsreferenz 123456789 Glaeubiger-ID DE98ZZZ09999999999 "
+    .repeat(3);
+  await add(
+    ...Array.from({ length: 150 }, (_, i) => ({
+      date: `2026-0${1 + (i % 9)}-${String(1 + (i % 28)).padStart(2, "0")}`,
+      amountCents: -100 - i,
+      payee: `Shop ${i}`,
+      description: long,
+      accountId: "checking",
+    })),
+  );
+  const ctx = { lang: "en" as const, store, familyId: s.id, net: {} as any, search: null };
+  const run = async (args: unknown) =>
+    (await runTool("list_transactions", JSON.stringify(args), ctx, new Set(Object.keys(TOOLS))))
+      .result as any;
+
+  const seen: string[] = [];
+  let page = await run({});
+  let calls = 1;
+  assertEquals(page.columns[4], "description");
+  assert(page.rows[0][4].length <= 101);
+  for (;;) {
+    // Each page fits into what the model gets, so nothing is cut off mid-list.
+    assert(JSON.stringify(page).length <= MAX_TOOL_RESULT);
+    seen.push(...page.rows.map((r: any) => r[0]));
+    if (page.nextOffset === undefined) break;
+    page = await run({ offset: page.nextOffset });
+    calls++;
+  }
+  assertEquals(new Set(seen).size, 150);
+  assert(calls <= 3, `${calls} calls`);
+  assertEquals((await run({ limit: 5 })).nextOffset, 5);
 });
