@@ -10,6 +10,7 @@ import {
   type RateLimiter,
 } from "../supabase/functions/_shared/rate_limit.ts";
 import { MemoryStore } from "../supabase/functions/_shared/store.ts";
+import { runTool, TOOLS } from "../supabase/functions/_shared/ai/tools.ts";
 
 const BASE = "http://localhost/functions/v1/api";
 
@@ -1330,4 +1331,482 @@ Deno.test("the agent page explains the finances to links that may see them", asy
   await store.updateFamily(s.id, { legacy_id: "OldViewId1234567890" });
   const legacy: string = (await call("GET", "/families/OldViewId1234567890/agent")).data;
   assert(!legacy.includes("Finances"));
+});
+
+// ------------------------------------------------------------------ accounts and transfers
+
+/** A family with two accounts, and a helper that adds transactions and returns their ids. */
+async function accountsFamily() {
+  const t = await financeFamily();
+  const { call, f } = t;
+  await call("POST", `${f}/accounts`, { name: "Checking", color: "#3b82f6", openingCents: 1000 });
+  await call("POST", `${f}/accounts`, { name: "Savings", color: "#22c55e" });
+  const add = async (...ops: Record<string, unknown>[]) => {
+    const res = await call("POST", `${f}/transactions`, { ops });
+    assertEquals(res.status, 200, JSON.stringify(res.data));
+    return res.data.added as string[];
+  };
+  const ops = async (...ops: Record<string, unknown>[]) => {
+    const res = await call("POST", `${f}/transactions`, { ops });
+    assertEquals(res.status, 200, JSON.stringify(res.data));
+    return res.data;
+  };
+  const list = async (query = "") =>
+    (await call("GET", `${f}/transactions${query ? "?" + query : ""}`)).data;
+  return { ...t, add, ops, list };
+}
+
+Deno.test("manages finance accounts with balances", async () => {
+  const { call, s, f, add } = await accountsFamily();
+  const overview = (await call("GET", f)).data;
+  assertEquals(overview.accounts, [
+    {
+      id: "checking",
+      name: "Checking",
+      color: "#3b82f6",
+      icon: "",
+      openingCents: 1000,
+      position: 0,
+      balanceCents: 1000,
+    },
+    {
+      id: "savings",
+      name: "Savings",
+      color: "#22c55e",
+      icon: "",
+      openingCents: 0,
+      position: 1,
+      balanceCents: 0,
+    },
+  ]);
+  await add(
+    { date: "2026-03-01", amountCents: -300, accountId: "checking" },
+    { date: "2026-03-02", amountCents: 5000, accountId: "Savings" },
+    { date: "2026-03-03", amountCents: -99 },
+  );
+  const balances = (await call("GET", f)).data.accounts.map((a: any) => a.balanceCents);
+  assertEquals(balances, [700, 5000]);
+  // The settings answer has them too.
+  assertEquals((await call("PATCH", `${f}/settings`, {})).data.accounts.length, 2);
+
+  const created = await call("POST", `${f}/accounts`, {
+    name: "Cash",
+    color: "#ff0000",
+    icon: "💶",
+    openingCents: -50,
+  });
+  assertEquals(created.status, 201);
+  assertEquals([created.data.id, created.data.balanceCents], ["cash", -50]);
+  assertEquals((await call("POST", `${f}/accounts`, { name: "X", color: "red" })).status, 400);
+  assertEquals(
+    (await call("POST", `${f}/accounts`, { name: "X", color: "#000000", openingCents: 1.5 }))
+      .status,
+    400,
+  );
+  const patched = await call("PATCH", `${f}/accounts/Checking`, {
+    openingCents: 2000,
+    position: 9,
+  });
+  assertEquals([patched.data.balanceCents, patched.data.position], [1700, 9]);
+  assertEquals((await call("PATCH", `${f}/accounts/nope`, { name: "Y" })).status, 404);
+
+  // Unknown accounts are refused like unknown categories.
+  const bad = await call("POST", `${f}/transactions`, {
+    date: "2026-03-01",
+    amountCents: 1,
+    accountId: "nope",
+  });
+  assertEquals(bad.status, 404);
+
+  // Reading needs the view link, changing the edit link.
+  const view = `/families/${s.readId}/finance`;
+  assertEquals((await call("GET", view)).data.accounts.length, 3);
+  assertEquals(
+    (await call("POST", `${view}/accounts`, { name: "A", color: "#000000" })).status,
+    403,
+  );
+  assertEquals((await call("PATCH", `${view}/accounts/cash`, { name: "B" })).status, 403);
+  assertEquals((await call("DELETE", `${view}/accounts/cash`)).status, 403);
+
+  // Deleting an account keeps its transactions, without an account.
+  assertEquals((await call("DELETE", `${f}/accounts/savings`)).data, { deleted: "savings" });
+  assertEquals((await call("DELETE", `${f}/accounts/savings`)).status, 404);
+  const rows = (await call("GET", `${f}/transactions?account=none`)).data.transactions;
+  assertEquals(rows.map((t: any) => t.amountCents), [-99, 5000]);
+  const checking = (await call("GET", `${f}/transactions?account=checking`)).data;
+  assertEquals(checking.transactions.map((t: any) => t.accountId), ["checking"]);
+});
+
+Deno.test("transfers count once by their net", async () => {
+  const { call, f, add, ops, list } = await accountsFamily();
+  const [out, into, coffee] = await add(
+    { date: "2026-03-10", amountCents: -50000, payee: "To savings", accountId: "checking" },
+    { date: "2026-03-11", amountCents: 50000, payee: "From checking", accountId: "savings" },
+    { date: "2026-03-12", amountCents: -350, payee: "Café", accountId: "checking" },
+  );
+  assertEquals(
+    [(await list()).incomeCents, (await list()).expenseCents],
+    [50000, 50350],
+  );
+  const linked = await ops({ action: "link", ids: [out, into] });
+  assertEquals(linked.changed, 2);
+  let all = await list();
+  assertEquals([all.incomeCents, all.expenseCents, all.total], [0, 350, 3]);
+  const transferId = all.transactions.find((t: any) => t.id === out).transferId;
+  assertMatch(transferId, /^[0-9a-f-]{36}$/);
+  assertEquals(all.transactions.find((t: any) => t.id === into).transferId, transferId);
+  assertEquals(all.transactions.find((t: any) => t.id === coffee).transferId, null);
+  // Balances still move between the accounts.
+  const accounts = (await call("GET", f)).data.accounts.map((a: any) => a.balanceCents);
+  assertEquals(accounts, [1000 - 50000 - 350, 50000]);
+
+  // Kinds: a net-0 transfer is neither income nor expense.
+  assertEquals((await list("kind=transfer")).transactions.length, 2);
+  assertEquals((await list("kind=income")).total, 0);
+  assertEquals((await list("kind=expense")).transactions.map((t: any) => t.id), [coffee]);
+
+  const summary = (await call("GET", `${f}/summary?from=2026-01-01&to=2026-12-31`)).data;
+  assertEquals([summary.incomeCents, summary.expenseCents, summary.count], [0, 350, 1]);
+
+  // 500 out, only 480 arrive: the transfer costs 20.
+  await ops({ action: "update", id: into, amountCents: 48000 });
+  all = await list();
+  assertEquals([all.incomeCents, all.expenseCents], [0, 2350]);
+  const expense = await list("kind=expense");
+  assertEquals(expense.transactions.map((t: any) => t.id).sort(), [out, into, coffee].sort());
+  assertEquals(expense.expenseCents, 2350);
+
+  // Unlinking either leg dissolves the group; the inverse links it again.
+  const unlinked = await ops({ action: "unlink", id: into });
+  assertEquals(unlinked.changed, 2);
+  assertEquals((await list()).transactions.every((t: any) => t.transferId === null), true);
+  assertEquals((await list()).incomeCents, 48000);
+  await ops(...unlinked.inverse);
+  assertEquals((await list("kind=transfer")).transactions.map((t: any) => t.transferId), [
+    transferId,
+    transferId,
+  ]);
+  // The inverse of the link puts everything back the way it was.
+  await ops(...linked.inverse);
+  assertEquals((await list("kind=transfer")).total, 0);
+
+  // Validation.
+  const status = async (body: unknown) => (await call("POST", `${f}/transactions`, body)).status;
+  assertEquals(await status({ action: "link", ids: [out] }), 400);
+  assertEquals(await status({ action: "link", ids: [out, out] }), 400);
+  assertEquals(await status({ action: "link", ids: [out, crypto.randomUUID()] }), 404);
+  assertEquals(await status({ action: "unlink", ids: ["x"] }), 400);
+  assertEquals(await status({ action: "update", id: out, transferId: "nope" }), 400);
+});
+
+Deno.test("a transfer across a month boundary counts once, in its lead leg's month", async () => {
+  const { call, f, add, ops, list } = await accountsFamily();
+  const [out, into] = await add(
+    { date: "2026-01-31", amountCents: -10000, accountId: "checking", categoryId: "vacation" },
+    { date: "2026-02-01", amountCents: 9000, accountId: "savings" },
+  );
+  await ops({ action: "link", ids: [into, out] });
+  const summary = (await call("GET", `${f}/summary?from=2026-01-01&to=2026-12-31`)).data;
+  assertEquals(summary.months, [{ month: "2026-01", incomeCents: 0, expenseCents: 1000 }]);
+  assertEquals(summary.categories, [
+    { categoryId: "vacation", incomeCents: 0, expenseCents: 1000, count: 1 },
+  ]);
+  // A range with only the second leg doesn't count the group (its lead is in January), but
+  // still knows it is a leg of one.
+  const feb = await list("from=2026-02-01&to=2026-02-28");
+  assertEquals([feb.incomeCents, feb.expenseCents], [0, 0]);
+  assertEquals(feb.transactions[0].transferId !== null, true);
+  assertEquals((await list("from=2026-02-01&to=2026-02-28&kind=expense")).total, 1);
+  const jan = await list("from=2026-01-01&to=2026-01-31");
+  assertEquals([jan.incomeCents, jan.expenseCents], [0, 1000]);
+  const febSummary = (await call("GET", `${f}/summary?from=2026-02-01&to=2026-02-28`)).data;
+  assertEquals([febSummary.count, febSummary.months], [0, []]);
+});
+
+Deno.test("deleting a leg clears the other's transfer, and undo restores both", async () => {
+  const { add, ops, list } = await accountsFamily();
+  const [a, b, c] = await add(
+    { date: "2026-05-01", amountCents: -1000, accountId: "checking" },
+    { date: "2026-05-01", amountCents: 600, accountId: "savings" },
+    { date: "2026-05-02", amountCents: 400, accountId: "savings" },
+  );
+  await ops({ action: "link", ids: [a, b, c] });
+  const before = (await list()).transactions;
+  const transferId = before[0].transferId;
+
+  // Three legs: deleting one leaves a group of two.
+  const first = await ops({ action: "delete", ids: [c] });
+  assertEquals((await list("kind=transfer")).total, 2);
+  // Two legs: deleting one leaves a lone leg, which leaves the group.
+  const second = await ops({ action: "delete", ids: [b] });
+  const [lone] = (await list()).transactions;
+  assertEquals([lone.id, lone.transferId], [a, null]);
+  assertEquals((await list()).expenseCents, 1000);
+
+  await ops(...second.inverse);
+  await ops(...first.inverse);
+  const after = (await list()).transactions;
+  assertEquals(after, before);
+  assertEquals(after.every((t: any) => t.transferId === transferId), true);
+  assertEquals([(await list()).incomeCents, (await list()).expenseCents], [0, 0]);
+
+  // Linking a leg into a new group: the rest of its old group stays a group if it has two
+  // legs, a leg left alone loses its transfer; the inverse restores all of it.
+  const [d] = await add({ date: "2026-05-03", amountCents: -1000, accountId: "savings" });
+  const relink = await ops({ action: "link", ids: [a, d] });
+  const transfers = async (...ids: string[]) => {
+    const rows = (await list()).transactions;
+    return ids.map((x) => rows.find((t: any) => t.id === x).transferId);
+  };
+  assertEquals(await transfers(b, c), [transferId, transferId]);
+  const [newId] = await transfers(a);
+  assert(newId && newId !== transferId);
+  assertEquals(await transfers(d), [newId]);
+  const again = await ops({ action: "link", ids: [b, d] });
+  assertEquals(await transfers(a, c), [null, null]);
+  assertEquals(
+    (await list("kind=transfer")).transactions.map((t: any) => t.id).sort(),
+    [b, d].sort(),
+  );
+  await ops(...again.inverse);
+  assertEquals(await transfers(a, b, c, d), [
+    newId,
+    transferId,
+    transferId,
+    newId,
+  ]);
+  await ops(...relink.inverse);
+  assertEquals((await list()).transactions.filter((t: any) => t.id !== d), before);
+});
+
+Deno.test("suggests transfers between accounts", async () => {
+  const { call, s, f, add, ops } = await accountsFamily();
+  const [out1, in1, out2, in2] = await add(
+    { date: "2026-06-01", amountCents: -20000, accountId: "checking" },
+    { date: "2026-06-03", amountCents: 20000, accountId: "savings" },
+    { date: "2026-06-02", amountCents: -20000, accountId: "checking" },
+    { date: "2026-06-02", amountCents: 20000, accountId: "savings" },
+    { date: "2026-06-20", amountCents: -7000, accountId: "checking" },
+    { date: "2026-06-25", amountCents: 7000, accountId: "savings" }, // 5 days: too far
+    { date: "2026-06-10", amountCents: -500, accountId: "checking" },
+    { date: "2026-06-10", amountCents: 500, accountId: "checking" }, // same account
+    { date: "2026-06-11", amountCents: -800 },
+    { date: "2026-06-11", amountCents: 800 }, // both without an account
+  );
+  const res = await call("GET", `/families/${s.readId}/finance/transfers/suggestions`);
+  assertEquals(res.status, 200);
+  // Closest days first: out2 and in2 on the same day, then out1 with in1. Newest first.
+  assertEquals(res.data.pairs.map((p: any) => [p.out.id, p.in.id]), [[out1, in1], [out2, in2]]);
+  assertEquals(res.data.pairs[0].in.accountId, "savings");
+  const ranged = await call("GET", `${f}/transfers/suggestions?from=2026-06-02&to=2026-06-30`);
+  assertEquals(ranged.data.pairs.map((p: any) => p.out.id), [out2]);
+  assertEquals((await call("GET", `${f}/transfers/suggestions?from=x`)).status, 400);
+  // Grouped transactions aren't suggested again.
+  await ops({ action: "link", ids: [out2, in2] });
+  const after = await call("GET", `${f}/transfers/suggestions`);
+  assertEquals(after.data.pairs.map((p: any) => p.out.id), [out1]);
+});
+
+Deno.test("auto-combines transfers, and the inverse splits them again", async () => {
+  const { call, s, f, add, ops, list } = await accountsFamily();
+  await add(
+    { date: "2026-06-01", amountCents: -20000, accountId: "checking" },
+    { date: "2026-06-02", amountCents: 20000, accountId: "savings" },
+    { date: "2026-07-01", amountCents: -3000, accountId: "savings" },
+    { date: "2026-07-01", amountCents: 3000, accountId: "checking" },
+    { date: "2026-08-01", amountCents: -100, accountId: "savings" },
+    { date: "2026-08-01", amountCents: 100, accountId: "checking" },
+  );
+  assertEquals(
+    (await call("POST", `/families/${s.readId}/finance/transfers/auto`, {})).status,
+    403,
+  );
+  assertEquals((await call("POST", `${f}/transfers/auto`, { from: "nope" })).status, 400);
+  const res = await call("POST", `${f}/transfers/auto`, { from: "2026-06-01", to: "2026-07-31" });
+  assertEquals(res.status, 200);
+  assertEquals([res.data.ok, res.data.linked, res.data.changed], [true, 2, 4]);
+  assertEquals((await list("kind=transfer")).total, 4);
+  assertEquals([(await list()).incomeCents, (await list()).expenseCents], [100, 100]);
+  const groups = new Set((await list("kind=transfer")).transactions.map((t: any) => t.transferId));
+  assertEquals(groups.size, 2);
+  await ops(...res.data.inverse);
+  assertEquals((await list("kind=transfer")).total, 0);
+  // Without a range: the whole history.
+  assertEquals((await call("POST", `${f}/transfers/auto`, {})).data.linked, 3);
+  assertEquals((await call("POST", `${f}/transfers/auto`, {})).data, {
+    ok: true,
+    changed: 0,
+    added: [],
+    inverse: [],
+    linked: 0,
+  });
+});
+
+Deno.test("imports a statement into an account", async () => {
+  const { call, f, list } = await accountsFamily();
+  const rows = [{ date: "2026-05-02", amountCents: -350, payee: "Café", description: "Coffee" }];
+  assertEquals((await call("POST", `${f}/import`, { rows, accountId: "nope" })).status, 404);
+  const dry = await call("POST", `${f}/import`, { rows, dryRun: true, accountId: "Checking" });
+  assertEquals([dry.data.added, dry.data.duplicates, dry.data.transfers], [0, [], 0]);
+  assertEquals((await list()).total, 0);
+  const first = await call("POST", `${f}/import`, { rows, accountId: "checking" });
+  assertEquals(first.data.added, 1);
+  assertEquals((await list()).transactions[0].accountId, "checking");
+  // The same booking on another account's statement isn't a duplicate…
+  const other = await call("POST", `${f}/import`, { rows, accountId: "savings" });
+  assertEquals([other.data.added, other.data.duplicates], [1, []]);
+  // …but on the same account's statement it is, and without an account the hash is as before.
+  const again = await call("POST", `${f}/import`, { rows, accountId: "checking", dryRun: true });
+  assertEquals(again.data.duplicates, [0]);
+  const plain = await call("POST", `${f}/import`, { rows });
+  assertEquals(plain.data.added, 1);
+  assertEquals((await call("POST", `${f}/import`, { rows })).data.duplicates, [0]);
+  assertEquals((await list("account=none")).total, 1);
+});
+
+Deno.test("an import can combine transfers automatically", async () => {
+  const { call, f, add, list } = await accountsFamily();
+  const [out] = await add(
+    { date: "2026-05-01", amountCents: -20000, payee: "To savings", accountId: "checking" },
+    // An older pair that isn't combined: not touched by the import.
+    { date: "2026-04-01", amountCents: -5000, accountId: "checking" },
+    { date: "2026-04-01", amountCents: 5000, accountId: "savings" },
+  );
+  const rows = [
+    { date: "2026-05-03", amountCents: 20000, payee: "From checking" },
+    { date: "2026-05-04", amountCents: -999, payee: "Bank fee" },
+  ];
+  const body = { rows, accountId: "savings", autoTransfers: true };
+  const dry = await call("POST", `${f}/import`, { ...body, dryRun: true });
+  assertEquals([dry.data.added, dry.data.transfers], [0, 1]);
+  assertEquals((await list()).total, 3);
+  assertEquals((await list("kind=transfer")).total, 0);
+
+  // Without the flag nothing is linked.
+  const without = await call("POST", `${f}/import`, { rows: [rows[1]], accountId: "savings" });
+  assertEquals(without.data.transfers, 0);
+  assertEquals((await list("kind=transfer")).total, 0);
+
+  const res = await call("POST", `${f}/import`, body);
+  assertEquals([res.data.added, res.data.duplicates, res.data.transfers], [1, [1], 1]);
+  const legs = (await list("kind=transfer")).transactions;
+  assertEquals(legs.map((t: any) => t.id).sort(), [out, res.data.ids[0]].sort());
+  assertEquals(legs[0].transferId, legs[1].transferId);
+  // Undoing the import (deleting its rows) leaves the other leg alone again.
+  await call("POST", `${f}/transactions`, { action: "delete", ids: res.data.ids });
+  assertEquals((await list("kind=transfer")).total, 0);
+});
+
+Deno.test("exports, imports and clones accounts and transfers", async () => {
+  const { call, s, add, ops } = await accountsFamily();
+  const [a, b] = await add(
+    { date: "2026-03-01", amountCents: -500, accountId: "checking" },
+    { date: "2026-03-01", amountCents: 500, accountId: "savings" },
+  );
+  await ops({ action: "link", ids: [a, b] });
+  const file = (await call("GET", `/families/${s.id}/export`)).data;
+  assertEquals(file.finance.accounts.map((x: any) => [x.id, x.openingCents]), [
+    ["checking", 1000],
+    ["savings", 0],
+  ]);
+  assert(file.finance.transactions.every((t: any) => t.transferId && t.accountId));
+
+  const target = (await call("POST", "/families", {})).data.family;
+  const t = `/families/${target.id}/finance`;
+  assertEquals((await call("POST", `/families/${target.id}/import`, file)).status, 200);
+  assertEquals((await call("GET", t)).data.accounts.map((x: any) => x.balanceCents), [500, 500]);
+  const imported = (await call("GET", `${t}/transactions?kind=transfer`)).data;
+  assertEquals([imported.total, imported.incomeCents, imported.expenseCents], [2, 0, 0]);
+
+  // Files from before accounts still import.
+  const old = {
+    ...file,
+    finance: {
+      ...file.finance,
+      accounts: undefined,
+      transactions: file.finance.transactions.map(
+        ({ accountId: _, transferId: __, ...x }: any) => x,
+      ),
+    },
+  };
+  assertEquals((await call("POST", `/families/${target.id}/import`, old)).status, 200);
+  assertEquals((await call("GET", t)).data.accounts, []);
+  assertEquals((await call("GET", `${t}/transactions`)).data.incomeCents, 500);
+  // A transaction with an unknown account is refused.
+  const bad = { ...file, finance: { ...file.finance, accounts: [] } };
+  assertEquals((await call("POST", `/families/${target.id}/import`, bad)).status, 400);
+
+  // Clones copy the accounts and the transfers (with their own transfer id).
+  const copy = (await call("POST", `/families/${s.readId}/clone`, {})).data.family;
+  const c = `/families/${copy.id}/finance`;
+  assertEquals((await call("GET", c)).data.accounts.map((x: any) => x.id), [
+    "checking",
+    "savings",
+  ]);
+  const legs = (await call("GET", `${c}/transactions?kind=transfer`)).data.transactions;
+  assertEquals(legs.length, 2);
+  assertEquals(legs[0].transferId, legs[1].transferId);
+  assert(legs[0].transferId !== file.finance.transactions[0].transferId);
+});
+
+Deno.test("a memory store snapshot keeps accounts and transfers", async () => {
+  const { store, s, f, add, ops } = await accountsFamily();
+  const [a, b] = await add(
+    { date: "2026-03-01", amountCents: -500, accountId: "checking" },
+    { date: "2026-03-01", amountCents: 500, accountId: "savings" },
+  );
+  await ops({ action: "link", ids: [a, b] });
+  const restored = new MemoryStore();
+  restored.restore(JSON.parse(JSON.stringify(store.snapshot())));
+  const handler = createHandler(restored);
+  const get = async (path: string) => await (await handler(new Request(BASE + path))).json();
+  assertEquals((await get(f)).accounts.map((x: any) => x.balanceCents), [500, 500]);
+  assertEquals((await get(`${f}/transactions?kind=transfer`)).total, 2);
+  // Snapshots from before accounts have neither.
+  const old = store.snapshot().map(({ accounts: _, ...item }) => ({
+    ...item,
+    transactions: item.transactions?.map(({ account_id: _, transfer_id: __, ...t }) => t),
+  }));
+  const older = new MemoryStore();
+  older.restore(JSON.parse(JSON.stringify(old)));
+  const [t] = await older.getTransactions(s.id, [a]);
+  assertEquals([t.account_id, t.transfer_id], [null, null]);
+});
+
+Deno.test("the AI tools know accounts and transfers", async () => {
+  const { store, s, add, ops } = await accountsFamily();
+  const [a, b] = await add(
+    { date: "2026-03-01", amountCents: -500, accountId: "checking" },
+    { date: "2026-03-02", amountCents: 500, accountId: "savings" },
+    { date: "2026-03-03", amountCents: -42, accountId: "checking" },
+    { date: "2026-04-01", amountCents: -700, accountId: "checking" },
+    { date: "2026-04-01", amountCents: 700, accountId: "savings" },
+  );
+  const ctx = { lang: "en" as const, store, familyId: s.id, net: {} as any, search: null };
+  const allowed = new Set(Object.keys(TOOLS));
+  const run = async (name: string, args: unknown) =>
+    await runTool(name, JSON.stringify(args), ctx, allowed);
+
+  await ops({ action: "link", ids: [a, b] });
+  const listed = await run("list_transactions", { account: "Checking", kind: "expense" });
+  assertEquals((listed.result as any).transactions.map((t: any) => t.amountCents), [-700, -42]);
+  const transfers = await run("list_transactions", { kind: "transfer" });
+  assertEquals((transfers.result as any).total, 2);
+  const summary = await run("finance_summary", { from: "2026-03-01", to: "2026-03-31" });
+  assertEquals((summary.result as any).expenseCents, 42);
+  assertEquals((summary.result as any).accounts.map((x: any) => x.balanceCents), [
+    1000 - 500 - 42 - 700,
+    1200,
+  ]);
+
+  const combined = await run("combine_transfers", { from: "2026-04-01", to: "2026-04-30" });
+  assertEquals((combined.result as any).linked, 1);
+  assertEquals(combined.change?.summary, "1 transfer combined");
+  const undo = combined.change!.undo[0];
+  await ops(...(undo.body as any).ops);
+  assertEquals((await run("list_transactions", { kind: "transfer" }) as any).result.total, 2);
+
+  const unlinked = await run("change_transactions", { ops: [{ action: "unlink", id: a }] });
+  assertEquals((unlinked.result as any).changed, 2);
+  assertEquals((await run("list_transactions", { kind: "transfer" }) as any).result.total, 0);
 });

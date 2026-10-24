@@ -52,6 +52,17 @@ export interface CategoryRow {
   position: number;
 }
 
+/** A finance account (Konto), e.g. the checking account. */
+export interface AccountRow {
+  family_id: string;
+  id: string; // unique within the family
+  name: string;
+  color: string;
+  icon: string; // an emoji, or ""
+  opening_cents: number; // the balance before the first transaction
+  position: number;
+}
+
 export interface TransactionRow {
   family_id: string;
   id: string; // uuid
@@ -63,6 +74,9 @@ export interface TransactionRow {
   note: string;
   /** Set for imported rows, so the same statement isn't imported twice. */
   import_hash: string | null;
+  account_id: string | null;
+  /** Transactions sharing one are the legs of a transfer between the family's accounts. */
+  transfer_id: string | null;
   created_at: string;
 }
 
@@ -90,6 +104,7 @@ export interface AiSettingsRow {
 /** Everything of the finances, for an import that replaces them. */
 export interface FinanceContents {
   categories: CategoryRow[];
+  accounts: AccountRow[];
   transactions: TransactionRow[];
   currency: string;
 }
@@ -131,9 +146,18 @@ export interface Store {
   upsertCategories(rows: CategoryRow[]): Promise<void>;
   /** Deletes the category; its transactions become uncategorized. */
   deleteCategory(familyId: string, id: string): Promise<void>;
+  /** Accounts ordered by position. */
+  listAccounts(familyId: string): Promise<AccountRow[]>;
+  upsertAccounts(rows: AccountRow[]): Promise<void>;
+  /** Deletes the account; its transactions keep their rows without an account. */
+  deleteAccount(familyId: string, id: string): Promise<void>;
+  /** Sum of all transactions (all time) per account id, for the balances. */
+  accountTotals(familyId: string): Promise<Map<string, number>>;
   /** Transactions in the range (all without one), newest first. */
   listTransactions(familyId: string, from?: string, to?: string): Promise<TransactionRow[]>;
   getTransactions(familyId: string, ids: string[]): Promise<TransactionRow[]>;
+  /** All legs of the given transfer groups. */
+  listTransfers(familyId: string, transferIds: string[]): Promise<TransactionRow[]>;
   /** Inserts or replaces transactions (by id). */
   upsertTransactions(rows: TransactionRow[]): Promise<void>;
   deleteTransactions(familyId: string, ids: string[]): Promise<void>;
@@ -151,6 +175,7 @@ export class MemoryStore implements Store {
   notes = new Map<string, Map<string, NoteRow>>(); // familyId -> day -> note
   financeSettings = new Map<string, FinanceSettingsRow>();
   categories = new Map<string, CategoryRow[]>();
+  accounts = new Map<string, AccountRow[]>();
   transactions = new Map<string, Map<string, TransactionRow>>(); // familyId -> id -> row
   aiSettings = new Map<string, AiSettingsRow>();
 
@@ -265,6 +290,7 @@ export class MemoryStore implements Store {
     this.notes.set(familyId, new Map(notes.map((n) => [n.day, { ...n }])));
     if (finance) {
       this.categories.set(familyId, finance.categories.map((c) => ({ ...c })));
+      this.accounts.set(familyId, finance.accounts.map((a) => ({ ...a })));
       this.transactions.set(
         familyId,
         new Map(finance.transactions.map((t) => [t.id, { ...t }])),
@@ -314,6 +340,39 @@ export class MemoryStore implements Store {
     return Promise.resolve();
   }
 
+  listAccounts(familyId: string) {
+    const list = (this.accounts.get(familyId) ?? []).map((a) => ({ ...a }));
+    return Promise.resolve(list.sort((a, b) => a.position - b.position));
+  }
+
+  upsertAccounts(rows: AccountRow[]) {
+    for (const row of rows) {
+      const list = this.accounts.get(row.family_id) ?? [];
+      const i = list.findIndex((a) => a.id === row.id);
+      if (i >= 0) list[i] = { ...row };
+      else list.push({ ...row });
+      this.accounts.set(row.family_id, list);
+    }
+    return Promise.resolve();
+  }
+
+  deleteAccount(familyId: string, id: string) {
+    const list = this.accounts.get(familyId) ?? [];
+    this.accounts.set(familyId, list.filter((a) => a.id !== id));
+    for (const t of this.transactions.get(familyId)?.values() ?? []) {
+      if (t.account_id === id) t.account_id = null;
+    }
+    return Promise.resolve();
+  }
+
+  accountTotals(familyId: string) {
+    const totals = new Map<string, number>();
+    for (const t of this.transactions.get(familyId)?.values() ?? []) {
+      if (t.account_id) totals.set(t.account_id, (totals.get(t.account_id) ?? 0) + t.amount_cents);
+    }
+    return Promise.resolve(totals);
+  }
+
   listTransactions(familyId: string, from?: string, to?: string) {
     const rows = [...(this.transactions.get(familyId)?.values() ?? [])]
       .filter((t) => !(from && t.day < from) && !(to && t.day > to))
@@ -328,6 +387,14 @@ export class MemoryStore implements Store {
       ids.map((id) => map?.get(id)).filter((t): t is TransactionRow => !!t).map((t) => ({
         ...t,
       })),
+    );
+  }
+
+  listTransfers(familyId: string, transferIds: string[]) {
+    const wanted = new Set(transferIds);
+    return Promise.resolve(
+      [...(this.transactions.get(familyId)?.values() ?? [])]
+        .filter((t) => t.transfer_id && wanted.has(t.transfer_id)).map((t) => ({ ...t })),
     );
   }
 
@@ -374,6 +441,7 @@ export class MemoryStore implements Store {
       notes: [...(this.notes.get(family.id)?.values() ?? [])],
       financeSettings: this.financeSettings.get(family.id) ?? null,
       categories: this.categories.get(family.id) ?? [],
+      accounts: this.accounts.get(family.id) ?? [],
       transactions: [...(this.transactions.get(family.id)?.values() ?? [])],
       aiSettings: this.aiSettings.get(family.id) ?? null,
     }));
@@ -393,9 +461,17 @@ export class MemoryStore implements Store {
       this.notes.set(family.id, new Map(notes.map((n) => [n.day, { ...n }])));
       if (item.financeSettings) this.financeSettings.set(family.id, item.financeSettings);
       this.categories.set(family.id, (item.categories ?? []).map((c) => ({ ...c })));
+      this.accounts.set(family.id, (item.accounts ?? []).map((a) => ({ ...a })));
+      // Transactions from before accounts have neither an account nor a transfer.
       this.transactions.set(
         family.id,
-        new Map((item.transactions ?? []).map((t) => [t.id, { ...t }])),
+        new Map(
+          (item.transactions ?? []).map((t) => [t.id, {
+            ...t,
+            account_id: t.account_id ?? null,
+            transfer_id: t.transfer_id ?? null,
+          }]),
+        ),
       );
       if (item.aiSettings) this.aiSettings.set(family.id, item.aiSettings);
     }
@@ -410,6 +486,7 @@ export type MemorySnapshot = {
   // Snapshots from before finances have none of these.
   financeSettings?: FinanceSettingsRow | null;
   categories?: CategoryRow[];
+  accounts?: AccountRow[]; // not in snapshots from before accounts
   transactions?: TransactionRow[];
   aiSettings?: AiSettingsRow | null;
 }[];

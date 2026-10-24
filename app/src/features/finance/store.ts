@@ -1,15 +1,18 @@
-// The open family's finances: categories and settings, the transactions of the chosen period
-// (filtered), and the summary. Changes go straight to the API; each one can be undone from its
-// toast with the inverse ops the API returns.
+// The open family's finances: accounts, categories and settings, the transactions of the chosen
+// period (filtered), and the summary. Changes go straight to the API; each one can be undone from
+// its toast with the inverse ops the API returns. Account balances come with the overview, so it
+// reloads after every change that can move money.
 
 import { toast } from "sonner";
 import {
+  type Account,
   api,
   type Category,
   type FinanceOverview,
   type FinanceSummary,
   type TransactionList,
   type TransactionOp,
+  type TransferPair,
 } from "@/lib/api";
 import type { CsvMapping } from "@/lib/csv";
 import { getLang, t } from "@/lib/i18n";
@@ -23,7 +26,8 @@ export interface Period {
 export interface Filter {
   q: string;
   category: string; // "" = all, "none" = uncategorized, else a category id
-  kind: "" | "income" | "expense";
+  account: string; // "" = all, "none" = without an account, else an account id
+  kind: "" | "income" | "expense" | "transfer";
 }
 
 const PAGE = 200;
@@ -43,8 +47,10 @@ export class FinanceStore {
   loadingList = false;
   error: string | null = null;
   period: Period;
-  filter: Filter = { q: "", category: "", kind: "" };
+  filter: Filter = { q: "", category: "", account: "", kind: "" };
   limit = PAGE;
+  /** Transactions ticked in the list, to combine them into a transfer. */
+  selected = new Set<string>();
   rev = 0;
   private listeners = new Set<() => void>();
   private opened = false;
@@ -78,6 +84,14 @@ export class FinanceStore {
 
   categoryById(id: string | null) {
     return id ? this.categories.find((c) => c.id === id) : undefined;
+  }
+
+  get accounts(): Account[] {
+    return this.overview?.accounts ?? [];
+  }
+
+  accountById(id: string | null) {
+    return id ? this.accounts.find((a) => a.id === id) : undefined;
   }
 
   /** Loads the categories and the first page once; later calls do nothing. */
@@ -126,12 +140,16 @@ export class FinanceStore {
     if (to) query.to = to;
     if (this.filter.q.trim()) query.q = this.filter.q.trim();
     if (this.filter.category) query.category = this.filter.category;
+    if (this.filter.account) query.account = this.filter.account;
     if (this.filter.kind) query.kind = this.filter.kind;
     try {
       const list = await api.transactions(this.token, query);
       if (seq !== this.listSeq) return; // a newer request is on its way
       this.list = list;
       this.error = null;
+      // Keep only what is still shown ticked (e.g. not a row that was just deleted).
+      const ids = new Set(list.transactions.map((tx) => tx.id));
+      this.selected = new Set([...this.selected].filter((id) => ids.has(id)));
     } catch (err) {
       if (seq !== this.listSeq) return;
       this.error = (err as Error).message;
@@ -161,14 +179,22 @@ export class FinanceStore {
     if (this.summary) this.loadSummary();
   }
 
+  /** After transactions changed: what is shown and the account balances. */
+  private changed() {
+    if (!this.opened) return;
+    this.reload();
+    this.loadOverview();
+  }
+
   /** Reloads what is shown, e.g. after the assistant changed transactions. */
   refresh() {
-    this.reload();
+    this.changed();
   }
 
   setPeriod(period: Partial<Period>) {
     this.period = { ...this.period, ...period };
     this.limit = PAGE;
+    this.selected = new Set();
     this.reload();
   }
 
@@ -185,7 +211,22 @@ export class FinanceStore {
   setFilter(filter: Partial<Filter>) {
     this.filter = { ...this.filter, ...filter };
     this.limit = PAGE;
+    this.selected = new Set();
     this.loadList();
+  }
+
+  toggleSelected(id: string, on: boolean) {
+    const next = new Set(this.selected);
+    if (on) next.add(id);
+    else next.delete(id);
+    this.selected = next;
+    this.emit();
+  }
+
+  clearSelection() {
+    if (!this.selected.size) return;
+    this.selected = new Set();
+    this.emit();
   }
 
   showMore() {
@@ -197,7 +238,7 @@ export class FinanceStore {
   async change(ops: TransactionOp[], message: string): Promise<string[] | null> {
     try {
       const res = await api.changeTransactions(this.token, ops);
-      this.reload();
+      this.changed();
       toast(message, {
         action: {
           label: t("finance.undo"),
@@ -214,18 +255,77 @@ export class FinanceStore {
   private async undo(inverse: TransactionOp[]) {
     try {
       await api.changeTransactions(this.token, inverse);
-      this.reload();
+      this.changed();
       toast(t("finance.undone"));
     } catch (err) {
       toast(t("finance.save_failed", { msg: (err as Error).message }));
     }
   }
 
-  async importRows(rows: Parameters<typeof api.importTransactions>[1]) {
-    const res = await api.importTransactions(this.token, rows);
-    this.reload();
+  // ------------------------------------------------------------- transfers
+
+  /** Combines transactions into one transfer: they count once, as their sum. */
+  async link(ids: string[]) {
+    const ok = await this.change([{ action: "link", ids }], t("finance.linked"));
+    if (ok) this.clearSelection();
+    return ok;
+  }
+
+  /** Combines each pair into a transfer of its own, in one undoable step. */
+  linkPairs(pairs: string[][]) {
+    return this.change(
+      pairs.map((ids) => ({ action: "link", ids })),
+      t("finance.linked_pairs", { n: pairs.length }),
+    );
+  }
+
+  /** Splits the transfer a transaction belongs to back into normal transactions. */
+  unlink(id: string) {
+    return this.change([{ action: "unlink", id }], t("finance.unlinked"));
+  }
+
+  /** Combines every likely transfer of the period at once; the toast can undo it. */
+  async autoCombineTransfers() {
+    try {
+      const res = await api.autoTransfers(this.token, this.range());
+      if (!res.linked) {
+        toast(t("finance.no_transfers_found"));
+        return res;
+      }
+      this.changed();
+      toast(t("finance.linked_pairs", { n: res.linked }), {
+        action: {
+          label: t("finance.undo"),
+          onClick: () => this.undo(res.inverse),
+        },
+      });
+      return res;
+    } catch (err) {
+      toast(t("finance.save_failed", { msg: (err as Error).message }));
+      return null;
+    }
+  }
+
+  /** Transactions of the period that look like transfers between two accounts. */
+  async suggestions(): Promise<TransferPair[]> {
+    const { from, to } = this.range();
+    const query: Record<string, string> = {};
+    if (from) query.from = from;
+    if (to) query.to = to;
+    return (await api.transferSuggestions(this.token, query)).pairs;
+  }
+
+  async importRows(
+    rows: Parameters<typeof api.importTransactions>[1],
+    accountId?: string,
+    autoTransfers = false,
+  ) {
+    const res = await api.importTransactions(this.token, rows, false, accountId, autoTransfers);
+    this.changed();
     if (res.ids.length) {
-      toast(t("finance.imported", { n: res.added, skipped: res.duplicates.length }), {
+      const imported = t("finance.imported", { n: res.added, skipped: res.duplicates.length });
+      const linked = res.transfers ? t("finance.imported_transfers", { n: res.transfers }) : "";
+      toast(imported + linked, {
         action: {
           label: t("finance.undo"),
           onClick: () => this.undo([{ action: "delete", ids: res.ids }]),
@@ -282,6 +382,44 @@ export class FinanceStore {
   async deleteCategory(id: string) {
     await this.withOverview(() => api.deleteCategory(this.token, id));
     this.reload();
+  }
+
+  // ------------------------------------------------------------- accounts
+
+  addAccount(a: Parameters<typeof api.addAccount>[1]) {
+    return this.withOverview(() => api.addAccount(this.token, a));
+  }
+
+  updateAccount(id: string, patch: Parameters<typeof api.updateAccount>[2]) {
+    // Show it right away; the reload corrects it (and the balance) if saving fails.
+    if (this.overview) {
+      this.overview = {
+        ...this.overview,
+        accounts: this.accounts.map((a) => (a.id === id ? { ...a, ...patch } : a)),
+      };
+      this.emit();
+    }
+    return this.withOverview(() => api.updateAccount(this.token, id, patch));
+  }
+
+  moveAccount(i: number, dir: -1 | 1) {
+    const list = [...this.accounts];
+    const j = i + dir;
+    [list[i], list[j]] = [list[j], list[i]];
+    if (this.overview) this.overview = { ...this.overview, accounts: list };
+    this.emit();
+    return this.withOverview(() =>
+      Promise.all([
+        api.updateAccount(this.token, list[i].id, { position: i }),
+        api.updateAccount(this.token, list[j].id, { position: j }),
+      ])
+    );
+  }
+
+  async deleteAccount(id: string) {
+    await this.withOverview(() => api.deleteAccount(this.token, id));
+    if (this.filter.account === id) this.setFilter({ account: "" });
+    else this.reload();
   }
 
   addDefaultCategories() {

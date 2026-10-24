@@ -40,6 +40,17 @@ export interface Category {
   position: number;
 }
 
+/** A bank account (Konto); its balance is the opening balance plus all its transactions. */
+export interface Account {
+  id: string;
+  name: string;
+  color: string;
+  icon: string;
+  openingCents: number;
+  position: number;
+  balanceCents: number;
+}
+
 export interface Transaction {
   id: string;
   date: string;
@@ -47,14 +58,24 @@ export interface Transaction {
   payee: string;
   description: string;
   categoryId: string | null;
+  accountId: string | null;
+  /** Set on the legs of a transfer (≥ 2 transactions that count once, as their sum). */
+  transferId: string | null;
   note: string;
   imported: boolean;
+}
+
+/** Two transactions that look like money moved between two of the family's accounts. */
+export interface TransferPair {
+  out: Transaction;
+  in: Transaction;
 }
 
 export interface FinanceOverview {
   currency: string;
   csvMappings: unknown[];
   categories: Category[];
+  accounts: Account[];
 }
 
 export interface TransactionList {
@@ -79,7 +100,9 @@ export interface FinanceSummary {
 }
 
 /** An op for POST /finance/transactions; the response's `inverse` ops undo a request. */
-export type TransactionOp = Record<string, unknown> & { action: "add" | "update" | "delete" };
+export type TransactionOp = Record<string, unknown> & {
+  action: "add" | "update" | "delete" | "link" | "unlink";
+};
 
 export interface TransactionResult {
   ok: true;
@@ -237,6 +260,17 @@ export const api = {
     request<unknown>("DELETE", `${fam(token)}/finance/categories/${enc(id)}`),
   defaultCategories: (token: string, lang: string) =>
     request<Category[]>("POST", `${fam(token)}/finance/categories/defaults`, { lang }),
+  addAccount: (
+    token: string,
+    a: { name: string; color: string; icon?: string; openingCents?: number },
+  ) => request<Account>("POST", `${fam(token)}/finance/accounts`, a),
+  updateAccount: (
+    token: string,
+    id: string,
+    patch: Partial<Omit<Account, "id" | "balanceCents">>,
+  ) => request<Account>("PATCH", `${fam(token)}/finance/accounts/${enc(id)}`, patch),
+  deleteAccount: (token: string, id: string) =>
+    request<{ deleted: string }>("DELETE", `${fam(token)}/finance/accounts/${enc(id)}`),
   transactions: (token: string, query: Record<string, string>) =>
     request<TransactionList>(
       "GET",
@@ -248,11 +282,30 @@ export const api = {
     token: string,
     rows: { date: string; amountCents: number; payee: string; description: string }[],
     dryRun = false,
+    accountId?: string,
+    autoTransfers = false,
   ) =>
-    request<{ added: number; duplicates: number[]; ids: string[] }>(
+    request<{ added: number; duplicates: number[]; ids: string[]; transfers?: number }>(
       "POST",
       `${fam(token)}/finance/import`,
-      { rows, dryRun },
+      {
+        rows,
+        dryRun,
+        ...(accountId ? { accountId } : {}),
+        ...(autoTransfers ? { autoTransfers } : {}),
+      },
+    ),
+  transferSuggestions: (token: string, query: Record<string, string>) =>
+    request<{ pairs: TransferPair[] }>(
+      "GET",
+      `${fam(token)}/finance/transfers/suggestions?${new URLSearchParams(query)}`,
+    ),
+  /** Combines every likely transfer in the range (all time without one) into its own group. */
+  autoTransfers: (token: string, range: { from?: string; to?: string }) =>
+    request<TransactionResult & { linked: number }>(
+      "POST",
+      `${fam(token)}/finance/transfers/auto`,
+      range,
     ),
   financeSummary: (token: string, query: Record<string, string>) =>
     request<FinanceSummary>("GET", `${fam(token)}/finance/summary?${new URLSearchParams(query)}`),

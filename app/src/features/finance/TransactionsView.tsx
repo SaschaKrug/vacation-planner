@@ -1,6 +1,17 @@
-import { Download, Pencil, Search, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import {
+  ArrowLeftRight,
+  Download,
+  Link,
+  Pencil,
+  Search,
+  Trash2,
+  Unlink,
+  WandSparkles,
+  X,
+} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -10,10 +21,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useFinance, usePlanner } from "@/features/family/context";
-import type { Category, Transaction } from "@/lib/api";
+import type { Account, Category, Transaction } from "@/lib/api";
 import { getLang, t } from "@/lib/i18n";
 import { formatMoney } from "@/lib/money";
 import { cn } from "@/lib/utils";
+import type { Filter } from "./store";
+import { TransferDialog } from "./TransferDialog";
 
 export function CategoryLabel({ category }: { category?: Category }) {
   if (!category) return <span className="text-muted-foreground">{t("finance.uncategorized")}</span>;
@@ -28,13 +41,27 @@ export function CategoryLabel({ category }: { category?: Category }) {
   );
 }
 
-/** The filtered transactions of the period, newest first; categories can be set inline. */
+/** A small pill with the account's color, icon and name. */
+export function AccountChip({ account }: { account: Account }) {
+  return (
+    <span className="inline-flex max-w-40 shrink-0 items-center gap-1 rounded-full border px-1.5 py-px">
+      <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: account.color }} />
+      <span className="truncate">{account.icon ? `${account.icon} ` : ""}{account.name}</span>
+    </span>
+  );
+}
+
+/** The filtered transactions of the period, newest first; categories can be set inline. In
+ *  edit mode rows can be ticked and combined into a transfer. */
 export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void }) {
   const finance = useFinance();
   const planner = usePlanner();
   const [q, setQ] = useState(finance.filter.q);
+  const [finding, setFinding] = useState(false);
+  const [combining, setCombining] = useState(false);
   const lang = getLang();
   const list = finance.list;
+  const accounts = finance.accounts;
 
   // Search as you type, a moment after the last key.
   useEffect(() => {
@@ -43,8 +70,41 @@ export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void
     return () => clearTimeout(timer);
   }, [q, finance]);
 
+  // The legs of each transfer that are on this page, to tell where the money went.
+  const legs = useMemo(() => {
+    const byGroup = new Map<string, Transaction[]>();
+    for (const tx of list?.transactions ?? []) {
+      if (tx.transferId) byGroup.set(tx.transferId, [...byGroup.get(tx.transferId) ?? [], tx]);
+    }
+    return byGroup;
+  }, [list]);
+
+  const accountName = (tx: Transaction) =>
+    finance.accountById(tx.accountId)?.name ?? t("finance.no_account");
+
+  /** "Transfer · A → B"; just the leg's own side when its partner isn't loaded. */
+  function transferText(tx: Transaction) {
+    const group = legs.get(tx.transferId!) ?? [tx];
+    const from = group.find((l) => l.amountCents < 0);
+    const to = group.find((l) => l.amountCents > 0);
+    const route = from && to
+      ? `${accountName(from)} → ${accountName(to)}`
+      : tx.amountCents < 0
+      ? `${accountName(tx)} →`
+      : `→ ${accountName(tx)}`;
+    return `${t("finance.transfer")} · ${route}`;
+  }
+
   const remove = (tx: Transaction) =>
     finance.change([{ action: "delete", id: tx.id }], t("finance.deleted"));
+
+  async function autoCombine() {
+    setCombining(true);
+    await finance.autoCombineTransfers();
+    setCombining(false);
+  }
+
+  const selected = list?.transactions.filter((tx) => finance.selected.has(tx.id)) ?? [];
 
   return (
     <div className="rounded-xl border bg-card">
@@ -59,6 +119,23 @@ export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void
             onChange={(e) => setQ(e.target.value)}
           />
         </div>
+        {accounts.length > 0 && (
+          <Select
+            value={finance.filter.account || "all"}
+            onValueChange={(v) => finance.setFilter({ account: v === "all" ? "" : v })}
+          >
+            <SelectTrigger className="w-40" aria-label={t("finance.account")}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent position="popper" className="max-h-80">
+              <SelectItem value="all">{t("finance.all_accounts")}</SelectItem>
+              <SelectItem value="none">{t("finance.no_account")}</SelectItem>
+              {accounts.map((a) => (
+                <SelectItem key={a.id} value={a.id}>{a.icon} {a.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
         <Select
           value={finance.filter.category || "all"}
           onValueChange={(v) => finance.setFilter({ category: v === "all" ? "" : v })}
@@ -76,8 +153,7 @@ export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void
         </Select>
         <Select
           value={finance.filter.kind || "all"}
-          onValueChange={(v) =>
-            finance.setFilter({ kind: v === "all" ? "" : v as "income" | "expense" })}
+          onValueChange={(v) => finance.setFilter({ kind: v === "all" ? "" : v as Filter["kind"] })}
         >
           <SelectTrigger className="w-36" aria-label={t("finance.kind")}>
             <SelectValue />
@@ -86,8 +162,29 @@ export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void
             <SelectItem value="all">{t("finance.all_kinds")}</SelectItem>
             <SelectItem value="income">{t("finance.income")}</SelectItem>
             <SelectItem value="expense">{t("finance.expenses")}</SelectItem>
+            <SelectItem value="transfer">{t("finance.transfers")}</SelectItem>
           </SelectContent>
         </Select>
+        {onEdit && (
+          <>
+            <Button
+              variant="outline"
+              title={t("finance.find_transfers")}
+              onClick={() => setFinding(true)}
+            >
+              <ArrowLeftRight />{" "}
+              <span className="max-sm:sr-only">{t("finance.find_transfers")}</span>
+            </Button>
+            <Button
+              variant="outline"
+              title={t("finance.auto_combine_help")}
+              disabled={combining}
+              onClick={autoCombine}
+            >
+              <WandSparkles /> <span className="max-sm:sr-only">{t("finance.auto_combine")}</span>
+            </Button>
+          </>
+        )}
       </div>
       {finance.error && <p className="p-4 text-sm text-gap">{finance.error}</p>}
       {list && list.transactions.length === 0 && (
@@ -99,95 +196,146 @@ export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void
         className={cn("divide-y", finance.loadingList && "opacity-60")}
         aria-busy={finance.loadingList}
       >
-        {list?.transactions.map((tx) => (
-          <li
-            key={tx.id}
-            className="grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-1 px-3 py-2.5 sm:grid-cols-[6.5rem_1fr_12rem_8rem_auto]"
-          >
-            <time
-              className="text-xs text-muted-foreground tabular-nums sm:text-sm"
-              dateTime={tx.date}
+        {list?.transactions.map((tx) => {
+          const account = finance.accountById(tx.accountId);
+          return (
+            <li
+              key={tx.id}
+              className={cn(
+                "grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-1 px-3 py-2.5",
+                onEdit
+                  ? "sm:grid-cols-[8rem_1fr_12rem_8rem_auto]"
+                  : "sm:grid-cols-[6.5rem_1fr_12rem_8rem_auto]",
+                finance.selected.has(tx.id) && "bg-accent/50",
+              )}
             >
-              {new Intl.DateTimeFormat(lang, { day: "2-digit", month: "short", year: "numeric" })
-                .format(
-                  new Date(tx.date + "T00:00:00"),
-                )}
-            </time>
-            <div className="col-start-1 col-end-3 row-start-2 min-w-0 sm:col-auto sm:row-auto">
-              <div className="truncate font-medium">{tx.payee || tx.description || "—"}</div>
-              {tx.payee && tx.description && (
-                <div className="truncate text-xs text-muted-foreground">{tx.description}</div>
-              )}
-            </div>
-            <div className="col-start-1 col-end-3 row-start-3 min-w-0 text-sm sm:col-auto sm:row-auto">
-              {onEdit
-                ? (
-                  <Select
-                    value={tx.categoryId ?? "none"}
-                    onValueChange={(v) =>
-                      finance.change(
-                        [{ action: "update", id: tx.id, categoryId: v === "none" ? null : v }],
-                        t("finance.saved"),
-                      )}
-                  >
-                    <SelectTrigger
-                      size="sm"
-                      className="h-8 w-full border-transparent shadow-none hover:border-input"
-                      aria-label={t("finance.category")}
-                    >
-                      <CategoryLabel category={finance.categoryById(tx.categoryId)} />
-                    </SelectTrigger>
-                    <SelectContent position="popper" className="max-h-80">
-                      <SelectItem value="none">{t("finance.uncategorized")}</SelectItem>
-                      {finance.categories
-                        .filter((c) =>
-                          c.kind === "both" || (c.kind === "income") === tx.amountCents > 0
-                        )
-                        .map((c) => (
-                          <SelectItem key={c.id} value={c.id}>{c.icon} {c.name}</SelectItem>
-                        ))}
-                    </SelectContent>
-                  </Select>
-                )
-                : <CategoryLabel category={finance.categoryById(tx.categoryId)} />}
-            </div>
-            <div className="col-start-3 row-start-1 text-right font-semibold whitespace-nowrap tabular-nums sm:col-auto sm:row-auto">
-              {formatMoney(tx.amountCents, finance.currency, lang, { sign: tx.amountCents > 0 })}
-            </div>
-            <div className="col-start-3 row-span-2 row-start-2 flex justify-end gap-0.5 sm:col-auto sm:row-auto">
-              {tx.imported && (
-                <span className="self-center" title={t("finance.imported_row")}>
-                  <Download
-                    className="size-3.5 text-muted-foreground"
-                    aria-label={t("finance.imported_row")}
+              <div className="flex items-center gap-2.5">
+                {onEdit && (
+                  <Checkbox
+                    aria-label={t("finance.select")}
+                    checked={finance.selected.has(tx.id)}
+                    onCheckedChange={(v) => finance.toggleSelected(tx.id, !!v)}
                   />
-                </span>
-              )}
-              {onEdit && (
-                <>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-8"
-                    title={t("finance.edit")}
-                    onClick={() => onEdit(tx)}
-                  >
-                    <Pencil />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-8"
-                    title={t("finance.delete")}
-                    onClick={() => remove(tx)}
-                  >
-                    <Trash2 />
-                  </Button>
-                </>
-              )}
-            </div>
-          </li>
-        ))}
+                )}
+                <time
+                  className="text-xs text-muted-foreground tabular-nums sm:text-sm"
+                  dateTime={tx.date}
+                >
+                  {new Intl.DateTimeFormat(lang, {
+                    day: "2-digit",
+                    month: "short",
+                    year: "numeric",
+                  })
+                    .format(
+                      new Date(tx.date + "T00:00:00"),
+                    )}
+                </time>
+              </div>
+              <div className="col-start-1 col-end-3 row-start-2 min-w-0 sm:col-auto sm:row-auto">
+                <div className="truncate font-medium">{tx.payee || tx.description || "—"}</div>
+                {tx.transferId
+                  ? (
+                    <div className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+                      <Link className="size-3 shrink-0" aria-hidden />
+                      <span className="truncate">{transferText(tx)}</span>
+                    </div>
+                  )
+                  : (account || (tx.payee && tx.description)) && (
+                    <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                      {account && <AccountChip account={account} />}
+                      {tx.payee && tx.description && (
+                        <span className="truncate">{tx.description}</span>
+                      )}
+                    </div>
+                  )}
+              </div>
+              <div className="col-start-1 col-end-3 row-start-3 min-w-0 text-sm sm:col-auto sm:row-auto">
+                {onEdit
+                  ? (
+                    <Select
+                      value={tx.categoryId ?? "none"}
+                      onValueChange={(v) =>
+                        finance.change(
+                          [{ action: "update", id: tx.id, categoryId: v === "none" ? null : v }],
+                          t("finance.saved"),
+                        )}
+                    >
+                      <SelectTrigger
+                        size="sm"
+                        className="h-8 w-full border-transparent shadow-none hover:border-input"
+                        aria-label={t("finance.category")}
+                      >
+                        <CategoryLabel category={finance.categoryById(tx.categoryId)} />
+                      </SelectTrigger>
+                      <SelectContent position="popper" className="max-h-80">
+                        <SelectItem value="none">{t("finance.uncategorized")}</SelectItem>
+                        {finance.categories
+                          .filter((c) =>
+                            c.kind === "both" || (c.kind === "income") === tx.amountCents > 0
+                          )
+                          .map((c) => (
+                            <SelectItem key={c.id} value={c.id}>{c.icon} {c.name}</SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  )
+                  : <CategoryLabel category={finance.categoryById(tx.categoryId)} />}
+              </div>
+              <div
+                className={cn(
+                  "col-start-3 row-start-1 text-right font-semibold whitespace-nowrap tabular-nums sm:col-auto sm:row-auto",
+                  tx.transferId && "text-muted-foreground",
+                )}
+                title={tx.transferId ? t("finance.transfer_amount_hint") : undefined}
+              >
+                {formatMoney(tx.amountCents, finance.currency, lang, { sign: tx.amountCents > 0 })}
+              </div>
+              <div className="col-start-3 row-span-2 row-start-2 flex justify-end gap-0.5 sm:col-auto sm:row-auto">
+                {tx.imported && (
+                  <span className="self-center" title={t("finance.imported_row")}>
+                    <Download
+                      className="size-3.5 text-muted-foreground"
+                      aria-label={t("finance.imported_row")}
+                    />
+                  </span>
+                )}
+                {onEdit && (
+                  <>
+                    {tx.transferId && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-8"
+                        title={t("finance.unlink")}
+                        onClick={() => finance.unlink(tx.id)}
+                      >
+                        <Unlink />
+                      </Button>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-8"
+                      title={t("finance.edit")}
+                      onClick={() => onEdit(tx)}
+                    >
+                      <Pencil />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-8"
+                      title={t("finance.delete")}
+                      onClick={() => remove(tx)}
+                    >
+                      <Trash2 />
+                    </Button>
+                  </>
+                )}
+              </div>
+            </li>
+          );
+        })}
       </ul>
       {list && list.total > list.transactions.length && (
         <div className="border-t p-3 text-center">
@@ -196,6 +344,49 @@ export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void
           </Button>
         </div>
       )}
+      {onEdit && selected.length >= 2 && <SelectionBar selected={selected} />}
+      {finding && <TransferDialog onClose={() => setFinding(false)} />}
+    </div>
+  );
+}
+
+/** What the ticked rows add up to, and the button that combines them into a transfer. */
+function SelectionBar({ selected }: { selected: Transaction[] }) {
+  const finance = useFinance();
+  const lang = getLang();
+  const [busy, setBusy] = useState(false);
+  const net = selected.reduce((sum, tx) => sum + tx.amountCents, 0);
+  const money = (cents: number, sign = false) =>
+    formatMoney(cents, finance.currency, lang, { sign });
+
+  async function combine() {
+    setBusy(true);
+    await finance.link(selected.map((tx) => tx.id));
+    setBusy(false);
+  }
+
+  return (
+    <div className="sticky bottom-[calc(env(safe-area-inset-bottom)+0.75rem)] z-10 m-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border bg-popover p-3 text-sm shadow-lg">
+      <div className="min-w-0 flex-1 basis-56">
+        <div className="font-medium tabular-nums">
+          {t("finance.selected", { n: selected.length, net: money(net, true) })}
+        </div>
+        <div className="text-xs text-muted-foreground">
+          {net === 0
+            ? t("finance.combine_zero")
+            : t(net > 0 ? "finance.combine_income" : "finance.combine_expense", {
+              amount: money(Math.abs(net)),
+            })}
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <Button variant="ghost" size="sm" onClick={() => finance.clearSelection()}>
+          <X /> {t("finance.clear_selection")}
+        </Button>
+        <Button size="sm" disabled={busy} onClick={combine}>
+          <Link /> {t("finance.combine")}
+        </Button>
+      </div>
     </div>
   );
 }

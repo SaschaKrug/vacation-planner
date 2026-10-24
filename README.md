@@ -50,11 +50,20 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   Salary; edit them in *Settings* → *Finance*). Pick a month, a year or all time; search, filter
   by category (or *Uncategorized*) and by in / out; change a category right in the list. Every
   change can be undone from its message.
+- **Accounts:** bank accounts, cash or cards, each with an opening balance; a transaction can
+  belong to one. The balances show above the list (click one to see only its transactions).
+- **Transfers between your own accounts count as 0:** combine related transactions (tick them,
+  *Combine as transfer*) and they count once, by their sum: 500 out of one account and 500 into
+  another is nothing, 500 out and 480 in is a 20 expense. *Find transfers* suggests pairs (the
+  same amount out of one account and into another, at most 4 days apart); *Auto-combine*
+  combines them all at once.
 - **Import bank statements (CSV):** the import guesses the format (UTF-8 or Windows-1252,
   separator, lines before the table, which column is the date, amount or debit / credit,
   payee and description, German or English numbers and dates) and shows a preview to correct
   it. Rows that were imported before are skipped, so overlapping statements can be imported
-  again; identical rows on one day (two coffees) stay apart. The format is remembered per bank.
+  again; identical rows on one day (two coffees) stay apart. Pick the account the statement
+  belongs to; transfers to and from the family's other accounts can be combined right away.
+  The format, account and that choice are remembered per bank.
 - **Overview:** income, expenses and the balance, a chart per month and the spending (or
   income) per category, also as a table.
 - The view-only link shows the finances read-only; the legacy view link and the calendar feed
@@ -86,8 +95,8 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   Mac: Calendar → File → New Calendar Subscription → paste the feed URL → Location **iCloud**.
   The feed URL opens nothing but the feed, so it never exposes the edit or view link.
 - **Vacation:** the entry types of each year, and the calendar options of this device.
-- **Finance:** the currency, the categories (name, color, icon, income / expense / both) and the
-  remembered bank formats.
+- **Finance:** the currency, the accounts (name, color, icon, opening balance), the categories
+  (name, color, icon, income / expense / both) and the remembered bank formats.
 - **AI assistant:** the model, web search and whether the assistant may change things.
 - **Integrations:** a ready-to-paste prompt with one link for an AI agent that can send HTTP
   requests (Claude Code, Codex, ChatGPT agent mode …). The link returns instructions with the
@@ -216,7 +225,7 @@ working across years.
 | `PATCH /families/{id}` | Rename: `{"name": "..."}` |
 | `POST /families/{id}/links` | New link: `{"link": "view"}` or `{"link": "feed"}` makes a new view or feed id (the old one stops working); `{"link": "legacy"}` removes the legacy view link. Returns the family like `GET /families/{id}` |
 | `POST /families/{id}/clone` | Copy the family (all years, types, entries, notes) into a new one with new ids. Body (optional): `{"name": "..."}`, default *“… (copy)”*. The view-only id works too |
-| `GET /families/{id}/export` | The whole family as a file: `{"format": "family-planner", "version": 2, "name", "types": [...], "entries": {...}, "notes": {...}, "finance": {"currency", "categories", "transactions"}}`, all years, without the family's ids. The view-only id works too; the legacy id exports without `finance` |
+| `GET /families/{id}/export` | The whole family as a file: `{"format": "family-planner", "version": 2, "name", "types": [...], "entries": {...}, "notes": {...}, "finance": {"currency", "accounts", "categories", "transactions"}}`, all years, without the family's ids. The view-only id works too; the legacy id exports without `finance` |
 | `POST /families/{id}/import?year=2026` | Replace all years, types, entries and notes with those of an export file (the body), in one transaction, and the finances if the file has them; name and ids stay. Version 1 files and `"format": "vacation-planner"` (exported before the rename) work too. Returns the family like `GET /families/{id}` |
 | `GET /families/{id}/entries?year=2026` | `{"2026-08-03": ["vacation", "day-care-closed"], ...}` |
 | `POST /families/{id}/entries` | Change entries (see below) |
@@ -240,14 +249,18 @@ changing the edit id.
 
 | Method & path | Description |
 | --- | --- |
-| `GET /families/{id}/finance` | `{"currency", "csvMappings", "categories": [{"id", "name", "color", "icon", "kind", "position"}]}` |
+| `GET /families/{id}/finance` | `{"currency", "csvMappings", "accounts": [{"id", "name", "color", "icon", "openingCents", "position", "balanceCents"}], "categories": [{"id", "name", "color", "icon", "kind", "position"}]}` |
 | `PATCH /families/{id}/finance/settings` | `{"currency": "EUR"}` (ISO 4217) and/or `{"csvMappings": [...]}` |
+| `POST /families/{id}/finance/accounts` | Add `{"name", "color", "icon", "openingCents"}` |
+| `PATCH` / `DELETE /families/{id}/finance/accounts/{account}` | Change or delete (its transactions keep their rows, without an account); by id or name |
 | `POST /families/{id}/finance/categories` | Add `{"name", "color", "icon", "kind": "income" \| "expense" \| "both"}` |
 | `PATCH` / `DELETE /families/{id}/finance/categories/{category}` | Change or delete (its transactions become uncategorized); by id or name |
 | `POST /families/{id}/finance/categories/defaults` | Add the default categories the family doesn't have: `{"lang": "de"}` |
-| `GET /families/{id}/finance/transactions` | `?from=&to=&category=<id or none>&kind=income\|expense&q=&limit=&offset=` → `{"transactions": [{"id", "date", "amountCents", "payee", "description", "categoryId", "note", "imported"}], "total", "incomeCents", "expenseCents"}`, newest first |
-| `POST /families/{id}/finance/transactions` | `{"ops": [...]}`: `{"action": "add", "date", "amountCents", "payee", "description", "categoryId", "note"}`, `{"action": "update", "id", ...fields}`, `{"action": "delete", "ids": [...]}`. Returns `inverse`, the ops that undo the request |
-| `POST /families/{id}/finance/import` | `{"rows": [{"date", "amountCents", "payee", "description", "categoryId"}], "dryRun": true}`: adds the rows that weren't imported before; returns `added`, `duplicates` (row indexes) and the new `ids` |
+| `GET /families/{id}/finance/transactions` | `?from=&to=&category=<id or none>&account=<id or none>&kind=income\|expense\|transfer&q=&limit=&offset=` → `{"transactions": [{"id", "date", "amountCents", "payee", "description", "categoryId", "accountId", "transferId", "note", "imported"}], "total", "incomeCents", "expenseCents"}`, newest first. Transactions sharing a `transferId` (a transfer) count once in the totals, by their sum |
+| `POST /families/{id}/finance/transactions` | `{"ops": [...]}`: `{"action": "add", "date", "amountCents", "payee", "description", "categoryId", "note"}`, `{"action": "update", "id", ...fields}`, `{"action": "delete", "ids": [...]}`, `{"action": "link", "ids": [...]}` (combine into one transfer), `{"action": "unlink", "ids": [...]}`; add / update also take `accountId` and `transferId`. Returns `inverse`, the ops that undo the request |
+| `POST /families/{id}/finance/import` | `{"rows": [{"date", "amountCents", "payee", "description", "categoryId"}], "dryRun": true, "accountId", "autoTransfers": true}`: adds the rows that weren't imported before (to the account) and, with `autoTransfers`, combines them with matching bookings on other accounts; returns `added`, `duplicates` (row indexes), the new `ids` and `transfers` (pairs combined) |
+| `GET /families/{id}/finance/transfers/suggestions?from=&to=` | `{"pairs": [{"out", "in"}]}`: transactions that look like a transfer between two accounts (same amount out and in, at most 4 days apart, not combined yet) |
+| `POST /families/{id}/finance/transfers/auto` | `{"from", "to"}` (optional): combines all those pairs; returns `linked` and `inverse` like the transactions endpoint |
 | `GET /families/{id}/finance/summary?from=&to=` | `{"currency", "incomeCents", "expenseCents", "count", "months": [{"month", "incomeCents", "expenseCents"}], "categories": [{"categoryId", "incomeCents", "expenseCents", "count"}]}` |
 
 ### AI assistant

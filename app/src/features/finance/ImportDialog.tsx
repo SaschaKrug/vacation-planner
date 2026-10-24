@@ -39,15 +39,24 @@ const DELIMITERS: [string, string][] = [[";", ";"], [",", ","], ["\t", "Tab"], [
 type Step =
   | { name: "file" }
   | { name: "map"; bytes: Uint8Array; fileName: string }
-  | { name: "review"; bytes: Uint8Array; fileName: string; duplicates: number[] };
+  | {
+    name: "review";
+    bytes: Uint8Array;
+    fileName: string;
+    duplicates: number[];
+    transfers: number;
+  };
 
 /** Imports a bank statement: pick the file, check how its columns map, then import the rows
- *  that aren't there yet. Mappings are remembered per bank (by the file's header). */
+ *  that aren't there yet into an account. Mappings are remembered per bank (by the file's
+ *  header), with the account and whether transfers are combined. */
 export function ImportDialog({ onClose }: { onClose: () => void }) {
   const finance = useFinance();
   const [step, setStep] = useState<Step>({ name: "file" });
   const [mapping, setMapping] = useState<CsvMapping | null>(null);
   const [remember, setRemember] = useState(true);
+  const [account, setAccount] = useState("none");
+  const [auto, setAuto] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -70,6 +79,10 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
     // The same bank as before: use its saved mapping.
     const saved = finance.mappings.find((m) => m.signature && m.signature === guess.signature);
     setMapping(saved ?? guess);
+    // Its account as last time, else the one the list shows.
+    const known = (id?: string) => (id && finance.accountById(id) ? id : undefined);
+    setAccount(known(saved?.accountId) ?? known(finance.filter.account) ?? "none");
+    setAuto(saved?.autoTransfers ?? true);
     setStep({ name: "map", bytes: data, fileName: file.name });
   }
 
@@ -81,12 +94,27 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
       description,
     }));
 
-  async function check() {
-    if (step.name !== "map" || !parsed?.ok.length) return;
+  const accountId = (id = account) => (id === "none" ? undefined : id);
+
+  /** A dry run: which rows are there already, and how many transfers would be combined. */
+  async function check(next: { account?: string; auto?: boolean } = {}) {
+    if (step.name === "file" || !parsed?.ok.length) return;
     setBusy(true);
+    setError("");
     try {
-      const res = await api.importTransactions(finance.token, rowsToSend(), true);
-      setStep({ ...step, name: "review", duplicates: res.duplicates });
+      const res = await api.importTransactions(
+        finance.token,
+        rowsToSend(),
+        true,
+        accountId(next.account ?? account),
+        next.auto ?? auto,
+      );
+      setStep({
+        ...step,
+        name: "review",
+        duplicates: res.duplicates,
+        transfers: res.transfers ?? 0,
+      });
     } catch (err) {
       setError((err as Error).message);
     }
@@ -96,8 +124,10 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
   async function run() {
     setBusy(true);
     try {
-      await finance.importRows(rowsToSend());
-      if (remember && mapping?.signature) await finance.saveMapping(mapping);
+      await finance.importRows(rowsToSend(), accountId(), auto);
+      if (remember && mapping?.signature) {
+        await finance.saveMapping({ ...mapping, accountId: accountId(), autoTransfers: auto });
+      }
       onClose();
     } catch (err) {
       setError(t("finance.import_failed", { msg: (err as Error).message }));
@@ -170,6 +200,47 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
                 {t("finance.import_skipped", { n: parsed.errors.length })}
               </p>
             )}
+            {step.transfers > 0 && (
+              <p className="text-muted-foreground">
+                {t("finance.import_transfers", { n: step.transfers })}
+              </p>
+            )}
+            {finance.accounts.length > 0 && (
+              <>
+                <label className="grid gap-1.5 pt-1 font-medium sm:max-w-xs">
+                  {t("finance.account")}
+                  <Select
+                    value={account}
+                    disabled={busy}
+                    onValueChange={(v) => {
+                      setAccount(v);
+                      check({ account: v }); // duplicates are per account
+                    }}
+                  >
+                    <SelectTrigger className="w-full bg-card">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent position="popper" className="max-h-80">
+                      <SelectItem value="none">{t("finance.no_account")}</SelectItem>
+                      {finance.accounts.map((a) => (
+                        <SelectItem key={a.id} value={a.id}>{a.icon} {a.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </label>
+                <label className="flex items-center gap-2 pt-1">
+                  <Checkbox
+                    checked={auto}
+                    disabled={busy}
+                    onCheckedChange={(v) => {
+                      setAuto(!!v);
+                      check({ auto: !!v });
+                    }}
+                  />
+                  {t("finance.import_auto_transfers")}
+                </label>
+              </>
+            )}
             {mapping?.signature && (
               <label className="flex items-center gap-2 pt-1">
                 <Checkbox
@@ -187,7 +258,10 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("note.cancel")}</Button>
           {step.name === "map" && (
-            <Button disabled={busy || !parsed?.ok.length} onClick={check}>
+            <Button
+              disabled={busy || !parsed?.ok.length}
+              onClick={() => check()}
+            >
               {t("finance.import_next")}
             </Button>
           )}
