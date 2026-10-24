@@ -187,6 +187,49 @@ function resolveCategory(categories: CategoryRow[], ref: unknown): string | null
   return c.id;
 }
 
+/** A category by id or (case-insensitive) name. */
+export function findCategory(categories: CategoryRow[], ref: unknown): CategoryRow {
+  const id = resolveCategory(categories, ref);
+  const c = categories.find((c) => c.id === id);
+  if (!c) throw new HttpError(404, `Unknown category "${ref}"`);
+  return c;
+}
+
+/** A new category from {name, color, icon, kind}, added after the family's others. */
+export function newCategory(
+  familyId: string,
+  categories: CategoryRow[],
+  body: Record<string, unknown>,
+): CategoryRow {
+  if (categories.length >= MAX_CATEGORIES) throw new HttpError(400, "Too many categories");
+  const name = cleanName(body.name);
+  return {
+    family_id: familyId,
+    id: uniqueId(slug(name), new Set(categories.map((c) => c.id))),
+    name,
+    color: cleanColor(body.color),
+    icon: text(body.icon, "icon", 16),
+    kind: cleanKind(body.kind),
+    position: categories.reduce((m, c) => Math.max(m, c.position + 1), 0),
+  };
+}
+
+/** The category with any of {name, color, icon, kind, position} changed. */
+export function changedCategory(current: CategoryRow, body: Record<string, unknown>): CategoryRow {
+  const next = { ...current };
+  if (body.name !== undefined) next.name = cleanName(body.name);
+  if (body.color !== undefined) next.color = cleanColor(body.color);
+  if (body.icon !== undefined) next.icon = text(body.icon, "icon", 16);
+  if (body.kind !== undefined) next.kind = cleanKind(body.kind);
+  if (body.position !== undefined) {
+    if (!Number.isInteger(body.position)) {
+      throw new HttpError(400, "position must be an integer");
+    }
+    next.position = body.position as number;
+  }
+  return next;
+}
+
 function uniqueId(base: string, taken: Set<string>): string {
   let id = base || "category";
   for (let i = 2; taken.has(id); i++) id = `${base}-${i}`;
@@ -434,36 +477,15 @@ async function categoriesRoute(ctx: Ctx, id: string | undefined): Promise<Respon
   }
 
   if (id === undefined && method === "POST") {
-    if (categories.length >= MAX_CATEGORIES) throw new HttpError(400, "Too many categories");
-    const name = cleanName(body.name);
-    const row: CategoryRow = {
-      family_id: family.id,
-      id: uniqueId(slug(name), new Set(categories.map((c) => c.id))),
-      name,
-      color: cleanColor(body.color),
-      icon: text(body.icon, "icon", 16),
-      kind: cleanKind(body.kind),
-      position: categories.reduce((m, c) => Math.max(m, c.position + 1), 0),
-    };
+    const row = newCategory(family.id, categories, body);
     await store.upsertCategories([row]);
     return json(publicCategory(row), 201);
   }
 
   if (id !== undefined) {
-    const current = categories.find((c) => c.id === resolveCategory(categories, id));
-    if (!current) throw new HttpError(404, `Unknown category "${id}"`);
+    const current = findCategory(categories, id);
     if (method === "PATCH") {
-      const next = { ...current };
-      if (body.name !== undefined) next.name = cleanName(body.name);
-      if (body.color !== undefined) next.color = cleanColor(body.color);
-      if (body.icon !== undefined) next.icon = text(body.icon, "icon", 16);
-      if (body.kind !== undefined) next.kind = cleanKind(body.kind);
-      if (body.position !== undefined) {
-        if (!Number.isInteger(body.position)) {
-          throw new HttpError(400, "position must be an integer");
-        }
-        next.position = body.position as number;
-      }
+      const next = changedCategory(current, body);
       await store.upsertCategories([next]);
       return json(publicCategory(next));
     }

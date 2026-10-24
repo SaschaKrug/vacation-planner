@@ -67,10 +67,10 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   picked from the API's list. Keys are stored encrypted and never shown again; everyone with
   the edit link uses the setup (the view-only link has no chat).
 - It **looks things up** in the calendar and the finances, **changes** them (entries, notes,
-  types, transactions), **searches the web** (Tavily or Brave, with their own key) and **reads
-  pages**. Every change shows up in the chat with **Undo**; bigger changes (more than 31 days,
-  deleting types or transactions) need the user's OK first. *Allow changes* off makes it
-  read-only.
+  types, categories, transactions), **searches the web** (Tavily or Brave, with their own key)
+  and **reads pages**. Every change shows up in the chat with **Undo**; bigger changes (more than
+  31 days, deleting types, categories or transactions) need the user's OK first. *Allow changes*
+  off makes it read-only.
 - **Attach** images (screenshots, photos) and text files (e.g. CSV) to a message; images need a
   model with vision support.
 - **Auto-categorize** on the finance page sorts the period's uncategorized transactions into

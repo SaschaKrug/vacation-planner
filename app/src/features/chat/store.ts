@@ -7,7 +7,7 @@ import { type AiSettings, api, type ChatEvent, type ChatMessage, type UndoStep }
 import { getLang, t } from "@/lib/i18n";
 import { read, write } from "@/lib/storage";
 
-export type ChangeKind = "entries" | "notes" | "types" | "transactions";
+export type ChangeKind = "entries" | "notes" | "types" | "categories" | "transactions";
 
 /** An attachment as the chat shows it: images keep their data URL unless storage was full. */
 export interface ItemAttachment {

@@ -471,6 +471,7 @@ const TOOL_ICONS: Record<string, typeof Search> = {
   manage_entry_types: CalendarDays,
   list_transactions: Wallet,
   finance_summary: Wallet,
+  manage_categories: Wallet,
   change_transactions: Wallet,
 };
 

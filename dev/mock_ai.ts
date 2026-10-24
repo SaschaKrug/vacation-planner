@@ -4,6 +4,8 @@
 //   "vacation 2026-08-03 to 2026-08-07"  -> change_entries (the first "covers" type)
 //   "calendar"                            -> get_calendar for this month
 //   "spend" / "finance"                   -> finance_summary for this year
+//   "add category <name>"                 -> manage_categories (add)
+//   "delete category <name>"              -> manage_categories (delete)
 //   "search <words>"                      -> web_search
 //   a URL                                 -> fetch_page
 // Asked to sort transactions into categories (the categorize prompt), it picks the category
@@ -158,6 +160,16 @@ export async function mockAi(req: Request): Promise<Response> {
     return reply(stream, "", {
       name: "get_calendar",
       args: { from: `${month}-01`, to: `${month}-28` },
+    });
+  }
+  const category = /^(add|delete) category (.+)$/i.exec(text);
+  if (category && tools.has("manage_categories")) {
+    const [, action, name] = category;
+    return reply(stream, "", {
+      name: "manage_categories",
+      args: action.toLowerCase() === "add"
+        ? { action: "add", name, icon: "🐾" }
+        : { action: "delete", category: name },
     });
   }
   if (/spen[dt]|finance|ausgegeben|finanzen/.test(lower)) {

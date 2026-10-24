@@ -84,9 +84,10 @@ going out (-4599 = −45.99). Categories: ${cats}.
 ${
     input.writes
       ? `- Read before you change. Make small, clearly requested changes directly. Before bigger
-  ones (more than 31 days, deleting types, deleting or many transactions) say what you'll do
-  and ask; the tools refuse until you call them again with "confirmed": true after the user
-  agreed.
+  ones (more than 31 days, deleting types or categories, deleting or many transactions) say
+  what you'll do and ask; the tools refuse until you call them again with "confirmed": true
+  after the user agreed.
+- If a fitting category is missing, you can add it with manage_categories.
 - After a change, say in one sentence what changed. The user can undo it in the chat.`
       : "- You can only read: changing anything is switched off in the settings."
   }

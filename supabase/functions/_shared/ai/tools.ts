@@ -5,8 +5,11 @@
 import { dateRange, isValidDate, isWeekend } from "../dates.ts";
 import {
   applyTransactionOps,
+  changedCategory,
   financeSummary,
+  findCategory,
   findTransactions,
+  newCategory,
   publicCategory,
   publicTransaction,
 } from "../finance.ts";
@@ -35,7 +38,7 @@ export interface UndoStep {
 }
 
 export interface Change {
-  kind: "entries" | "notes" | "types" | "transactions";
+  kind: "entries" | "notes" | "types" | "categories" | "transactions";
   summary: string;
   undo: UndoStep[];
 }
@@ -70,6 +73,8 @@ const PHRASES = {
     typeAdded: (name: string, year: number) => `Added the type “${name}” (${year})`,
     typeChanged: (name: string, year: number) => `Changed the type “${name}” (${year})`,
     typesCopied: (n: number, from: number, to: number) => `Copied ${n} types from ${from} to ${to}`,
+    categoryAdded: (name: string) => `Added the category “${name}”`,
+    categoryChanged: (name: string) => `Changed the category “${name}”`,
     transactions: (n: number) => `${n} ${n === 1 ? "transaction" : "transactions"} changed`,
   },
   de: {
@@ -79,6 +84,8 @@ const PHRASES = {
     typeChanged: (name: string, year: number) => `Art „${name}“ geändert (${year})`,
     typesCopied: (n: number, from: number, to: number) =>
       `${n} Arten von ${from} nach ${to} kopiert`,
+    categoryAdded: (name: string) => `Kategorie „${name}“ hinzugefügt`,
+    categoryChanged: (name: string) => `Kategorie „${name}“ geändert`,
     transactions: (n: number) => `${n} ${n === 1 ? "Buchung" : "Buchungen"} geändert`,
   },
 };
@@ -471,6 +478,81 @@ export const TOOLS: Record<string, Tool> = {
         result: { ...summary, categoryNames: categories.map(publicCategory) },
         summary: `${from} – ${to}`,
       };
+    },
+  },
+
+  manage_categories: {
+    write: true,
+    spec: {
+      name: "manage_categories",
+      description:
+        'Adds, changes or deletes finance categories. "add": name, kind (expense | income | both, default expense), color (#rrggbb), icon (one emoji). "update": category (id or name) and any of name, kind, color, icon. "delete": category (its transactions become uncategorized; needs confirmed).',
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["add", "update", "delete"] },
+          category: { type: "string" },
+          name: { type: "string" },
+          kind: { type: "string", enum: ["expense", "income", "both"] },
+          color: { type: "string" },
+          icon: { type: "string" },
+          confirmed: { type: "boolean" },
+        },
+        required: ["action"],
+      },
+    },
+    async run(args, { store, familyId, lang }) {
+      const categories = await store.listCategories(familyId);
+      const path = (id: string) => `/finance/categories/${encodeURIComponent(id)}`;
+      switch (args.action) {
+        case "add": {
+          const row = newCategory(familyId, categories, { color: "#64748b", ...args });
+          await store.upsertCategories([row]);
+          return {
+            result: publicCategory(row),
+            summary: `Added “${row.name}”`,
+            change: {
+              kind: "categories",
+              summary: PHRASES[lang].categoryAdded(row.name),
+              undo: [{ method: "DELETE", path: path(row.id) }],
+            },
+          };
+        }
+        case "update": {
+          const current = findCategory(categories, args.category);
+          const { name, kind, color, icon } = args;
+          const next = changedCategory(current, { name, kind, color, icon });
+          await store.upsertCategories([next]);
+          return {
+            result: publicCategory(next),
+            summary: `Changed “${next.name}”`,
+            change: {
+              kind: "categories",
+              summary: PHRASES[lang].categoryChanged(current.name),
+              undo: [{
+                method: "PATCH",
+                path: path(current.id),
+                body: {
+                  name: current.name,
+                  kind: current.kind,
+                  color: current.color,
+                  icon: current.icon,
+                },
+              }],
+            },
+          };
+        }
+        case "delete": {
+          const current = findCategory(categories, args.category);
+          needConfirm(
+            args,
+            `Deleting “${current.name}” leaves its transactions uncategorized and can't be undone.`,
+          );
+          await store.deleteCategory(familyId, current.id);
+          return { result: { deleted: current.id }, summary: `Deleted “${current.name}”` };
+        }
+      }
+      throw new HttpError(400, "action must be add, update or delete");
     },
   },
 
