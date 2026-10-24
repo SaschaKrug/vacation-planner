@@ -81,7 +81,8 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   31 days, deleting types, categories or transactions) need the user's OK first. *Allow changes*
   off makes it read-only.
 - **Attach** images (screenshots, photos) and text files (e.g. CSV) to a message; images need a
-  model with vision support.
+  model with vision support. Pasting a long text (2,000 characters or more) attaches it as a text
+  file.
 - **Auto-categorize** on the finance page sorts the period's uncategorized transactions into
   categories. First without AI: a transaction gets the category that earlier ones of the same
   payee mostly have (numbers and case don't matter, so "REWE Markt 1234" matches "Rewe Markt

@@ -17,8 +17,9 @@ import { runTool, type ToolContext, toolsFor } from "./tools.ts";
 const MAX_STEPS = 30;
 const OUT_OF_STEPS = "(Stopped: too many steps in one answer.)";
 const MAX_MESSAGES = 80;
+/** An answer or tool result in the history. */
 const MAX_CONTENT = 20_000;
-/** Attachments: parts per message, an attached file's text, images per message and per chat. */
+/** Attachments: parts per message, a typed or attached text, images per message and per chat. */
 const MAX_PARTS = 10;
 const MAX_FILE_TEXT = 60_000;
 const MAX_IMAGE_URL = 2_000_000;
@@ -116,6 +117,14 @@ ${
 - Dates are YYYY-MM-DD. Keep answers short; use Markdown lists only where they help.`;
 }
 
+/** `text` within `max`: refused in the new message, cut in older ones so they don't block
+ *  the chat. */
+function fit(text: string, max: number, isNew: boolean, error: string) {
+  if (text.length <= max) return text;
+  if (isNew) throw new HttpError(400, `${error} (max. ${max.toLocaleString("en")} characters)`);
+  return text.slice(0, max) + "…(truncated)";
+}
+
 /** The app's history, checked: user, assistant and tool messages, newest kept (but all of the
  *  current turn). It ends with the user's message, or with tool results to `cont`inue a turn. */
 export function cleanHistory(raw: unknown, cont = false): ChatMessage[] {
@@ -127,20 +136,22 @@ export function cleanHistory(raw: unknown, cont = false): ChatMessage[] {
     0,
     turn < 0 ? raw.length - MAX_MESSAGES : Math.min(raw.length - MAX_MESSAGES, turn),
   );
-  const out: ChatMessage[] = raw.slice(from).map((m): ChatMessage => {
+  const out: ChatMessage[] = raw.slice(from).map((m, i): ChatMessage => {
     const o = objectOf(m, "Each message");
     if (!["user", "assistant", "tool"].includes(o.role as string)) {
       throw new HttpError(400, "role must be user, assistant or tool");
     }
+    // Only the user's newest message is checked strictly; older ones are cut.
+    const isNew = from + i === turn;
     let content: ChatMessage["content"];
     if (Array.isArray(o.content)) {
       if (o.role !== "user") throw new HttpError(400, "Only user messages can have parts");
-      content = cleanParts(o.content);
+      content = cleanParts(o.content, isNew);
     } else {
       content = o.content === null || o.content === undefined ? null : String(o.content);
-      if (content && content.length > MAX_CONTENT) {
-        throw new HttpError(400, "A message is too long");
-      }
+      // A typed message may be as long as an attached text.
+      const max = o.role === "user" ? MAX_FILE_TEXT : MAX_CONTENT;
+      if (content) content = fit(content, max, isNew, "A message is too long");
     }
     const msg: ChatMessage = { role: o.role as ChatMessage["role"], content };
     if (o.role === "assistant" && Array.isArray(o.tool_calls) && o.tool_calls.length) {
@@ -178,7 +189,7 @@ export function cleanHistory(raw: unknown, cont = false): ChatMessage[] {
 }
 
 /** A user message's parts: text (typed or an attached file) and images as data URLs. */
-function cleanParts(raw: unknown[]): ContentPart[] {
+function cleanParts(raw: unknown[], isNew: boolean): ContentPart[] {
   if (!raw.length || raw.length > MAX_PARTS) {
     throw new HttpError(400, `A message needs 1 to ${MAX_PARTS} parts`);
   }
@@ -186,8 +197,7 @@ function cleanParts(raw: unknown[]): ContentPart[] {
     const p = objectOf(r, "Each part");
     if (p.type === "text") {
       if (typeof p.text !== "string") throw new HttpError(400, "A text part needs text");
-      if (p.text.length > MAX_FILE_TEXT) throw new HttpError(400, "An attached text is too long");
-      return { type: "text", text: p.text };
+      return { type: "text", text: fit(p.text, MAX_FILE_TEXT, isNew, "A text is too long") };
     }
     if (p.type === "image_url") {
       const url = (p.image_url as { url?: unknown } | null)?.url;
