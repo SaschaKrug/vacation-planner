@@ -116,8 +116,13 @@ New default categories in EN/DE (Groceries, Rent, Utilities, Mobility, Leisure, 
 - `GET/PUT /families/{id}/ai/settings`, `GET /families/{id}/ai/models` (proxy to `{base}/models`),
   `POST /families/{id}/ai/test`.
 - `POST /families/{id}/ai/chat`: the client sends its local history, and the server runs the
-  OpenAI-compatible `/chat/completions` tool loop (max ~10 steps) and streams **SSE** events:
-  `text`, `tool_start`, `tool_result`, `change` (summary + inverse ops for undo), `error`, `done`.
+  OpenAI-compatible `/chat/completions` tool loop (max 30 steps per turn, the last without tools so
+  the model wraps up) and streams **SSE** events: `text`, `tool_start`, `tool_result`, `change`
+  (summary + inverse ops for undo), `messages` (what the app appends to its history, tool results in
+  full), then `done`, `error` or `continue`. After `continue` the app sends the history again with
+  `continue: true` (it then ends with tool results) and the same turn goes on; the steps used are
+  counted from the history. Once a turn is over, the app shortens its tool results to 2,000
+  characters.
 - System prompt: today's date, language, family name, the current year's types and finance
   categories, rules (read before writing, confirm before >31 days, deleting types or bulk finance
   edits).
@@ -138,8 +143,9 @@ New default categories in EN/DE (Groceries, Rent, Utilities, Mobility, Leisure, 
   them).
 - Rate limits: new `ai_chat` bucket (e.g. 60 requests per 5 min per client), plus a per-family cap;
   `fetch_page` and `web_search` count per tool call.
-- The edge function's wall-clock limit (150s on the free plan) bounds a turn; the loop stops early
-  with a message.
+- The edge function's wall-clock limit (150s on the free plan) bounds a request, not a turn: after
+  90s a request ends with `continue` before its next model call (each request takes at least one
+  step), and the app picks the turn up with a new request.
 
 ### Export v2 / agent doc
 

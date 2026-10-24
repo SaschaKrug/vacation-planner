@@ -12,7 +12,10 @@ import {
 } from "./provider.ts";
 import { runTool, type ToolContext, toolsFor } from "./tools.ts";
 
-const MAX_STEPS = 10;
+/** Model calls per answer (across hand-offs); the last one gets no tools, so the model answers
+ *  with what it has. */
+const MAX_STEPS = 30;
+const OUT_OF_STEPS = "(Stopped: too many steps in one answer.)";
 const MAX_MESSAGES = 80;
 const MAX_CONTENT = 20_000;
 /** Attachments: parts per message, an attached file's text, images per message and per chat. */
@@ -24,10 +27,15 @@ const MAX_IMAGES = 8;
 const IMAGE_URL = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/;
 const OLD_IMAGE = "(an earlier image, no longer sent)";
 const MAX_TOOL_RESULT = 16_000;
-/** What the app keeps of a tool result in its history (the model saw it in full). */
-const STORED_TOOL_RESULT = 2_000;
-/** Edge Functions run at most 150 s (free plan): stop in time to say so. */
-const TIME_BUDGET_MS = 120_000;
+/** Edge Functions run at most 150 s (free plan): after this, a request hands the turn back to
+ *  the app, which goes on with a new request ("continue"). */
+const HAND_OFF_MS = 90_000;
+
+const WRAP_UP = `
+
+## Out of steps
+You can't use tools any more in this answer. Answer now with what you found and did so far,
+and say what is still open, so the user can ask you to go on.`;
 
 export type Emit = (event: string, data: unknown) => void;
 
@@ -103,15 +111,23 @@ ${
       ? "- For facts from the web (school and public holidays, opening times, prices), search, read the best sources with fetch_page, and name them."
       : "- Web search isn't set up; you can still read pages with fetch_page when the user gives a URL."
   }
+- Call tools that don't depend on each other together, and put many changes into one call's
+  ops: an answer can only take a limited number of steps.
 - Dates are YYYY-MM-DD. Keep answers short; use Markdown lists only where they help.`;
 }
 
-/** The app's history, checked: user, assistant and tool messages, newest kept. */
-export function cleanHistory(raw: unknown): ChatMessage[] {
+/** The app's history, checked: user, assistant and tool messages, newest kept (but all of the
+ *  current turn). It ends with the user's message, or with tool results to `cont`inue a turn. */
+export function cleanHistory(raw: unknown, cont = false): ChatMessage[] {
   if (!Array.isArray(raw) || !raw.length) {
     throw new HttpError(400, "messages must be a non-empty array");
   }
-  const out: ChatMessage[] = raw.slice(-MAX_MESSAGES).map((m): ChatMessage => {
+  const turn = raw.findLastIndex((m) => (m as { role?: unknown } | null)?.role === "user");
+  const from = Math.max(
+    0,
+    turn < 0 ? raw.length - MAX_MESSAGES : Math.min(raw.length - MAX_MESSAGES, turn),
+  );
+  const out: ChatMessage[] = raw.slice(from).map((m): ChatMessage => {
     const o = objectOf(m, "Each message");
     if (!["user", "assistant", "tool"].includes(o.role as string)) {
       throw new HttpError(400, "role must be user, assistant or tool");
@@ -143,7 +159,10 @@ export function cleanHistory(raw: unknown): ChatMessage[] {
   });
   // Cut to a clean start: the first message must be the user's (no orphaned tool results).
   while (out.length && out[0].role !== "user") out.shift();
-  if (!out.length || out.at(-1)!.role !== "user") {
+  if (cont && out.at(-1)?.role !== "tool") {
+    throw new HttpError(400, "To continue, the last message must be a tool result");
+  }
+  if (!cont && (!out.length || out.at(-1)!.role !== "user")) {
     throw new HttpError(400, "The last message must be the user's");
   }
   // Only the newest images go to the model, so the request stays bounded.
@@ -188,7 +207,8 @@ function cleanParts(raw: unknown[]): ContentPart[] {
 /**
  * Runs the tool loop and emits: "text" {delta}, "tool" {id, name, args}, "tool_result"
  * {id, name, ok, summary}, "change" {id, kind, summary, undo}, "messages" {messages} (what the
- * app appends to its history) and "done" or "error" {message}.
+ * app appends to its history) and "done", "error" {message} or "continue" {}: time is nearly
+ * up, so the app sends the history again with `continue: true` and the turn goes on there.
  */
 export async function runChat(opts: {
   provider: Provider;
@@ -199,6 +219,8 @@ export async function runChat(opts: {
   search: boolean;
   emit: Emit;
   signal?: AbortSignal;
+  /** When to hand off to a new request (tests). Default: HAND_OFF_MS. */
+  handOffMs?: number;
 }) {
   const { provider, ctx, emit, signal } = opts;
   const tools = toolsFor({ writes: opts.writes, search: opts.search });
@@ -206,31 +228,48 @@ export async function runChat(opts: {
   const messages: ChatMessage[] = [{ role: "system", content: opts.system }, ...opts.history];
   const added: ChatMessage[] = [];
   const started = Date.now();
-  const push = (m: ChatMessage, stored: ChatMessage = m) => {
+  const handOffMs = opts.handOffMs ?? HAND_OFF_MS;
+  const push = (m: ChatMessage) => {
     messages.push(m);
-    added.push(stored);
+    added.push(m);
   };
+  // Steps count across requests: the tool rounds since the user's message.
+  const turn = opts.history.findLastIndex((m) => m.role === "user");
+  const used = opts.history.slice(turn + 1).filter((m) => m.tool_calls?.length).length;
 
   try {
-    for (let step = 0;; step++) {
-      if (step >= MAX_STEPS) {
-        push({ role: "assistant", content: "(Stopped: too many steps in one answer.)" });
-        emit("text", { delta: "\n\n(Stopped: too many steps in one answer.)" });
-        break;
+    for (let step = used;; step++) {
+      // Every request takes at least one step, then hands off before time runs out.
+      if (step > used && Date.now() - started >= handOffMs) {
+        emit("messages", { messages: added });
+        emit("continue", {});
+        return;
       }
-      if (Date.now() - started > TIME_BUDGET_MS) {
-        throw new HttpError(504, "This took too long – ask again, maybe in smaller steps.");
-      }
+      const last = step >= MAX_STEPS - 1;
+      const body = last
+        ? { messages: [{ ...messages[0], content: opts.system + WRAP_UP }, ...messages.slice(1)] }
+        : { messages };
       let content = "";
       let calls: ToolCall[] = [];
-      for await (const ev of streamChat(provider, { messages, tools }, ctx.net, signal)) {
+      const stream = streamChat(
+        provider,
+        { ...body, tools, toolChoice: last ? "none" : "auto" },
+        ctx.net,
+        signal,
+      );
+      for await (const ev of stream) {
         if (ev.type === "text") emit("text", { delta: ev.delta });
         else {
           content = ev.content;
           calls = ev.toolCalls.filter((c) => c.function.name);
         }
       }
-      if (!calls.length) {
+      if (last && !content) {
+        // A server that ignores tool_choice "none" may still only call tools.
+        content = OUT_OF_STEPS;
+        emit("text", { delta: content });
+      }
+      if (!calls.length || last) {
         push({ role: "assistant", content });
         break;
       }
@@ -252,16 +291,10 @@ export async function runChat(opts: {
         });
         if (res.change) emit("change", { id: call.id, ...res.change });
         const text = JSON.stringify(res.result);
-        const full = text.length > MAX_TOOL_RESULT
+        const content = text.length > MAX_TOOL_RESULT
           ? text.slice(0, MAX_TOOL_RESULT) + "…(truncated)"
           : text;
-        const stored = text.length > STORED_TOOL_RESULT
-          ? text.slice(0, STORED_TOOL_RESULT) + "…(truncated)"
-          : text;
-        push(
-          { role: "tool", tool_call_id: call.id, content: full },
-          { role: "tool", tool_call_id: call.id, content: stored },
-        );
+        push({ role: "tool", tool_call_id: call.id, content });
       }
     }
     emit("messages", { messages: added });

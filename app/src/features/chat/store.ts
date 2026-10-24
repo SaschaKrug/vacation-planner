@@ -50,6 +50,8 @@ export interface Chat {
 const MAX_CHATS = 20;
 /** Images sent along with a request (the server keeps no more either). */
 const MAX_IMAGES = 8;
+/** Characters of a tool result kept in the saved history (the server sends them in full). */
+const MAX_TOOL_RESULT = 2000;
 
 /** A chat without its image data, for when storage is full. */
 const withoutImages = (c: Chat): Chat => ({
@@ -215,7 +217,11 @@ export class ChatStore {
     this.save();
     this.emit();
 
-    this.abort = new AbortController();
+    // One controller for the whole turn, so stopping also ends a chain of continued requests.
+    const abort = new AbortController();
+    this.abort = abort;
+    const start = c.history.length; // where this turn's answer begins
+    let more = false;
     let answer: Item & { kind: "assistant" } | null = null;
     const update = (fn: (items: Item[]) => Item[]) => {
       c.items = fn([...c.items]);
@@ -263,6 +269,9 @@ export class ChatStore {
         case "messages":
           c.history = [...c.history, ...e.data.messages];
           break;
+        case "continue":
+          more = true;
+          break;
         case "error":
           update((
             items,
@@ -271,32 +280,46 @@ export class ChatStore {
       }
     };
 
-    try {
-      await api.chat(
-        this.token,
-        {
-          messages: keepImages(
-            c.history,
-            MAX_IMAGES,
-            "(an earlier image, no longer sent)",
-          ),
-          lang: getLang(),
-          today: today(),
-          ...this.context(),
-        },
-        onEvent,
-        this.abort.signal,
-      );
-    } catch (err) {
-      c.items = [...c.items, { kind: "error", text: (err as Error).message }];
-      // The server never saw this turn's answer: drop the message from the history so the
-      // next one starts cleanly (it stays visible).
-      if (c.history.at(-1)?.role === "user") c.history = c.history.slice(0, -1);
+    // The server may hand the turn off ("continue") before it runs out of time: carry on with
+    // the next request until one ends without it.
+    const body = { lang: getLang(), today: today(), ...this.context() };
+    for (let first = true; first || (more && !abort.signal.aborted); first = false) {
+      more = false;
+      try {
+        await api.chat(
+          this.token,
+          {
+            messages: keepImages(
+              c.history,
+              MAX_IMAGES,
+              "(an earlier image, no longer sent)",
+            ),
+            ...body,
+            ...(first ? {} : { continue: true }),
+          },
+          onEvent,
+          abort.signal,
+        );
+      } catch (err) {
+        more = false;
+        c.items = [...c.items, { kind: "error", text: (err as Error).message }];
+        // The server never saw this turn's answer: drop the message from the history so the
+        // next one starts cleanly (it stays visible).
+        if (first && c.history.at(-1)?.role === "user") c.history = c.history.slice(0, -1);
+      }
     }
-    if (c.history.at(-1)?.role === "user") {
+    const last = c.history.at(-1);
+    if (last && (last.role !== "assistant" || last.tool_calls?.length)) {
       // Stopped before the answer: keep the history valid for the next turn.
       c.history = [...c.history, { role: "assistant", content: "(stopped)" }];
     }
+    // Keep only the start of this turn's tool results.
+    c.history = c.history.map((m, i) =>
+      i >= start && m.role === "tool" && typeof m.content === "string" &&
+        m.content.length > MAX_TOOL_RESULT
+        ? { ...m, content: m.content.slice(0, MAX_TOOL_RESULT) + "…(truncated)" }
+        : m
+    );
     this.busy = false;
     this.abort = null;
     c.updatedAt = Date.now();
