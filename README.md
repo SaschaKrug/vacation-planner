@@ -87,12 +87,6 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
 - **Finance:** the currency, the categories (name, color, icon, income / expense / both) and the
   remembered bank formats.
 - **AI assistant:** the model, web search and whether the assistant may change things.
-- **Integrations:** a ready-to-paste prompt with one link for an AI agent that can send HTTP
-  requests (Claude Code, Codex, ChatGPT agent mode …). The link returns instructions with the
-  family's types and ready-to-use API URLs; the agent then reads and changes the calendar
-  through the API, and the open app shows the changes within seconds. The link carries the edit
-  id, so it's as powerful as the edit link (the view-only link gives a read-only version). Also
-  ready-to-run `curl` examples for scripts.
 - **Data:** *Export (JSON)* downloads the whole family (all years, types, entries and notes, but
   not its links) as a file; *Import from file…* (edit link only) replaces all of that with such
   a file, e.g. to restore a backup (the family keeps its name and links; can't be undone).
@@ -194,10 +188,9 @@ On start, the server prints the edit and view links of all families it holds.
 
 ## API
 
-Base URL: `https://<project-ref>.supabase.co/functions/v1/api` (*Settings* → *Integrations* in the app
-shows ready-to-run examples for your family). The family id from the edit link is the access
-key; the other links can only read (see [Links](#links)). Types can be referenced by id or by
-name (case-insensitive). Dates are `YYYY-MM-DD`.
+Base URL: `https://<project-ref>.supabase.co/functions/v1/api`. The family id from the edit link
+is the access key; the other links can only read (see [Links](#links)). Types can be referenced
+by id or by name (case-insensitive). Dates are `YYYY-MM-DD`.
 
 `/sessions/...` is the name from before families and works as an alias of `/families/...`
 everywhere, so existing calendar subscriptions and scripts keep working.

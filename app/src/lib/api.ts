@@ -306,7 +306,6 @@ export const api = {
       if ((err as Error).name !== "AbortError") throw err;
     }
   },
-  agentUrl: (token: string) => `${apiBase()}${fam(token)}/agent`,
   calendarUrl: (feedId: string, params: Record<string, string> = {}) => {
     const qs = new URLSearchParams(params).toString();
     return `${apiBase()}${fam(feedId)}/calendar.ics${qs ? "?" + qs : ""}`;
