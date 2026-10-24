@@ -85,7 +85,13 @@ export async function listModels(p: Provider, net: NetOptions): Promise<string[]
  */
 export async function* streamChat(
   p: Provider,
-  body: { messages: ChatMessage[]; tools?: ToolSpec[]; temperature?: number },
+  body: {
+    messages: ChatMessage[];
+    tools?: ToolSpec[];
+    /** "none" keeps the tools known but has the model answer (default "auto"). */
+    toolChoice?: "auto" | "none";
+    temperature?: number;
+  },
   net: NetOptions,
   signal?: AbortSignal,
 ): AsyncGenerator<StreamEvent> {
@@ -95,7 +101,7 @@ export async function* streamChat(
     body: JSON.stringify({
       model: p.model,
       messages: body.messages,
-      ...(body.tools?.length ? { tools: body.tools, tool_choice: "auto" } : {}),
+      ...(body.tools?.length ? { tools: body.tools, tool_choice: body.toolChoice ?? "auto" } : {}),
       ...(body.temperature !== undefined ? { temperature: body.temperature } : {}),
       stream: true,
     }),

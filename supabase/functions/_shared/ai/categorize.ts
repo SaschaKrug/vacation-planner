@@ -1,18 +1,27 @@
-// Sorts transactions into the family's categories with its AI model: the rows go to the model in
-// batches, with the categories and how the family sorted similar payees before; the answer is a
-// JSON object of row number -> category id. Only categories that fit (income / expense) count.
+// Sorts transactions into the family's categories. First without AI: a row gets the category
+// that earlier transactions of the same payee mostly have. The rest goes to the family's AI
+// model in batches, with the categories and how the family sorted payees before; it may look up
+// payees it doesn't know on the web (when search is set up). Its answer is a JSON object of row
+// number -> category id. Only categories that fit (income / expense) count.
 
 import { HttpError } from "../http.ts";
 import type { Lang } from "../ics.ts";
-import type { CategoryRow, TransactionRow } from "../store.ts";
+import type { CategoryRow, SearchProvider, Store, TransactionRow } from "../store.ts";
 import type { NetOptions } from "./net.ts";
-import { type Provider, streamChat } from "./provider.ts";
+import { type ChatMessage, type Provider, streamChat } from "./provider.ts";
+import { runTool, toolsFor } from "./tools.ts";
 
 /** Rows per model request, and requests at once. */
 const BATCH = 50;
 const PARALLEL = 4;
 /** Already sorted payees shown as examples. */
 const MAX_EXAMPLES = 60;
+/** Web searches per batch, and how long searching may go on (Edge Functions stop at 150 s). */
+const MAX_SEARCHES = 6;
+const SEARCH_BUDGET_MS = 60_000;
+const MAX_SEARCH_RESULT = 6_000;
+/** The share of a payee's earlier transactions one category needs to be used without AI. */
+const MAJORITY = 0.6;
 
 export const MARKER = "You sort bank transactions into categories.";
 
@@ -22,6 +31,48 @@ const LANGUAGES: Record<Lang, string> = { en: "English", de: "German" };
 export function fits(c: CategoryRow, amountCents: number): boolean {
   if (c.kind === "both" || amountCents === 0) return true;
   return (c.kind === "income") === amountCents > 0;
+}
+
+/**
+ * What makes transactions "similar": the first words of the payee (or, without one, of the
+ * description), without numbers, punctuation and case, so "REWE Markt 1234 Berlin" and
+ * "Rewe Markt 5678 Berlin" match.
+ */
+export function similarKey(t: { payee: string; description: string }): string {
+  const words = (s: string) =>
+    s.toLowerCase().replace(/[^\p{L}\s]+/gu, " ").split(/\s+/).filter((w) => w.length > 1);
+  const payee = words(t.payee);
+  return (payee.length ? payee : words(t.description)).slice(0, 3).join(" ");
+}
+
+/**
+ * Categories from similar transactions that already have one: the category most of them have
+ * (at least 60 %), if it fits the amount. No AI involved.
+ */
+export function matchSimilar(
+  rows: TransactionRow[],
+  sorted: TransactionRow[],
+  categories: CategoryRow[],
+): Map<string, string> {
+  const byId = new Map(categories.map((c) => [c.id, c]));
+  const counts = new Map<string, Map<string, number>>();
+  for (const t of sorted) {
+    const key = similarKey(t);
+    if (!key || !t.category_id || !byId.has(t.category_id)) continue;
+    const c = counts.get(key) ?? new Map<string, number>();
+    c.set(t.category_id, (c.get(t.category_id) ?? 0) + 1);
+    counts.set(key, c);
+  }
+  const out = new Map<string, string>();
+  for (const row of rows) {
+    const c = counts.get(similarKey(row));
+    if (!c) continue;
+    const fitting = [...c].filter(([id]) => fits(byId.get(id)!, row.amount_cents));
+    const total = fitting.reduce((sum, [, n]) => sum + n, 0);
+    const [best, n] = fitting.sort((a, b) => b[1] - a[1])[0] ?? [];
+    if (best && n / total >= MAJORITY) out.set(row.id, best);
+  }
+  return out;
 }
 
 function oneLine(s: string, max: number) {
@@ -54,6 +105,7 @@ export function categorizePrompt(
   categories: CategoryRow[],
   sorted: TransactionRow[],
   lang: Lang,
+  search = false,
 ): string {
   const ex = examples(sorted, categories);
   return [
@@ -67,6 +119,12 @@ export function categorizePrompt(
       })`
     ),
     ...(ex.length ? ["How the family sorted earlier transactions (payee -> id):", ...ex] : []),
+    ...(search
+      ? [
+        "If you don't know what a payee is (a company, shop or service), look it up with " +
+        `web_search first. Search only for those, at most ${MAX_SEARCHES} searches.`,
+      ]
+      : []),
     'Answer with one JSON object and nothing else: {"<row number>": "<category id>"}. Use only ' +
     "the ids above, only categories that fit the amount, and null when you aren't fairly sure.",
   ].join("\n");
@@ -85,21 +143,66 @@ export function parseAnswer(content: string): Record<string, unknown> {
   }
 }
 
-async function ask(
-  provider: Provider,
-  system: string,
-  rows: TransactionRow[],
-  net: NetOptions,
-  signal?: AbortSignal,
-): Promise<Record<string, unknown>> {
-  const messages = [
-    { role: "system" as const, content: system },
-    { role: "user" as const, content: rows.map((t, i) => rowLine(i + 1, t)).join("\n") },
+export type Search = { provider: Exclude<SearchProvider, "none">; key: string };
+
+interface AskOptions {
+  provider: Provider;
+  net: NetOptions;
+  system: string;
+  /** Web search for the model; null without. */
+  search: Search | null;
+  store: Store;
+  familyId: string;
+  lang: Lang;
+  deadline: number;
+  signal?: AbortSignal;
+}
+
+/** One batch: the model may search the web a few times, then answers with the JSON object. */
+async function ask(o: AskOptions, rows: TransactionRow[]): Promise<Record<string, unknown>> {
+  const messages: ChatMessage[] = [
+    { role: "system", content: o.system },
+    { role: "user", content: rows.map((t, i) => rowLine(i + 1, t)).join("\n") },
   ];
-  for await (const ev of streamChat(provider, { messages, temperature: 0 }, net, signal)) {
-    if (ev.type === "done") return parseAnswer(ev.content);
+  const tools = o.search
+    ? toolsFor({ writes: false, search: true }).filter((t) => t.function.name === "web_search")
+    : undefined;
+  const allowed = new Set(["web_search"]);
+  let searches = 0;
+  for (;;) {
+    // Once the searches or the time are used up, the model has to answer.
+    const canSearch = !!tools && searches < MAX_SEARCHES && Date.now() < o.deadline;
+    let done: { content: string; toolCalls: ChatMessage["tool_calls"] } | null = null;
+    for await (
+      const ev of streamChat(
+        o.provider,
+        { messages, tools, toolChoice: canSearch ? "auto" : "none", temperature: 0 },
+        o.net,
+        o.signal,
+      )
+    ) {
+      if (ev.type === "done") done = ev;
+    }
+    const calls = (done?.toolCalls ?? []).slice(0, MAX_SEARCHES - searches);
+    if (!canSearch || !calls.length) return parseAnswer(done?.content ?? "");
+    messages.push({ role: "assistant", content: done?.content || null, tool_calls: calls });
+    for (const call of calls) {
+      searches++;
+      const res = await runTool(call.function.name, call.function.arguments, {
+        lang: o.lang,
+        store: o.store,
+        familyId: o.familyId,
+        net: o.net,
+        search: o.search,
+        signal: o.signal,
+      }, allowed);
+      messages.push({
+        role: "tool",
+        tool_call_id: call.id,
+        content: JSON.stringify(res.result).slice(0, MAX_SEARCH_RESULT),
+      });
+    }
   }
-  return {};
 }
 
 /**
@@ -113,12 +216,19 @@ export async function suggestCategories(opts: {
   rows: TransactionRow[];
   sorted: TransactionRow[];
   lang: Lang;
+  search: Search | null;
+  store: Store;
+  familyId: string;
   signal?: AbortSignal;
 }): Promise<Map<string, string>> {
-  const { provider, net, categories, rows, signal } = opts;
+  const { provider, categories, rows } = opts;
   if (!provider.model) throw new HttpError(400, "Pick a model first");
   if (!categories.length) throw new HttpError(400, "There are no categories yet");
-  const system = categorizePrompt(categories, opts.sorted, opts.lang);
+  const askOptions: AskOptions = {
+    ...opts,
+    system: categorizePrompt(categories, opts.sorted, opts.lang, !!opts.search),
+    deadline: Date.now() + SEARCH_BUDGET_MS,
+  };
   const byId = new Map(categories.map((c) => [c.id, c]));
   const byName = new Map(categories.map((c) => [c.name.toLowerCase(), c]));
   const batches: TransactionRow[][] = [];
@@ -127,7 +237,7 @@ export async function suggestCategories(opts: {
   const out = new Map<string, string>();
   for (let i = 0; i < batches.length; i += PARALLEL) {
     const answers = await Promise.all(
-      batches.slice(i, i + PARALLEL).map((b) => ask(provider, system, b, net, signal)),
+      batches.slice(i, i + PARALLEL).map((batch) => ask(askOptions, batch)),
     );
     answers.forEach((answer, j) => {
       const batch = batches[i + j];

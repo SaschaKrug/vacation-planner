@@ -1,4 +1,4 @@
-import { Download, Pencil, Search, Trash2 } from "lucide-react";
+import { Download, Loader2, Pencil, Search, Sparkles, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,7 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useFinance, usePlanner } from "@/features/family/context";
+import { useChat, useFinance, usePlanner } from "@/features/family/context";
 import type { Category, Transaction } from "@/lib/api";
 import { getLang, t } from "@/lib/i18n";
 import { formatMoney } from "@/lib/money";
@@ -25,6 +25,39 @@ export function CategoryLabel({ category }: { category?: Category }) {
       />
       <span className="truncate">{category.icon ? `${category.icon} ` : ""}{category.name}</span>
     </span>
+  );
+}
+
+/** Sorts the period's uncategorized transactions like similar ones, and with the AI if it is
+ *  set up. */
+function AutoCategorizeButton() {
+  const finance = useFinance();
+  const chat = useChat();
+
+  useEffect(() => {
+    chat.loadSettings();
+  }, [chat]);
+
+  if (!chat.settings || !finance.categories.length) return null;
+  const progress = finance.categorizing;
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={!!progress}
+      title={progress ? undefined : t(
+        chat.settings.configured
+          ? "finance.auto_categorize_help"
+          : "finance.auto_categorize_similar",
+      )}
+      aria-label={progress?.total ? t("finance.categorizing", progress) : undefined}
+      onClick={() => finance.autoCategorize()}
+    >
+      {progress ? <Loader2 className="animate-spin" /> : <Sparkles />}{" "}
+      <span className="tabular-nums max-sm:sr-only">
+        {progress?.total ? `${progress.done}/${progress.total}` : t("finance.auto_categorize")}
+      </span>
+    </Button>
   );
 }
 
@@ -88,6 +121,7 @@ export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void
             <SelectItem value="expense">{t("finance.expenses")}</SelectItem>
           </SelectContent>
         </Select>
+        {onEdit && <AutoCategorizeButton />}
       </div>
       {finance.error && <p className="p-4 text-sm text-gap">{finance.error}</p>}
       {list && list.transactions.length === 0 && (

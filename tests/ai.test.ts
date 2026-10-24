@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertMatch } from "jsr:@std/assert@1";
 import { mockAi } from "../dev/mock_ai.ts";
-import { parseAnswer } from "../supabase/functions/_shared/ai/categorize.ts";
+import { parseAnswer, similarKey } from "../supabase/functions/_shared/ai/categorize.ts";
 import { htmlToText, isPrivateAddress } from "../supabase/functions/_shared/ai/net.ts";
 import { createHandler, type HandlerOptions } from "../supabase/functions/_shared/handler.ts";
 import { MemoryRateLimiter } from "../supabase/functions/_shared/rate_limit.ts";
@@ -37,6 +37,12 @@ const fakeFetch = ((input: string | URL | Request, init?: RequestInit) => {
     );
   }
   if (url.hostname === "api.tavily.com") {
+    const query = JSON.parse(String(init?.body ?? "{}")).query ?? "";
+    if (/zorbex/i.test(query)) {
+      return Promise.resolve(Response.json({
+        results: [{ title: "Zorbex", url: "https://zorbex.test", content: "A leisure park" }],
+      }));
+    }
     return Promise.resolve(Response.json({
       results: [{ title: "Ferien Bayern 2027", url: "https://pages.test/ferien", content: "…" }],
     }));
@@ -369,10 +375,50 @@ Deno.test("categorizes given transactions, or a range page by page", async () =>
   assertEquals(cats.filter((c) => c === null).length, 102);
 });
 
-Deno.test("categorizing needs the edit link, settings and valid input", async () => {
+Deno.test("sorts like similar transactions without AI", async () => {
+  const t = await family(); // no AI settings
+  const ids = await addTransactions(t, [
+    { date: "2026-01-02", amountCents: -3000, payee: "REWE Markt 1234", categoryId: "groceries" },
+    { date: "2026-01-09", amountCents: -2000, payee: "Rewe Markt 99", categoryId: "groceries" },
+    { date: "2026-01-10", amountCents: -900, payee: "Kiosk", categoryId: "leisure" },
+    { date: "2026-01-11", amountCents: -900, payee: "Kiosk", categoryId: "shopping" },
+    { date: "2026-02-01", amountCents: -4520, payee: "REWE MARKT 5678" },
+    // The family sorted the kiosk both ways: no clear answer.
+    { date: "2026-02-02", amountCents: -800, payee: "Kiosk" },
+    // Money back from the supermarket doesn't go into an expense category.
+    { date: "2026-02-03", amountCents: 500, payee: "Rewe Markt 1" },
+  ]);
+  requests.length = 0;
+  const res = await t.call("POST", `${t.ai}/categorize`, { from: "2026-02-01" });
+  assertEquals(res.status, 200, res.data);
+  assertEquals([res.data.changed, res.data.matched, res.data.ai], [1, 1, false]);
+  assertEquals(res.data.assignments[0].source, "similar");
+  assertEquals((await categoryOf(t, ids)).slice(4), ["groceries", null, null]);
+  assertEquals(requests.length, 0);
+  assertEquals(
+    similarKey({ payee: "", description: "SEPA 4711 Stadtwerke München GmbH" }),
+    "sepa stadtwerke münchen",
+  );
+});
+
+Deno.test("looks up unknown payees on the web when search is set up", async () => {
+  const t = await configured({}, { searchProvider: "tavily", searchKey: "tvly-key" });
+  const ids = await addTransactions(t, [
+    { date: "2026-02-01", amountCents: -2400, payee: "Zorbex" },
+  ]);
+  requests.length = 0;
+  const res = await t.call("POST", `${t.ai}/categorize`, {});
+  assertEquals([res.data.changed, res.data.matched], [1, 0]);
+  assertEquals(await categoryOf(t, ids), ["leisure"]);
+  assert(requests.some((r) => r.startsWith("https://api.tavily.com")));
+  // The model got the search results back, and could have searched more.
+  assertEquals(aiBody.tool_choice, "auto");
+  assertMatch(aiBody.messages[0].content, /web_search/);
+  assertEquals(aiBody.messages.at(-1).role, "tool");
+});
+
+Deno.test("categorizing needs the edit link and valid input", async () => {
   const t = await family();
-  assertEquals((await t.call("POST", `${t.ai}/categorize`, {})).status, 400); // not set up
-  await t.call("PUT", `${t.ai}/settings`, { baseUrl: AI, model: "mock-large" });
   assertEquals((await t.call("POST", `/families/${t.f.readId}/ai/categorize`, {})).status, 403);
   assertEquals((await t.call("POST", `${t.ai}/categorize`, { ids: ["x"] })).status, 400);
   assertEquals((await t.call("POST", `${t.ai}/categorize`, { from: "March" })).status, 400);

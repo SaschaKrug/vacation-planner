@@ -91,10 +91,12 @@ export interface TransactionResult {
 /** What one POST /ai/categorize call did; `inverse` undoes it. */
 export interface CategorizeResult {
   changed: number; // how many got a category
+  matched: number; // of these, how many like similar earlier ones (no AI)
   considered: number; // how many the model looked at (at most 200)
   remaining: number; // uncategorized ones after these, not looked at yet
+  ai: boolean; // whether the AI is set up (without, only similar ones are matched)
   inverse: TransactionOp[];
-  assignments: { id: string; categoryId: string }[];
+  assignments: { id: string; categoryId: string; source: "similar" | "ai" }[];
 }
 
 export interface AiSettings {
@@ -273,7 +275,8 @@ export const api = {
     request<{ models: string[] }>("POST", `${fam(token)}/ai/models`, body),
   aiTest: (token: string) =>
     request<{ ok: boolean; model: string; reply: string }>("POST", `${fam(token)}/ai/test`, {}),
-  /** Lets the model sort uncategorized transactions (the given ids, or those of a range). */
+  /** Sorts uncategorized transactions (the given ids, or those of a range) like similar ones,
+   *  and the rest with the AI if it is set up. */
   categorize: (
     token: string,
     body: { ids?: string[]; from?: string; to?: string; skip?: number; lang?: "en" | "de" },

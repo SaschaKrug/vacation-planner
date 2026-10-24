@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Loader2, Plus, Sparkles, Upload } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Upload } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -9,7 +9,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useChat, useFinance, usePlanner } from "@/features/family/context";
+import { useFinance, usePlanner } from "@/features/family/context";
 import type { Transaction } from "@/lib/api";
 import { getLang, t, useLang } from "@/lib/i18n";
 import { formatMoney } from "@/lib/money";
@@ -60,7 +60,6 @@ export function FinancePage() {
         <div className="flex-1" />
         {edit && (
           <>
-            <AutoCategorizeButton />
             <Button size="sm" variant="outline" onClick={() => setImporting(true)}>
               <Upload /> <span className="max-md:sr-only">{t("finance.import")}</span>
             </Button>
@@ -99,34 +98,6 @@ export function FinancePage() {
       )}
       {importing && <ImportDialog onClose={() => setImporting(false)} />}
     </>
-  );
-}
-
-/** Lets the AI sort the period's uncategorized transactions; shown once it is set up. */
-function AutoCategorizeButton() {
-  const finance = useFinance();
-  const chat = useChat();
-
-  useEffect(() => {
-    chat.loadSettings();
-  }, [chat]);
-
-  if (!chat.settings?.configured || !finance.categories.length) return null;
-  const progress = finance.categorizing;
-  return (
-    <Button
-      size="sm"
-      variant="outline"
-      disabled={!!progress}
-      title={progress ? undefined : t("finance.auto_categorize_help")}
-      aria-label={progress?.total ? t("finance.categorizing", progress) : undefined}
-      onClick={() => finance.autoCategorize()}
-    >
-      {progress ? <Loader2 className="animate-spin" /> : <Sparkles />}{" "}
-      <span className="tabular-nums max-md:sr-only">
-        {progress?.total ? `${progress.done}/${progress.total}` : t("finance.auto_categorize")}
-      </span>
-    </Button>
   );
 }
 

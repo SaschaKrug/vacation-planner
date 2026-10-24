@@ -43,7 +43,7 @@ type Step =
 
 /** Imports a bank statement: pick the file, check how its columns map, then import the rows
  *  that aren't there yet. Mappings are remembered per bank (by the file's header); the new
- *  transactions can be sorted into categories by the AI afterwards. */
+ *  transactions can be sorted into categories afterwards (like similar ones, then by the AI). */
 export function ImportDialog({ onClose }: { onClose: () => void }) {
   const finance = useFinance();
   const chat = useChat();
@@ -106,7 +106,7 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
     try {
       const res = await finance.importRows(rowsToSend());
       // Runs on after the dialog closed; its toast reports.
-      if (aiReady && categorize) finance.categorizeIds(res.ids);
+      if (categorize && finance.categories.length) finance.categorizeIds(res.ids);
       if (remember && mapping?.signature) await finance.saveMapping(mapping);
       onClose();
     } catch (err) {
@@ -189,13 +189,13 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
                 {t("finance.import_remember")}
               </label>
             )}
-            {aiReady && (
+            {finance.categories.length > 0 && (
               <label className="flex items-center gap-2">
                 <Checkbox
                   checked={categorize}
                   onCheckedChange={(v) => setCategorize(!!v)}
                 />
-                {t("finance.import_categorize")}
+                {t(aiReady ? "finance.import_categorize" : "finance.import_categorize_similar")}
               </label>
             )}
           </div>

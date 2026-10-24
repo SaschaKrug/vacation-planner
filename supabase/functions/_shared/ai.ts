@@ -5,7 +5,7 @@
 
 import { type ChatMessage, listModels, type Provider, streamChat } from "./ai/provider.ts";
 import { checkUrl, type NetOptions } from "./ai/net.ts";
-import { suggestCategories } from "./ai/categorize.ts";
+import { matchSimilar, type Search, suggestCategories } from "./ai/categorize.ts";
 import { cleanHistory, runChat, sseResponse, systemPrompt } from "./ai/chat.ts";
 import type { Ctx } from "./context.ts";
 import { formatDate, isValidDate } from "./dates.ts";
@@ -178,6 +178,13 @@ async function provider(row: AiSettingsRow, env: AiEnv, override: Record<string,
   return { baseUrl, apiKey, model: row.model };
 }
 
+/** The web search the family set up, with its key; null without. */
+async function searchOf(row: AiSettingsRow, env: AiEnv): Promise<Search | null> {
+  return row.search_provider !== "none" && row.search_key_enc
+    ? { provider: row.search_provider, key: await openKey(env, row.search_key_enc) }
+    : null;
+}
+
 /** POST /ai/models {baseUrl?, apiKey?}: the endpoint's models (the form can ask before saving). */
 async function models({ store, req, load }: Ctx, env: AiEnv) {
   const { family } = await load("edit");
@@ -216,9 +223,7 @@ async function chat({ store, req, load }: Ctx, env: AiEnv) {
   const row = await loadRow(store, family.id);
   if (!row.base_url || !row.model) throw new HttpError(400, "The AI assistant isn't set up yet");
   const p: Provider = await provider(row, env);
-  const search = row.search_provider !== "none" && row.search_key_enc
-    ? { provider: row.search_provider, key: await openKey(env, row.search_key_enc) }
-    : null;
+  const search = await searchOf(row, env);
   const [types, categories, settings] = await Promise.all([
     store.listTypes(family.id),
     store.listCategories(family.id),
@@ -262,16 +267,17 @@ async function chat({ store, req, load }: Ctx, env: AiEnv) {
   );
 }
 
-/** POST /ai/categorize {ids?, from?, to?, skip?, lang?}: the model sorts uncategorized
- *  transactions (the given ones, or those in the range after the first `skip`) into categories,
- *  at most 200 per request. Returns `inverse` (ops for /finance/transactions that undo it) and
- *  `remaining`, the uncategorized rows in the range it didn't look at yet. */
+/** POST /ai/categorize {ids?, from?, to?, skip?, lang?}: sorts uncategorized transactions (the
+ *  given ones, or those in the range after the first `skip`, at most 200 per request) into
+ *  categories: like similar earlier transactions where those agree (`matched`, no AI needed),
+ *  the rest by the model, which may search the web for unknown payees. Without AI settings only
+ *  the first step runs (`ai`: false). Returns `inverse` (ops for /finance/transactions that undo
+ *  it) and `remaining`, the uncategorized rows in the range it didn't look at yet. */
 async function categorize({ store, req, load }: Ctx, env: AiEnv) {
   const { family } = await load("edit");
   const body = await readBody(req);
   const row = await loadRow(store, family.id);
-  if (!row.base_url || !row.model) throw new HttpError(400, "The AI assistant isn't set up yet");
-  const p = await provider(row, env);
+  const ai = !!(row.base_url && row.model);
 
   let candidates: TransactionRow[];
   let remaining = 0;
@@ -305,26 +311,38 @@ async function categorize({ store, req, load }: Ctx, env: AiEnv) {
     store.listCategories(family.id),
     candidates.length ? store.listTransactions(family.id) : [],
   ]);
-  const picked = candidates.length
+  const sorted = all.filter((t) => t.category_id);
+  const similar = matchSimilar(candidates, sorted, categories);
+  const rest = candidates.filter((t) => !similar.has(t.id));
+  const byAi = ai && rest.length && categories.length
     ? await suggestCategories({
-      provider: p,
+      provider: await provider(row, env),
       net: env.net,
       categories,
-      rows: candidates,
-      sorted: all.filter((t) => t.category_id),
+      rows: rest,
+      sorted,
       lang: body.lang === "de" ? "de" : "en",
+      search: await searchOf(row, env),
+      store,
+      familyId: family.id,
       signal: req.signal,
     })
     : new Map<string, string>();
-  const ops = [...picked].map(([id, categoryId]) => ({ action: "update", id, categoryId }));
+  const assignments = [
+    ...[...similar].map(([id, categoryId]) => ({ id, categoryId, source: "similar" })),
+    ...[...byAi].map(([id, categoryId]) => ({ id, categoryId, source: "ai" })),
+  ];
+  const ops = assignments.map(({ id, categoryId }) => ({ action: "update", id, categoryId }));
   const { inverse } = ops.length
     ? await applyTransactionOps(store, family.id, ops)
     : { inverse: [] };
   return json({
     changed: ops.length,
+    matched: similar.size,
     considered: candidates.length,
     remaining,
+    ai,
     inverse,
-    assignments: [...picked].map(([id, categoryId]) => ({ id, categoryId })),
+    assignments,
   });
 }

@@ -243,8 +243,9 @@ export class FinanceStore {
     return res;
   }
 
-  /** Lets the AI sort the period's uncategorized transactions into categories, in batches;
-   *  the toast offers to undo it. Does nothing while a run is going on. */
+  /** Sorts the period's uncategorized transactions into categories (like similar ones, the
+   *  rest with the AI), in batches; the toast offers to undo it. Does nothing while a run is
+   *  going on. */
   autoCategorize() {
     if (this.categorizing) return Promise.resolve();
     const { from, to } = this.range();
@@ -263,8 +264,8 @@ export class FinanceStore {
     });
   }
 
-  /** Lets the AI sort the given transactions (e.g. just imported) into categories. Waits for a
-   *  run that is going on. */
+  /** Sorts the given transactions (e.g. just imported) into categories. Waits for a run that
+   *  is going on. */
   categorizeIds(ids: string[]) {
     if (!ids.length) return Promise.resolve();
     return this.categorize(async (call) => {
@@ -292,12 +293,14 @@ export class FinanceStore {
       this.progress(0, 0);
       const inverses: TransactionOp[][] = [];
       let changed = 0;
+      let matched = 0;
       let error = "";
       try {
         await run(async (body) => {
           const res = await api.categorize(this.token, { ...body, lang: getLang() });
           inverses.push(res.inverse);
           changed += res.changed;
+          matched += res.matched;
           return res;
         });
       } catch (err) {
@@ -308,7 +311,7 @@ export class FinanceStore {
         this.reload();
         // The last call's inverse first.
         const inverse = inverses.reverse().flat();
-        toast(t("finance.categorized", { n: changed }), {
+        toast(t("finance.categorized", { n: changed, matched }), {
           action: { label: t("finance.undo"), onClick: () => this.undo(inverse) },
         });
       } else this.emit();
