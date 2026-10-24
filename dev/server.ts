@@ -1,5 +1,6 @@
-// Local development server: serves web/ and the API with an in-memory store.
-//   deno task dev                ->  http://localhost:8787
+// Local development server: serves the built app (app/dist) and the API with an in-memory store.
+//   deno task dev                ->  http://localhost:8787 (run `npm run build` in app/ first,
+//                                    or `npm run dev` there for the app with hot reload)
 //   deno task dev --persist      keep the data in .dev/data.json across restarts
 //   deno task dev --seed         add a demo family if there is none yet
 //   deno task dev --rate-limit   enforce low rate limits, to see the app's 429 handling
@@ -11,7 +12,7 @@ import { MemoryStore } from "../supabase/functions/_shared/store.ts";
 const args = parseArgs(Deno.args, { boolean: ["persist", "seed", "rate-limit"] });
 const port = Number(Deno.env.get("PORT") ?? 8787);
 const origin = `http://localhost:${port}`;
-const root = new URL("../web/", import.meta.url);
+const root = new URL("../app/dist/", import.meta.url);
 const dataDir = new URL("../.dev/", import.meta.url);
 const dataFile = new URL("data.json", dataDir);
 const TYPES: Record<string, string> = {
@@ -19,6 +20,9 @@ const TYPES: Record<string, string> = {
   js: "text/javascript; charset=utf-8",
   css: "text/css; charset=utf-8",
   svg: "image/svg+xml",
+  json: "application/json",
+  png: "image/png",
+  woff2: "font/woff2",
 };
 
 // Low enough to hit by hand: a few new families, or a minute of fast clicking.
@@ -115,15 +119,23 @@ if (args.seed && store.families.size === 0) await seed();
 Deno.serve({ port, onListen: () => listFamilies() }, async (req) => {
   const { pathname } = new URL(req.url);
   if (pathname === "/api" || pathname.startsWith("/api/")) return handleApi(req);
-  const file = pathname === "/" ? "index.html" : pathname.slice(1);
+  const file = pathname === "/" ? "index.html" : decodeURIComponent(pathname.slice(1));
   if (file.includes("..")) return new Response("Bad request", { status: 400 });
+  // The app routes in the browser (/f/<id>/vacation …): paths without a file extension get
+  // index.html, like GitHub Pages does with 404.html.
+  const path = /\.[a-z0-9]+$/i.test(file) ? file : "index.html";
   try {
-    const body = await Deno.readFile(new URL(file, root));
-    const ext = file.split(".").pop() ?? "";
+    const body = await Deno.readFile(new URL(path, root));
+    const ext = path.split(".").pop() ?? "";
     return new Response(body, {
       headers: { "content-type": TYPES[ext] ?? "application/octet-stream" },
     });
   } catch {
+    if (path === "index.html") {
+      return new Response("app/dist is missing: run `npm ci && npm run build` in app/", {
+        status: 503,
+      });
+    }
     return new Response("Not found", { status: 404 });
   }
 });
@@ -135,6 +147,6 @@ function listFamilies() {
   ].filter(Boolean);
   console.log(`Family Planner on ${origin}${flags.length ? ` (${flags.join(", ")})` : ""}`);
   for (const f of store.families.values()) {
-    console.log(`  ${f.name}: edit ${origin}/?s=${f.id}  view ${origin}/?s=${f.read_id}`);
+    console.log(`  ${f.name}: edit ${origin}/f/${f.id}  view ${origin}/f/${f.read_id}`);
   }
 }

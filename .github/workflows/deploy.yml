@@ -19,6 +19,14 @@ jobs:
           deno-version: v2.x
       - run: deno task check
       - run: deno task test
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Type-check and build the app
+        working-directory: app
+        run: npm ci && npm run build
 
   backend:
     name: Supabase (database + API function)
@@ -61,6 +69,14 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Build the app
+        working-directory: app
+        run: npm ci && npm run build
       - name: Point the frontend at the Supabase function
         env:
           PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
@@ -70,12 +86,12 @@ jobs:
           else
             api=""
           fi
-          echo "window.VP_CONFIG = { apiBase: \"${api}\" };" > web/config.js
-      - name: Publish web/ to the gh-pages branch
+          echo "window.FP_CONFIG = { apiBase: \"${api}\" };" > app/dist/config.js
+      - name: Publish app/dist to the gh-pages branch
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./web
+          publish_dir: ./app/dist
           force_orphan: true
           # Keeps the custom domain (force_orphan would otherwise drop the CNAME file).
           cname: family-planner.fa-krug.de

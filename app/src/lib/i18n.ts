@@ -1,23 +1,48 @@
-// UI translations. Static markup uses data-i18n* attributes (see applyStatic);
-// code calls t(key, vars). A string value may contain {var} placeholders, a
-// function value receives the vars (for plurals).
+// UI translations. Components call t(key, vars) and re-render on a language switch through
+// useLang(). A string value may contain {var} placeholders, a function value receives the vars
+// (for plurals). Strings with markup (<b>, <kbd>) are our own and rendered as HTML.
 
-const LANG_KEY = "vp-lang";
-export const LANGS = { en: "English", de: "Deutsch" };
+import { useSyncExternalStore } from "react";
 
-const s = (n, one, other) => (n === 1 ? one : other);
+export type Lang = "en" | "de";
+export const LANGS: Record<Lang, string> = { en: "English", de: "Deutsch" };
+const LANG_KEY = "fp-lang";
+const OLD_LANG_KEY = "vp-lang"; // from before the rename
 
-const STRINGS = {
+type Vars = Record<string, string | number>;
+type Value = string | string[] | ((vars: Vars) => string);
+type Dict = Record<string, Value>;
+
+const s = (
+  n: string | number,
+  one: string,
+  other: string,
+) => (Number(n) === 1 ? one : other);
+
+const STRINGS: Record<Lang, Dict> = {
   en: {
     "app.title": "Family Planner",
     "app.description":
       "Plan your family's year: vacation, holidays and day-care closures in one shared calendar. Share it with a link and subscribe in iCloud.",
     "lang.label": "Language",
-    "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+    "months": [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
+    ],
     "weekdays": ["S", "M", "T", "W", "T", "F", "S"],
 
     // top bar
-    "top.planner_name": "Planner name",
+    "top.planner_name": "Family name",
     "top.prev_year": "Previous year",
     "top.prev_year_title": "Previous year (PageUp)",
     "top.next_year": "Next year",
@@ -28,32 +53,32 @@ const STRINGS = {
     "top.more": "More",
     "menu.ai": "AI assistant",
     "menu.api": "API for scripts",
-    "menu.clone": "Clone planner",
+    "menu.clone": "Clone family",
     "menu.export": "Export (JSON)",
     "menu.import": "Import from file…",
-    "menu.help": "Help &amp; shortcuts",
+    "menu.help": "Help & shortcuts",
     "menu.weekdays": "Always show weekdays",
     "menu.weekdays_title": "Show the weekday letters on the days at every zoom level",
     "menu.undo_key": "Ctrl/⌘+Z",
     "menu.redo_key": "Ctrl/⌘+Y",
 
     // landing
-    "landing.title": "Plan the whole year at a glance",
+    "landing.title": "Plan your family's year",
     "landing.lead":
-      "Mark day-care closures, holidays and everybody's vacation in one shared year calendar, see which days still need cover, and subscribe to it from iCloud. No login – the link is the key.",
-    "landing.create": "Create a new planner",
+      "One place for your family's plans: vacation, holidays and day-care closures in a shared year calendar, with a coverage check and iCloud subscriptions. Finances and an AI assistant are next. No login – the link is the key.",
+    "landing.create": "Create a family",
     "landing.config_warning":
       "The backend isn't configured yet. Add the Supabase secrets to the repository and re-run the deploy workflow (see README).",
     "landing.recent": "Recently opened on this device",
     "landing.view_only": " (view only)",
-    "landing.open_label": "Open an existing planner",
-    "landing.open_placeholder": "Paste a planner link or id",
+    "landing.open_label": "Open an existing family",
+    "landing.open_placeholder": "Paste a link or id",
     "landing.open": "Open",
 
-    // planner
+    // vacation calendar
     "toolbar.label": "Entry types",
     "toolbar.edit_types": "Edit types",
-    "toolbar.note": "Icon &amp; note",
+    "toolbar.note": "Icon & note",
     "toolbar.note_title": "Add an icon or comment to the selected days (N)",
     "toolbar.skip_weekends": "Skip weekends",
     "toolbar.skip_weekends_title": "Weekends are left out when filling, pasting or toggling ranges",
@@ -110,7 +135,7 @@ const STRINGS = {
     "sync.updating": "Updating…",
     "toast.save_failed": "Couldn't save: {msg}",
     "toast.load_failed": "Couldn't load: {msg}",
-    "toast.not_found": "This planner doesn't exist (anymore). Check the link.",
+    "toast.not_found": "This family doesn't exist (anymore). Check the link.",
     "toast.nothing_undo": "Nothing to undo",
     "toast.nothing_redo": "Nothing to redo",
     "toast.select_first": "Select some days first",
@@ -123,18 +148,19 @@ const STRINGS = {
     "toast.delete_failed": "Couldn't delete: {msg}",
     "toast.add_type_failed": "Couldn't add type: {msg}",
     "toast.copy_types_failed": "Couldn't copy types: {msg}",
-    "toast.create_failed": "Couldn't create a planner: {msg}",
-    "toast.clone_failed": "Couldn't clone the planner: {msg}",
+    "toast.create_failed": "Couldn't create a family: {msg}",
+    "toast.clone_failed": "Couldn't clone the family: {msg}",
     "toast.rate_limited": "Too many requests – please try again later",
     "toast.wait_saving": "Changes are still being saved – try again in a moment",
     "clone.confirm":
-      "Create a copy of “{name}” with all years, types, entries and notes?\n\nThe copy gets its own new links; this planner stays unchanged.",
+      "Create a copy of “{name}” with all years, types, entries and notes?\n\nThe copy gets its own new links; this family stays unchanged.",
     "clone.name": "{name} (copy)",
-    "toast.export_failed": "Couldn't export the planner: {msg}",
-    "toast.import_invalid": "This isn't a planner export (a .json file from ⋯ → Export)",
+    "toast.export_failed": "Couldn't export the family: {msg}",
+    "toast.import_invalid":
+      "This isn't a Family Planner export (a .json file from Settings → Data → Export)",
     "toast.import_failed": "Couldn't import the file: {msg}",
     "import.confirm":
-      "Replace everything in “{name}” with the contents of “{file}”?\n\nAll years, types, entries and notes of this planner are overwritten; the name and the links stay. This can't be undone – export first to keep a copy.",
+      "Replace everything in “{name}” with the contents of “{file}”?\n\nAll years, types, entries and notes of this family are overwritten; the name and the links stay. This can't be undone – export first to keep a copy.",
     "toast.rename_failed": "Couldn't rename: {msg}",
     "toast.copied": "Copied to clipboard",
 
@@ -170,7 +196,7 @@ const STRINGS = {
       } in ${year}. This can't be undone.`,
 
     // note dialog
-    "note.title": "Icon &amp; note",
+    "note.title": "Icon & note",
     "note.days": ({ n, span }) => `${n} ${s(n, "day", "days")}: ${span}`,
     "note.icon": "Icon",
     "note.icon_other": "Or any other emoji",
@@ -182,18 +208,18 @@ const STRINGS = {
     "note.save": "Save",
 
     // share dialog
-    "share.title": "Share &amp; subscribe",
+    "share.title": "Share & subscribe",
     "share.tab_links": "Links",
-    "share.tab_calendar": "Calendar &amp; iCloud",
+    "share.tab_calendar": "Calendar & iCloud",
     "share.edit": "Edit link",
     "share.edit_help":
-      "Anyone with this link can view and change the planner. Bookmark it – it's the only key.",
+      "Anyone with this link can view and change everything. Bookmark it – it's the only key.",
     "share.view": "View-only link",
     "share.icloud_help":
       "A read-only calendar feed. Apple Calendar checks it for changes regularly (choose “Every hour” or “Every 5 minutes” when subscribing on a Mac).",
     "share.include": "Include",
     "share.gaps": "“⚠ Not covered” warnings",
-    "share.notes": "Icons &amp; notes",
+    "share.notes": "Icons & notes",
     "share.subscribe": "Subscribe on this device",
     "share.howto": "How to add it to iCloud",
     "share.howto_ios":
@@ -206,10 +232,10 @@ const STRINGS = {
     "close": "Close",
 
     // AI dialog
-    "ai.title": "Let an AI manage this planner",
+    "ai.title": "Let an AI manage this family's calendar",
     "ai.intro":
-      "Point an AI agent at one link: it explains the planner and the API, so the agent can read and change entries, types and notes for you. Changes show up here within seconds.",
-    "ai.readonly": "This is a view-only link, so the AI can only read the planner.",
+      "Point an AI agent at one link: it explains the calendar and the API, so the agent can read and change entries, types and notes for you. Changes show up here within seconds.",
+    "ai.readonly": "This is a view-only link, so the AI can only read the calendar.",
     "ai.quickstart": "Quickstart",
     "ai.quickstart_help":
       "Copy this prompt into an AI agent that can send HTTP requests, e.g. Claude Code, Codex or ChatGPT agent mode.",
@@ -220,18 +246,18 @@ const STRINGS = {
     "ai.prompt": "Prompt",
     "ai.copy": "Copy prompt",
     "ai.warning":
-      "Like the edit link, this link is the key: anyone who has it – including the AI service – can change the planner.",
+      "Like the edit link, this link is the key: anyone who has it – including the AI service – can change the calendar.",
 
     // API dialog
     "api.intro":
       "Fill entries from scripts, shortcuts or other tools. Types can be referenced by id or name and belong to a year: a day uses the types of its year. The session id in the URL is the access key.",
-    "api.read": "Read the planner (types, entries and notes of a year)",
+    "api.read": "Read the calendar (types, entries and notes of a year)",
     "api.add": "Add “{name}” from Aug 3 to Aug 14, skipping weekends",
     "api.ops": "Several operations at once (actions: add | remove | set | clear)",
     "api.notes": "Icon and comment on days (set replaces a day's note, clear removes it)",
     "api.types": "Entry types of a year (every year has its own; copy them into another year)",
     "api.feed": "Calendar feed (read-only id works too). Optional: ?types=a,b&gaps=1&notes=1",
-    "api.new": "New planner",
+    "api.new": "New family",
     "api.ex_vacation": "Vacation",
     "api.ex_needs": "Day care closed",
     "api.ex_rename": "Vacation Dad",
@@ -249,7 +275,7 @@ const STRINGS = {
     "help.multi": "Multi-select",
     "help.multi_do":
       "Turn it on, then tap days to add or remove them; long-press + drag adds a range",
-    "help.undo_touch": "⋯ menu",
+    "help.undo_touch": "↶ / ↷ at the top",
     "help.help_do": "Show this help",
     "help.click": "Click / drag",
     "help.click_do": "Select a day / a range of days (across months)",
@@ -277,6 +303,76 @@ const STRINGS = {
     "help.gap_do": "Jump to the next day that still needs cover",
     "help.esc": "<kbd>Esc</kbd>",
     "help.esc_do": "Clear the selection",
+    // ---- Family Planner shell
+    "nav.vacation": "Vacation",
+    "nav.finance": "Finance",
+    "nav.settings": "Settings",
+    "nav.help": "Help & shortcuts",
+    "nav.soon": "Soon",
+    "nav.planning": "Planning",
+    "family.switch": "Switch family",
+    "family.recent": "Opened on this device",
+    "family.new": "New family",
+    "family.open": "Open a link…",
+    "family.open_title": "Open a family",
+    "family.open_help": "Paste a Family Planner link or id.",
+    "family.view_only": "view only",
+    "family.calendar_only": "calendar only",
+    "family.loading": "Loading…",
+    "chat.title": "AI assistant",
+    "chat.open": "AI assistant (Ctrl/⌘+J)",
+    "chat.close": "Close the AI assistant",
+    "chat.soon":
+      "Soon you can chat with an AI here: it researches on the web and changes the calendar for you. You'll set it up under Settings.",
+    "page.share": "Share",
+    "page.undo": "Undo (Ctrl/⌘+Z)",
+    "page.redo": "Redo (Ctrl/⌘+Y)",
+    "settings.title": "Settings",
+    "settings.general": "General",
+    "settings.sharing": "Sharing",
+    "settings.vacation": "Vacation",
+    "settings.integrations": "Integrations",
+    "settings.data": "Data",
+    "settings.family_scope": "For the whole family",
+    "settings.device_scope": "Only on this device",
+    "settings.name": "Family name",
+    "settings.name_help":
+      "Shown in the family switcher, the page title and calendar subscriptions.",
+    "settings.language": "Language",
+    "settings.theme": "Appearance",
+    "theme.system": "Like the system",
+    "theme.light": "Light",
+    "theme.dark": "Dark",
+    "settings.readonly": "This is a view-only link: you can look at everything, but not change it.",
+    "settings.calendar_view": "Calendar view",
+    "settings.skip_weekends_title":
+      "Weekends are left out when filling, pasting or toggling ranges",
+    "settings.types_readonly": "Entry types can only be changed with the edit link.",
+    "settings.year": "Year",
+    "share.view_help": "Anyone with this link can see everything, but not change anything.",
+    "share.rotate": "New link",
+    "share.rotate_view_confirm":
+      "Make a new view-only link? The current one stops working for everyone who has it.",
+    "share.rotate_feed_confirm":
+      "Make a new feed link? Calendar subscriptions with the current one stop updating and need to be added again.",
+    "share.rotated": "New link made",
+    "share.rotate_failed": "Couldn't make a new link: {msg}",
+    "share.legacy": "Old view-only link",
+    "share.legacy_help":
+      "Shared before the rename to Family Planner. It still opens the calendar (read-only) and the calendar subscriptions made with it, but nothing else.",
+    "share.legacy_remove": "Remove",
+    "share.legacy_confirm":
+      "Remove the old view-only link? Everyone who has it, and calendar subscriptions made with it, lose access.",
+    "share.legacy_removed": "Old link removed",
+    "share.feed": "Calendar subscription",
+    "share.feed_help": "This link only opens the calendar feed, nothing else.",
+    "data.export_help": "All years, types, entries and notes as a JSON file (without the links).",
+    "data.import_help":
+      "Replaces all years, types, entries and notes of this family with an exported file; the name and the links stay. Can't be undone.",
+    "data.clone_help": "A copy of this family with all its data and its own new links.",
+    "data.imported": "Imported",
+    "integrations.ai": "AI agents",
+    "integrations.api": "API for scripts",
   },
 
   de: {
@@ -284,10 +380,23 @@ const STRINGS = {
     "app.description":
       "Plane das Jahr deiner Familie: Urlaub, Feiertage und Kita-Schließtage in einem gemeinsamen Kalender. Per Link teilen und in iCloud abonnieren.",
     "lang.label": "Sprache",
-    "months": ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"],
+    "months": [
+      "Jan",
+      "Feb",
+      "Mär",
+      "Apr",
+      "Mai",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Okt",
+      "Nov",
+      "Dez",
+    ],
     "weekdays": ["S", "M", "D", "M", "D", "F", "S"],
 
-    "top.planner_name": "Name des Planers",
+    "top.planner_name": "Name der Familie",
     "top.prev_year": "Vorheriges Jahr",
     "top.prev_year_title": "Vorheriges Jahr (Bild ↑)",
     "top.next_year": "Nächstes Jahr",
@@ -298,30 +407,30 @@ const STRINGS = {
     "top.more": "Mehr",
     "menu.ai": "KI-Assistent",
     "menu.api": "API für Skripte",
-    "menu.clone": "Planer duplizieren",
+    "menu.clone": "Familie duplizieren",
     "menu.export": "Exportieren (JSON)",
     "menu.import": "Aus Datei importieren…",
-    "menu.help": "Hilfe &amp; Tastenkürzel",
+    "menu.help": "Hilfe & Tastenkürzel",
     "menu.weekdays": "Wochentage immer anzeigen",
     "menu.weekdays_title": "Die Wochentag-Buchstaben in jeder Zoomstufe auf den Tagen anzeigen",
     "menu.undo_key": "Strg/⌘+Z",
     "menu.redo_key": "Strg/⌘+Y",
 
-    "landing.title": "Das ganze Jahr auf einen Blick planen",
+    "landing.title": "Das Jahr deiner Familie planen",
     "landing.lead":
-      "Trage Kita-Schließtage, Feiertage und den Urlaub aller in einen gemeinsamen Jahreskalender ein, sieh, welche Tage noch abgedeckt werden müssen, und abonniere ihn in iCloud. Kein Login – der Link ist der Schlüssel.",
-    "landing.create": "Neuen Planer erstellen",
+      "Ein Ort für die Pläne deiner Familie: Urlaub, Feiertage und Kita-Schließtage in einem gemeinsamen Jahreskalender, mit Betreuungs-Check und iCloud-Abo. Finanzen und ein KI-Assistent kommen als Nächstes. Kein Login – der Link ist der Schlüssel.",
+    "landing.create": "Familie erstellen",
     "landing.config_warning":
       "Das Backend ist noch nicht eingerichtet. Lege die Supabase-Secrets im Repository an und starte den Deploy-Workflow erneut (siehe README).",
     "landing.recent": "Zuletzt auf diesem Gerät geöffnet",
     "landing.view_only": " (nur ansehen)",
-    "landing.open_label": "Vorhandenen Planer öffnen",
-    "landing.open_placeholder": "Link oder ID eines Planers einfügen",
+    "landing.open_label": "Vorhandene Familie öffnen",
+    "landing.open_placeholder": "Link oder ID einfügen",
     "landing.open": "Öffnen",
 
     "toolbar.label": "Eintragsarten",
     "toolbar.edit_types": "Arten bearbeiten",
-    "toolbar.note": "Symbol &amp; Notiz",
+    "toolbar.note": "Symbol & Notiz",
     "toolbar.note_title": "Den ausgewählten Tagen ein Symbol oder einen Kommentar geben (N)",
     "toolbar.skip_weekends": "Wochenenden auslassen",
     "toolbar.skip_weekends_title":
@@ -382,7 +491,7 @@ const STRINGS = {
     "sync.updating": "Aktualisiert…",
     "toast.save_failed": "Speichern fehlgeschlagen: {msg}",
     "toast.load_failed": "Laden fehlgeschlagen: {msg}",
-    "toast.not_found": "Diesen Planer gibt es nicht (mehr). Prüfe den Link.",
+    "toast.not_found": "Diese Familie gibt es nicht (mehr). Prüfe den Link.",
     "toast.nothing_undo": "Nichts zum Rückgängigmachen",
     "toast.nothing_redo": "Nichts zum Wiederholen",
     "toast.select_first": "Wähle zuerst Tage aus",
@@ -395,18 +504,19 @@ const STRINGS = {
     "toast.delete_failed": "Löschen fehlgeschlagen: {msg}",
     "toast.add_type_failed": "Art konnte nicht hinzugefügt werden: {msg}",
     "toast.copy_types_failed": "Arten konnten nicht übernommen werden: {msg}",
-    "toast.create_failed": "Planer konnte nicht erstellt werden: {msg}",
-    "toast.clone_failed": "Planer konnte nicht dupliziert werden: {msg}",
+    "toast.create_failed": "Familie konnte nicht erstellt werden: {msg}",
+    "toast.clone_failed": "Familie konnte nicht dupliziert werden: {msg}",
     "toast.rate_limited": "Zu viele Anfragen – bitte später noch einmal versuchen",
     "toast.wait_saving": "Änderungen werden noch gespeichert – gleich noch einmal versuchen",
     "clone.confirm":
-      "Eine Kopie von „{name}“ mit allen Jahren, Typen, Einträgen und Notizen erstellen?\n\nDie Kopie bekommt eigene, neue Links; dieser Planer bleibt unverändert.",
+      "Eine Kopie von „{name}“ mit allen Jahren, Typen, Einträgen und Notizen erstellen?\n\nDie Kopie bekommt eigene, neue Links; diese Familie bleibt unverändert.",
     "clone.name": "{name} (Kopie)",
-    "toast.export_failed": "Planer konnte nicht exportiert werden: {msg}",
-    "toast.import_invalid": "Das ist kein Planer-Export (eine .json-Datei aus ⋯ → Exportieren)",
+    "toast.export_failed": "Familie konnte nicht exportiert werden: {msg}",
+    "toast.import_invalid":
+      "Das ist kein Familienplaner-Export (eine .json-Datei aus Einstellungen → Daten → Exportieren)",
     "toast.import_failed": "Datei konnte nicht importiert werden: {msg}",
     "import.confirm":
-      "Alles in „{name}“ durch den Inhalt von „{file}“ ersetzen?\n\nAlle Jahre, Typen, Einträge und Notizen dieses Planers werden überschrieben; Name und Links bleiben. Das lässt sich nicht rückgängig machen – vorher exportieren, um eine Kopie zu behalten.",
+      "Alles in „{name}“ durch den Inhalt von „{file}“ ersetzen?\n\nAlle Jahre, Typen, Einträge und Notizen dieser Familie werden überschrieben; Name und Links bleiben. Das lässt sich nicht rückgängig machen – vorher exportieren, um eine Kopie zu behalten.",
     "toast.rename_failed": "Umbenennen fehlgeschlagen: {msg}",
     "toast.copied": "In die Zwischenablage kopiert",
 
@@ -442,7 +552,7 @@ const STRINGS = {
         s(n, "Tag", "Tagen")
       } in ${year} verwendet. Das kann nicht rückgängig gemacht werden.`,
 
-    "note.title": "Symbol &amp; Notiz",
+    "note.title": "Symbol & Notiz",
     "note.days": ({ n, span }) => `${n} ${s(n, "Tag", "Tage")}: ${span}`,
     "note.icon": "Symbol",
     "note.icon_other": "Oder ein beliebiges anderes Emoji",
@@ -454,18 +564,18 @@ const STRINGS = {
     "note.cancel": "Abbrechen",
     "note.save": "Speichern",
 
-    "share.title": "Teilen &amp; abonnieren",
+    "share.title": "Teilen & abonnieren",
     "share.tab_links": "Links",
-    "share.tab_calendar": "Kalender &amp; iCloud",
+    "share.tab_calendar": "Kalender & iCloud",
     "share.edit": "Bearbeitungslink",
     "share.edit_help":
-      "Jeder mit diesem Link kann den Planer ansehen und ändern. Setz ein Lesezeichen – er ist der einzige Schlüssel.",
+      "Jeder mit diesem Link kann alles ansehen und ändern. Setz ein Lesezeichen – er ist der einzige Schlüssel.",
     "share.view": "Nur-Lese-Link",
     "share.icloud_help":
       "Ein schreibgeschützter Kalender-Feed. Apple Kalender prüft ihn regelmäßig auf Änderungen (beim Abonnieren auf dem Mac „Jede Stunde“ oder „Alle 5 Minuten“ wählen).",
     "share.include": "Enthalten",
     "share.gaps": "„⚠ Nicht abgedeckt“-Warnungen",
-    "share.notes": "Symbole &amp; Notizen",
+    "share.notes": "Symbole & Notizen",
     "share.subscribe": "Auf diesem Gerät abonnieren",
     "share.howto": "So fügst du ihn zu iCloud hinzu",
     "share.howto_ios":
@@ -477,10 +587,10 @@ const STRINGS = {
     "copy": "Kopieren",
     "close": "Schließen",
 
-    "ai.title": "Planer von einer KI verwalten lassen",
+    "ai.title": "Den Kalender der Familie von einer KI verwalten lassen",
     "ai.intro":
-      "Gib einem KI-Agenten einen einzigen Link: Er erklärt den Planer und die API, damit der Agent Einträge, Arten und Notizen für dich lesen und ändern kann. Änderungen erscheinen hier nach wenigen Sekunden.",
-    "ai.readonly": "Das ist ein Nur-Lese-Link, die KI kann den Planer also nur lesen.",
+      "Gib einem KI-Agenten einen einzigen Link: Er erklärt den Kalender und die API, damit der Agent Einträge, Arten und Notizen für dich lesen und ändern kann. Änderungen erscheinen hier nach wenigen Sekunden.",
+    "ai.readonly": "Das ist ein Nur-Lese-Link, die KI kann den Kalender also nur lesen.",
     "ai.quickstart": "Schnellstart",
     "ai.quickstart_help":
       "Kopiere diesen Prompt in einen KI-Agenten, der HTTP-Anfragen senden kann, z. B. Claude Code, Codex oder den ChatGPT-Agentenmodus.",
@@ -491,11 +601,11 @@ const STRINGS = {
     "ai.prompt": "Prompt",
     "ai.copy": "Prompt kopieren",
     "ai.warning":
-      "Wie der Bearbeitungslink ist dieser Link der Schlüssel: Wer ihn hat – auch der KI-Dienst –, kann den Planer ändern.",
+      "Wie der Bearbeitungslink ist dieser Link der Schlüssel: Wer ihn hat – auch der KI-Dienst –, kann den Kalender ändern.",
 
     "api.intro":
       "Einträge aus Skripten, Kurzbefehlen oder anderen Tools füllen. Arten können über ID oder Namen angegeben werden und gehören zu einem Jahr: Ein Tag nutzt die Arten seines Jahres. Die Session-ID in der URL ist der Zugangsschlüssel.",
-    "api.read": "Planer lesen (Arten, Einträge und Notizen eines Jahres)",
+    "api.read": "Kalender lesen (Arten, Einträge und Notizen eines Jahres)",
     "api.add": "„{name}“ vom 3. bis 14. Aug. eintragen, ohne Wochenenden",
     "api.ops": "Mehrere Operationen auf einmal (Aktionen: add | remove | set | clear)",
     "api.notes":
@@ -504,7 +614,7 @@ const STRINGS = {
       "Eintragsarten eines Jahres (jedes Jahr hat eigene; in ein anderes Jahr übernehmen)",
     "api.feed":
       "Kalender-Feed (Nur-Lese-ID geht auch). Optional: ?types=a,b&gaps=1&notes=1&lang=de",
-    "api.new": "Neuer Planer",
+    "api.new": "Neue Familie",
     "api.ex_vacation": "Urlaub",
     "api.ex_needs": "Kita geschlossen",
     "api.ex_rename": "Urlaub Papa",
@@ -521,7 +631,7 @@ const STRINGS = {
     "help.multi": "Mehrfachauswahl",
     "help.multi_do":
       "Einschalten, dann Tage antippen, um sie hinzuzufügen oder zu entfernen; lange drücken + ziehen fügt einen Bereich hinzu",
-    "help.undo_touch": "⋯ Menü",
+    "help.undo_touch": "↶ / ↷ oben",
     "help.help_do": "Diese Hilfe zeigen",
     "help.click": "Klicken / ziehen",
     "help.click_do": "Einen Tag / einen Zeitraum auswählen (auch über Monate hinweg)",
@@ -551,57 +661,144 @@ const STRINGS = {
     "help.gap_do": "Zum nächsten Tag springen, der noch Betreuung braucht",
     "help.esc": "<kbd>Esc</kbd>",
     "help.esc_do": "Auswahl aufheben",
+    // ---- Family Planner shell
+    "nav.vacation": "Urlaub",
+    "nav.finance": "Finanzen",
+    "nav.settings": "Einstellungen",
+    "nav.help": "Hilfe & Tastenkürzel",
+    "nav.soon": "Bald",
+    "nav.planning": "Planen",
+    "family.switch": "Familie wechseln",
+    "family.recent": "Auf diesem Gerät geöffnet",
+    "family.new": "Neue Familie",
+    "family.open": "Link öffnen…",
+    "family.open_title": "Familie öffnen",
+    "family.open_help": "Füge einen Link oder eine ID des Familienplaners ein.",
+    "family.view_only": "nur lesen",
+    "family.calendar_only": "nur Kalender",
+    "family.loading": "Wird geladen…",
+    "chat.title": "KI-Assistent",
+    "chat.open": "KI-Assistent (Strg/⌘+J)",
+    "chat.close": "KI-Assistent schließen",
+    "chat.soon":
+      "Bald kannst du hier mit einer KI chatten: Sie recherchiert im Web und ändert den Kalender für dich. Einrichten wirst du sie in den Einstellungen.",
+    "page.share": "Teilen",
+    "page.undo": "Rückgängig (Strg/⌘+Z)",
+    "page.redo": "Wiederholen (Strg/⌘+Y)",
+    "settings.title": "Einstellungen",
+    "settings.general": "Allgemein",
+    "settings.sharing": "Teilen",
+    "settings.vacation": "Urlaub",
+    "settings.integrations": "Integrationen",
+    "settings.data": "Daten",
+    "settings.family_scope": "Für die ganze Familie",
+    "settings.device_scope": "Nur auf diesem Gerät",
+    "settings.name": "Name der Familie",
+    "settings.name_help": "Erscheint im Familienwechsler, im Seitentitel und in Kalender-Abos.",
+    "settings.language": "Sprache",
+    "settings.theme": "Darstellung",
+    "theme.system": "Wie das System",
+    "theme.light": "Hell",
+    "theme.dark": "Dunkel",
+    "settings.readonly":
+      "Das ist ein Nur-Lese-Link: Du kannst dir alles ansehen, aber nichts ändern.",
+    "settings.calendar_view": "Kalenderansicht",
+    "settings.skip_weekends_title":
+      "Wochenenden werden beim Füllen, Einfügen und Umschalten von Bereichen ausgelassen",
+    "settings.types_readonly": "Arten lassen sich nur mit dem Bearbeitungslink ändern.",
+    "settings.year": "Jahr",
+    "share.view_help": "Jeder mit diesem Link kann alles ansehen, aber nichts ändern.",
+    "share.rotate": "Neuer Link",
+    "share.rotate_view_confirm":
+      "Einen neuen Nur-Lese-Link erstellen? Der bisherige funktioniert dann für niemanden mehr.",
+    "share.rotate_feed_confirm":
+      "Einen neuen Abo-Link erstellen? Kalender-Abos mit dem bisherigen werden nicht mehr aktualisiert und müssen neu hinzugefügt werden.",
+    "share.rotated": "Neuer Link erstellt",
+    "share.rotate_failed": "Neuer Link konnte nicht erstellt werden: {msg}",
+    "share.legacy": "Alter Nur-Lese-Link",
+    "share.legacy_help":
+      "Vor der Umbenennung in Familienplaner geteilt. Er öffnet weiterhin den Kalender (nur lesen) und die damit angelegten Kalender-Abos, aber sonst nichts.",
+    "share.legacy_remove": "Entfernen",
+    "share.legacy_confirm":
+      "Den alten Nur-Lese-Link entfernen? Alle, die ihn haben, und damit angelegte Kalender-Abos verlieren den Zugriff.",
+    "share.legacy_removed": "Alter Link entfernt",
+    "share.feed": "Kalender-Abo",
+    "share.feed_help": "Dieser Link öffnet nur das Kalender-Abo, sonst nichts.",
+    "data.export_help": "Alle Jahre, Arten, Einträge und Notizen als JSON-Datei (ohne die Links).",
+    "data.import_help":
+      "Ersetzt alle Jahre, Arten, Einträge und Notizen dieser Familie durch eine exportierte Datei; Name und Links bleiben. Lässt sich nicht rückgängig machen.",
+    "data.clone_help": "Eine Kopie dieser Familie mit allen Daten und eigenen, neuen Links.",
+    "data.imported": "Importiert",
+    "integrations.ai": "KI-Agenten",
+    "integrations.api": "API für Skripte",
   },
 };
 
-function detect() {
+function stored(): string | null {
   try {
-    const saved = localStorage.getItem(LANG_KEY);
-    if (saved in STRINGS) return saved;
+    return localStorage.getItem(LANG_KEY) ?? localStorage.getItem(OLD_LANG_KEY);
   } catch {
-    // storage blocked
+    return null; // storage blocked
   }
+}
+
+function detect(): Lang {
+  const saved = stored();
+  if (saved && saved in STRINGS) return saved as Lang;
   const prefs = navigator.languages?.length ? navigator.languages : [navigator.language];
   for (const l of prefs) {
     const code = String(l).slice(0, 2).toLowerCase();
-    if (code in STRINGS) return code;
+    if (code in STRINGS) return code as Lang;
   }
   return "en";
 }
 
-export let lang = detect();
+let lang: Lang = detect();
+const listeners = new Set<() => void>();
 
-export function setLang(next) {
-  if (!(next in STRINGS)) return;
+export function getLang(): Lang {
+  return lang;
+}
+
+export function setLang(next: Lang) {
+  if (!(next in STRINGS) || next === lang) return;
   lang = next;
   try {
     localStorage.setItem(LANG_KEY, next);
   } catch {
     // storage blocked
   }
+  applyDocument();
+  for (const l of listeners) l();
 }
 
-export function t(key, vars = {}) {
+function subscribe(fn: () => void) {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
+/** The current language; the component re-renders when it changes. */
+export function useLang(): Lang {
+  return useSyncExternalStore(subscribe, getLang);
+}
+
+export function t(key: string, vars: Vars = {}): string {
   const v = STRINGS[lang][key] ?? STRINGS.en[key];
   if (v === undefined) return key;
   if (typeof v === "function") return v(vars);
-  if (typeof v !== "string") return v;
+  if (typeof v !== "string") return String(v);
   return v.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
 }
 
-/**
- * Translates static markup: data-i18n (HTML from our own strings, so markup
- * like <kbd> is kept) and data-i18n-<attr>="key" for attributes such as
- * title, aria-label and placeholder.
- */
-export function applyStatic(root = document) {
+/** A list value, e.g. the month names. */
+export function tList(key: string): string[] {
+  const v = STRINGS[lang][key] ?? STRINGS.en[key];
+  return Array.isArray(v) ? v : [];
+}
+
+/** Keeps <html lang> and the meta description in line with the language. */
+export function applyDocument() {
   document.documentElement.lang = lang;
-  for (const el of root.querySelectorAll("*")) {
-    for (const { name, value } of [...el.attributes]) {
-      if (name === "data-i18n") el.innerHTML = t(value);
-      else if (name.startsWith("data-i18n-")) el.setAttribute(name.slice(10), t(value));
-    }
-  }
   document.querySelector('meta[name="description"]')?.setAttribute(
     "content",
     t("app.description"),

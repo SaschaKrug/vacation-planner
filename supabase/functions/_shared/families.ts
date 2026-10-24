@@ -40,7 +40,8 @@ const EXPORT_FORMAT = "family-planner";
 const OLD_EXPORT_FORMAT = "vacation-planner";
 const EXPORT_VERSION = 1;
 
-/** How often the web app refreshes an open family (web/js/app.js POLL_MS), for the AI page. */
+/** How often the app refreshes an open family (POLL_MS in app/src/features/vacation/store.ts),
+ *  for the AI page. */
 const APP_REFRESH_SECONDS = 15;
 
 /** Links that rotate: the view link, the feed link, and the legacy link (only removed). */

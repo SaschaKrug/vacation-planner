@@ -7,16 +7,28 @@ Apple Calendar feed. Finances and an AI assistant are next (see
 
 **Live:** https://family-planner.fa-krug.de/
 
+### The app
+
+- **Families:** every family is one secret id. The left sidebar switches between the families
+  opened on this device (or creates / opens another one) and between the topics: **Vacation**
+  now, **Finance** next. **Settings** holds everything else. The right sidebar (✨, `Ctrl/⌘+J`)
+  is where the AI chat will live; phones open both as sheets.
+- No login: every family has a secret **edit link** (`/f/<id>`) and a separate **view-only
+  link**. Anyone with the edit link can change it, so only share it with people who should. The
+  calendar feed has an id of its own (see [Links](#links)). Old links (`/?s=<id>`) still work.
+
+### Vacation
+
 - All days of a year as 12 rows × 31 days; pick the year at the top. Phones show one calendar
   per month instead (Monday to Sunday), with the type chips and the actions for the selected
   days in a bar at the bottom.
 - **Zoom:** the 🔍 slider below the calendar (or `Ctrl/⌘` + `+` / `−` / `0`) sets how many days
-  fit across it, 7 to 31; zoomed in, the cells also show the weekday (or always, with
-  *⋯* → *Always show weekdays*). Remembered per device.
-- Your own entry types (name + color), **per year**: every year has its own types, so 2027 can
-  have different people, colors or day-care closures than 2026. New planners start with
-  *Holiday*, *Vacation* and *Sick*; a year without types offers to copy them from the closest
-  year that has some.
+  fit across it, 7 to 31; zoomed in, the cells also show the weekday (or always: *Settings* →
+  *Vacation* → *Always show weekdays*). Remembered per device.
+- Your own entry types (name + color + role), **per year**, edited in *Settings* → *Vacation*:
+  every year has its own types, so 2027 can have different people, colors or day-care closures
+  than 2026. New families start with *Holiday*, *Vacation* and *Sick*; a year without types
+  offers to copy them from the closest year that has some.
 - A day can hold **several entries**, e.g. *Day care closed* + *Vacation Dad*.
 - **Icons & comments on days**, e.g. 🎄 *Christmas* or 🐣 *Easter*: shown in the grid and in
   the tooltip, optionally in the calendar feed. They are independent of entries (no coverage,
@@ -29,39 +41,40 @@ Apple Calendar feed. Finances and an AI assistant are next (see
   day, `?` shows all shortcuts. On touch screens: tap a day, or long-press and drag to select a
   range; *Multi-select* lets taps add or remove single days (and long-press ranges add to the
   selection).
-- **Undo / redo:** “Undo” / “Redo” in the ⋯ menu, or `Ctrl/⌘+Z` / `Ctrl/⌘+Y`.
-- No login: every family has a secret **edit link** (`?s=<id>`) and a separate **view-only link**.
-  Anyone with the edit link can change it, so only share it with people who should. The
-  calendar feed has an id of its own (see [Links](#links)).
-- **iCloud:** *Share* → *Calendar & iCloud* → *Subscribe on this device*, or on a Mac: Calendar → File →
-  New Calendar Subscription → paste the feed URL → Location **iCloud**. The feed URL opens
-  nothing but the feed, so it never exposes the edit or view link.
-- **Let an AI agent manage it:** *✨ AI* gives a ready-to-paste prompt with one link for an AI
-  agent that can send HTTP requests (Claude Code, Codex, ChatGPT agent mode …). The link returns
-  instructions with the planner's types and ready-to-use API URLs; the agent then reads and
-  changes the planner through the API, and the open app shows the changes within seconds. The
-  link carries the edit id, so it's as powerful as the edit link (the view-only link gives a
-  read-only version).
-- **Clone:** *⋯* → *Clone planner* copies the planner with all years, types, entries and notes
-  into a new one with its own links; the original stays unchanged. Works from a view-only
-  link too, which gives you your own editable copy.
-- **Export / import:** *⋯* → *Export (JSON)* downloads the whole planner (all years, types,
-  entries and notes, but not its links) as a file. *⋯* → *Import from file…* (edit link only)
-  replaces all years, types, entries and notes of the open planner with such a file, e.g. to
-  restore a backup; the planner keeps its name and links. Importing can't be undone.
-- **English and German:** the language follows the browser and can be switched at the top right.
-  New planners get default types in that language, and the calendar feed uses it for its texts.
+- **Undo / redo:** ↶ / ↷ at the top, or `Ctrl/⌘+Z` / `Ctrl/⌘+Y`.
+
+### Settings
+
+- **General:** the family's name; language (English / German) and light / dark per device.
+- **Sharing:** the edit and view-only links, a new view-only link when the old one got around,
+  and the **calendar feed**: pick what it includes, then *Subscribe on this device*, or on a
+  Mac: Calendar → File → New Calendar Subscription → paste the feed URL → Location **iCloud**.
+  The feed URL opens nothing but the feed, so it never exposes the edit or view link.
+- **Vacation:** the entry types of each year, and the calendar options of this device.
+- **Integrations:** a ready-to-paste prompt with one link for an AI agent that can send HTTP
+  requests (Claude Code, Codex, ChatGPT agent mode …). The link returns instructions with the
+  family's types and ready-to-use API URLs; the agent then reads and changes the calendar
+  through the API, and the open app shows the changes within seconds. The link carries the edit
+  id, so it's as powerful as the edit link (the view-only link gives a read-only version). Also
+  ready-to-run `curl` examples for scripts.
+- **Data:** *Export (JSON)* downloads the whole family (all years, types, entries and notes, but
+  not its links) as a file; *Import from file…* (edit link only) replaces all of that with such
+  a file, e.g. to restore a backup (the family keeps its name and links; can't be undone).
+  *Clone family* copies everything into a new family with its own links; it works from a
+  view-only link too, which gives you your own editable copy.
+- New families get default types in the app's language, and the calendar feed uses it for its
+  texts.
 
 ## Architecture
 
 ```
-GitHub Pages (web/)  ──fetch──▶  Supabase Edge Function "api"  ──▶  Postgres (5 tables)
+GitHub Pages (app/)  ──fetch──▶  Supabase Edge Function "api"  ──▶  Postgres (5 tables)
 iCloud / Apple Calendar ──GET calendar.ics──┘
 ```
 
 | Path | What |
 | --- | --- |
-| `web/` | Static frontend (plain HTML/CSS/JS, no build step) |
+| `app/` | Frontend: Vite + React + TypeScript, Tailwind + shadcn/ui |
 | `supabase/functions/api/` | Edge Function entry point |
 | `supabase/functions/_shared/` | API handler, iCalendar builder, storage (Supabase + in-memory), rate limits |
 | `supabase/migrations/` | Database schema |
@@ -111,10 +124,15 @@ few shared addresses. If counting fails, requests go through. The limits are in
 ## Local development
 
 ```sh
-deno task dev     # http://localhost:8787 (data is kept in memory)
+(cd app && npm ci && npm run build)   # once, and after changing the app
+deno task dev     # http://localhost:8787: the built app + the API (data is kept in memory)
 deno task test    # unit + API tests
-deno task check   # type-check, lint, format check
+deno task check   # type-check, lint, format check (backend and app/src)
+
+cd app && npm run dev   # the app with hot reload on http://localhost:5173 (needs `deno task dev`)
 ```
+
+`npm run build` in `app/` also type-checks the app (`tsc -b`). The app uses Node 22.
 
 No database needed: the dev server runs the real API handler on an in-memory store. Options
 (combinable, e.g. `deno task dev --persist --seed`):
@@ -129,7 +147,7 @@ On start, the server prints the edit and view links of all families it holds.
 
 ## API
 
-Base URL: `https://<project-ref>.supabase.co/functions/v1/api` (*⋯* → *API for scripts* in the app
+Base URL: `https://<project-ref>.supabase.co/functions/v1/api` (*Settings* → *Integrations* in the app
 shows ready-to-run examples for your family). The family id from the edit link is the access
 key; the other links can only read (see [Links](#links)). Types can be referenced by id or by
 name (case-insensitive). Dates are `YYYY-MM-DD`.
