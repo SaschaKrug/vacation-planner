@@ -65,7 +65,7 @@ const STRINGS: Record<Lang, Dict> = {
     // landing
     "landing.title": "Plan your family's year",
     "landing.lead":
-      "One place for your family's plans: vacation, holidays and day-care closures in a shared year calendar, with a coverage check and iCloud subscriptions. Plus a transactions log for the family's finances. No login – the link is the key.",
+      "One place for your family's plans: vacation, holidays and day-care closures in a shared year calendar, with a coverage check and iCloud subscriptions. Plus a transactions log for the family's finances and an AI assistant that researches and plans with you. No login – the link is the key.",
     "landing.create": "Create a family",
     "landing.config_warning":
       "The backend isn't configured yet. Add the Supabase secrets to the repository and re-run the deploy workflow (see README).",
@@ -322,8 +322,6 @@ const STRINGS: Record<Lang, Dict> = {
     "chat.title": "AI assistant",
     "chat.open": "AI assistant (Ctrl/⌘+J)",
     "chat.close": "Close the AI assistant",
-    "chat.soon":
-      "Soon you can chat with an AI here: it researches on the web and changes the calendar for you. You'll set it up under Settings.",
     "page.share": "Share",
     "page.undo": "Undo (Ctrl/⌘+Z)",
     "page.redo": "Redo (Ctrl/⌘+Y)",
@@ -470,6 +468,72 @@ const STRINGS: Record<Lang, Dict> = {
       `Imported ${n} ${s(n, "transaction", "transactions")}` +
       (Number(skipped) ? ` (${skipped} already there)` : ""),
     "finance.imported_none": ({ skipped }) => `Nothing new: all ${skipped} were already there`,
+    // ---- AI assistant
+    "settings.ai": "AI assistant",
+    "chat.history": "Chats",
+    "chat.no_history": "No chats yet",
+    "chat.new": "New chat",
+    "chat.delete": "Delete chat",
+    "chat.stop": "Stop",
+    "chat.send": "Send",
+    "chat.thinking": "Thinking…",
+    "chat.placeholder": "Ask about your calendar or finances…",
+    "chat.setup_first": "Set up the assistant in the settings first",
+    "chat.hint": "Enter sends, Shift+Enter for a new line. Changes can be undone.",
+    "chat.setup_title": "Set up the AI assistant",
+    "chat.setup_text":
+      "Connect any OpenAI-compatible AI (OpenAI, OpenRouter, Mistral, a local model …) under Settings. It can then look things up on the web and plan in your calendar and finances.",
+    "chat.setup_button": "Open the settings",
+    "chat.intro": "Ask me anything about your family's plans, for example:",
+    "chat.example_gaps": "Which days this year still need cover, and who could take them?",
+    "chat.example_holidays":
+      "Look up next year's public holidays here and add them to the calendar.",
+    "chat.example_spending": "How much did we spend on groceries this year, per month?",
+    "chat.undone": "Undone",
+    "chat.undo_failed": "Couldn't undo: {msg}",
+    "chat.tool.web_search": "Searching the web: {q}",
+    "chat.tool.fetch_page": "Reading {host}",
+    "chat.tool.get_calendar": "Reading the calendar",
+    "chat.tool.change_entries": "Changing calendar entries",
+    "chat.tool.set_notes": "Changing day notes",
+    "chat.tool.manage_entry_types": "Changing entry types",
+    "chat.tool.list_transactions": "Reading transactions",
+    "chat.tool.finance_summary": "Summing up the finances",
+    "chat.tool.change_transactions": "Changing transactions",
+    "ai_settings.edit_only": "The AI assistant can only be set up and used with the edit link.",
+    "ai_settings.server_not_ready":
+      "The server has no AI_CONFIG_KEY yet, so it can't store API keys. Add it as described in the README (a keyless local model still works).",
+    "ai_settings.endpoint": "AI model",
+    "ai_settings.endpoint_help":
+      "Any API that speaks OpenAI's chat format with tool calls. Everyone with the edit link uses this setup.",
+    "ai_settings.base_url": "API URL",
+    "ai_settings.base_url_help": "Including the version, e.g. …/v1",
+    "ai_settings.api_key": "API key",
+    "ai_settings.key_help": "Stored encrypted on the server and never shown again.",
+    "ai_settings.key_saved": "A key ending in {hint} is saved. Type a new one to replace it.",
+    "ai_settings.remove_key": "Remove",
+    "ai_settings.model": "Model",
+    "ai_settings.model_help":
+      "Load the list from the API, or type a model name. It needs to support tool calls.",
+    "ai_settings.pick_model": "Pick a model",
+    "ai_settings.load_models": "Load models",
+    "ai_settings.no_models": "The API returned no models",
+    "ai_settings.test": "Test",
+    "ai_settings.test_ok": "{model} answered: {reply}",
+    "ai_settings.saved": "Saved",
+    "ai_settings.save_failed": "Couldn't save: {msg}",
+    "ai_settings.search": "Web search",
+    "ai_settings.search_help":
+      "Lets the assistant search the web (e.g. for school holidays). Without it, it can still read pages you link.",
+    "ai_settings.search_provider": "Search provider",
+    "ai_settings.search_off": "Off",
+    "ai_settings.search_key": "Search API key",
+    "ai_settings.permissions": "Permissions",
+    "ai_settings.allow_writes": "Allow changes",
+    "ai_settings.allow_writes_help":
+      "The assistant may change the calendar and transactions (every change can be undone). Off: it can only read.",
+    "ai_settings.privacy":
+      "Your messages and the calendar and finance data the assistant looks at are sent to the AI API you set up above.",
   },
 
   de: {
@@ -515,7 +579,7 @@ const STRINGS: Record<Lang, Dict> = {
 
     "landing.title": "Das Jahr deiner Familie planen",
     "landing.lead":
-      "Ein Ort für die Pläne deiner Familie: Urlaub, Feiertage und Kita-Schließtage in einem gemeinsamen Jahreskalender, mit Betreuungs-Check und iCloud-Abo. Dazu ein Haushaltsbuch für die Finanzen der Familie. Kein Login – der Link ist der Schlüssel.",
+      "Ein Ort für die Pläne deiner Familie: Urlaub, Feiertage und Kita-Schließtage in einem gemeinsamen Jahreskalender, mit Betreuungs-Check und iCloud-Abo. Dazu ein Haushaltsbuch für die Finanzen der Familie und ein KI-Assistent, der mit dir recherchiert und plant. Kein Login – der Link ist der Schlüssel.",
     "landing.create": "Familie erstellen",
     "landing.config_warning":
       "Das Backend ist noch nicht eingerichtet. Lege die Supabase-Secrets im Repository an und starte den Deploy-Workflow erneut (siehe README).",
@@ -777,8 +841,6 @@ const STRINGS: Record<Lang, Dict> = {
     "chat.title": "KI-Assistent",
     "chat.open": "KI-Assistent (Strg/⌘+J)",
     "chat.close": "KI-Assistent schließen",
-    "chat.soon":
-      "Bald kannst du hier mit einer KI chatten: Sie recherchiert im Web und ändert den Kalender für dich. Einrichten wirst du sie in den Einstellungen.",
     "page.share": "Teilen",
     "page.undo": "Rückgängig (Strg/⌘+Z)",
     "page.redo": "Wiederholen (Strg/⌘+Y)",
@@ -927,6 +989,78 @@ const STRINGS: Record<Lang, Dict> = {
       `${n} ${s(n, "Buchung", "Buchungen")} importiert` +
       (Number(skipped) ? ` (${skipped} waren schon da)` : ""),
     "finance.imported_none": ({ skipped }) => `Nichts Neues: alle ${skipped} waren schon da`,
+    // ---- AI assistant
+    "settings.ai": "KI-Assistent",
+    "chat.history": "Chats",
+    "chat.no_history": "Noch keine Chats",
+    "chat.new": "Neuer Chat",
+    "chat.delete": "Chat löschen",
+    "chat.stop": "Stopp",
+    "chat.send": "Senden",
+    "chat.thinking": "Denkt nach…",
+    "chat.placeholder": "Frag nach Kalender oder Finanzen…",
+    "chat.setup_first": "Richte den Assistenten zuerst in den Einstellungen ein",
+    "chat.hint":
+      "Enter sendet, Umschalt+Enter für eine neue Zeile. Änderungen lassen sich rückgängig machen.",
+    "chat.setup_title": "KI-Assistent einrichten",
+    "chat.setup_text":
+      "Verbinde eine beliebige OpenAI-kompatible KI (OpenAI, OpenRouter, Mistral, ein lokales Modell …) in den Einstellungen. Dann kann sie im Web recherchieren und in Kalender und Finanzen planen.",
+    "chat.setup_button": "Einstellungen öffnen",
+    "chat.intro": "Frag mich alles zu den Plänen deiner Familie, zum Beispiel:",
+    "chat.example_gaps":
+      "Welche Tage brauchen dieses Jahr noch Betreuung, und wer könnte sie übernehmen?",
+    "chat.example_holidays":
+      "Such die Feiertage des nächsten Jahres hier heraus und trag sie in den Kalender ein.",
+    "chat.example_spending":
+      "Wie viel haben wir dieses Jahr pro Monat für Lebensmittel ausgegeben?",
+    "chat.undone": "Rückgängig gemacht",
+    "chat.undo_failed": "Rückgängig machen fehlgeschlagen: {msg}",
+    "chat.tool.web_search": "Sucht im Web: {q}",
+    "chat.tool.fetch_page": "Liest {host}",
+    "chat.tool.get_calendar": "Liest den Kalender",
+    "chat.tool.change_entries": "Ändert Kalendereinträge",
+    "chat.tool.set_notes": "Ändert Tagesnotizen",
+    "chat.tool.manage_entry_types": "Ändert Arten",
+    "chat.tool.list_transactions": "Liest Buchungen",
+    "chat.tool.finance_summary": "Rechnet die Finanzen zusammen",
+    "chat.tool.change_transactions": "Ändert Buchungen",
+    "ai_settings.edit_only":
+      "Der KI-Assistent lässt sich nur mit dem Bearbeitungslink einrichten und nutzen.",
+    "ai_settings.server_not_ready":
+      "Der Server hat noch keinen AI_CONFIG_KEY und kann daher keine API-Schlüssel speichern. Füge ihn wie in der README beschrieben hinzu (ein lokales Modell ohne Schlüssel geht trotzdem).",
+    "ai_settings.endpoint": "KI-Modell",
+    "ai_settings.endpoint_help":
+      "Jede API, die OpenAIs Chat-Format mit Tool-Aufrufen spricht. Alle mit dem Bearbeitungslink nutzen diese Einrichtung.",
+    "ai_settings.base_url": "API-URL",
+    "ai_settings.base_url_help": "Mit Version, z. B. …/v1",
+    "ai_settings.api_key": "API-Schlüssel",
+    "ai_settings.key_help":
+      "Wird verschlüsselt auf dem Server gespeichert und nie wieder angezeigt.",
+    "ai_settings.key_saved":
+      "Ein Schlüssel mit der Endung {hint} ist gespeichert. Gib einen neuen ein, um ihn zu ersetzen.",
+    "ai_settings.remove_key": "Entfernen",
+    "ai_settings.model": "Modell",
+    "ai_settings.model_help":
+      "Lade die Liste von der API oder gib einen Modellnamen ein. Es muss Tool-Aufrufe können.",
+    "ai_settings.pick_model": "Modell wählen",
+    "ai_settings.load_models": "Modelle laden",
+    "ai_settings.no_models": "Die API hat keine Modelle geliefert",
+    "ai_settings.test": "Testen",
+    "ai_settings.test_ok": "{model} antwortet: {reply}",
+    "ai_settings.saved": "Gespeichert",
+    "ai_settings.save_failed": "Speichern fehlgeschlagen: {msg}",
+    "ai_settings.search": "Websuche",
+    "ai_settings.search_help":
+      "Damit kann der Assistent im Web suchen (z. B. nach Schulferien). Ohne kann er trotzdem Seiten lesen, die du verlinkst.",
+    "ai_settings.search_provider": "Suchanbieter",
+    "ai_settings.search_off": "Aus",
+    "ai_settings.search_key": "API-Schlüssel der Suche",
+    "ai_settings.permissions": "Berechtigungen",
+    "ai_settings.allow_writes": "Änderungen erlauben",
+    "ai_settings.allow_writes_help":
+      "Der Assistent darf Kalender und Buchungen ändern (jede Änderung lässt sich rückgängig machen). Aus: Er kann nur lesen.",
+    "ai_settings.privacy":
+      "Deine Nachrichten und die Kalender- und Finanzdaten, die der Assistent ansieht, gehen an die oben eingerichtete KI-API.",
   },
 };
 

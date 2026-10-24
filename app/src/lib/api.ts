@@ -88,6 +88,60 @@ export interface TransactionResult {
   inverse: TransactionOp[];
 }
 
+export interface AiSettings {
+  configured: boolean;
+  baseUrl: string;
+  model: string;
+  hasKey: boolean;
+  keyHint: string;
+  searchProvider: "none" | "tavily" | "brave";
+  hasSearchKey: boolean;
+  searchKeyHint: string;
+  allowWrites: boolean;
+  serverReady: boolean;
+}
+
+export interface AiSettingsPatch {
+  baseUrl?: string;
+  apiKey?: string;
+  model?: string;
+  searchProvider?: AiSettings["searchProvider"];
+  searchKey?: string;
+  allowWrites?: boolean;
+}
+
+/** A message in the OpenAI format, as the chat endpoint takes and returns them. */
+export interface ChatMessage {
+  role: "user" | "assistant" | "tool";
+  content: string | null;
+  tool_calls?: { id: string; type: "function"; function: { name: string; arguments: string } }[];
+  tool_call_id?: string;
+}
+
+/** A request against /families/{id} that undoes (part of) a change the assistant made. */
+export interface UndoStep {
+  method: "POST" | "PATCH" | "DELETE";
+  path: string;
+  body?: unknown;
+}
+
+export type ChatEvent =
+  | { event: "text"; data: { delta: string } }
+  | { event: "tool"; data: { id: string; name: string; args: Record<string, unknown> } }
+  | { event: "tool_result"; data: { id: string; name: string; ok: boolean; summary: string } }
+  | {
+    event: "change";
+    data: {
+      id: string;
+      kind: "entries" | "notes" | "types" | "transactions";
+      summary: string;
+      undo: UndoStep[];
+    };
+  }
+  | { event: "messages"; data: { messages: ChatMessage[] } }
+  | { event: "done"; data: Record<string, never> }
+  | { event: "error"; data: { message: string } };
+
 export class ApiError extends Error {
   constructor(message: string, public status?: number) {
     super(message);
@@ -197,6 +251,61 @@ export const api = {
     ),
   financeSummary: (token: string, query: Record<string, string>) =>
     request<FinanceSummary>("GET", `${fam(token)}/finance/summary?${new URLSearchParams(query)}`),
+  aiSettings: (token: string) => request<AiSettings>("GET", `${fam(token)}/ai/settings`),
+  saveAiSettings: (token: string, patch: AiSettingsPatch) =>
+    request<AiSettings>("PUT", `${fam(token)}/ai/settings`, patch),
+  aiModels: (token: string, body: { baseUrl?: string; apiKey?: string } = {}) =>
+    request<{ models: string[] }>("POST", `${fam(token)}/ai/models`, body),
+  aiTest: (token: string) =>
+    request<{ ok: boolean; model: string; reply: string }>("POST", `${fam(token)}/ai/test`, {}),
+  /** Runs undo steps in order (they are relative to the family). */
+  undo: async (token: string, steps: UndoStep[]) => {
+    for (const step of steps) await request(step.method, fam(token) + step.path, step.body);
+  },
+  /** Sends a chat turn and calls `onEvent` for every server-sent event until the end. */
+  chat: async (
+    token: string,
+    body: Record<string, unknown>,
+    onEvent: (e: ChatEvent) => void,
+    signal?: AbortSignal,
+  ) => {
+    let res: Response;
+    try {
+      res = await fetch(`${apiBase()}${fam(token)}/ai/chat`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+        signal,
+      });
+    } catch (err) {
+      if ((err as Error).name === "AbortError") return;
+      throw new ApiError((err as Error).message);
+    }
+    if (!res.ok || !res.body) {
+      const data = await res.json().catch(() => ({}));
+      throw new ApiError(data.error || `HTTP ${res.status}`, res.status);
+    }
+    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buffer = "";
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += value;
+        let end: number;
+        while ((end = buffer.indexOf("\n\n")) >= 0) {
+          const block = buffer.slice(0, end);
+          buffer = buffer.slice(end + 2);
+          const event = /^event: (.*)$/m.exec(block)?.[1];
+          const data = /^data: (.*)$/m.exec(block)?.[1];
+          if (!event || data === undefined || event === "ping") continue;
+          onEvent({ event, data: JSON.parse(data) } as ChatEvent);
+        }
+      }
+    } catch (err) {
+      if ((err as Error).name !== "AbortError") throw err;
+    }
+  },
   agentUrl: (token: string) => `${apiBase()}${fam(token)}/agent`,
   calendarUrl: (feedId: string, params: Record<string, string> = {}) => {
     const qs = new URLSearchParams(params).toString();

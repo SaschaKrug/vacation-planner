@@ -4,12 +4,17 @@
 //   deno task dev --persist      keep the data in .dev/data.json across restarts
 //   deno task dev --seed         add a demo family if there is none yet
 //   deno task dev --rate-limit   enforce low rate limits, to see the app's 429 handling
+//   deno task dev --mock-ai      a scripted AI endpoint at /mock-ai/v1, and the demo family
+//                                (with --seed) uses it, so the chat works without a key
+// The AI assistant may reach localhost here (e.g. Ollama at http://localhost:11434/v1).
 import { parseArgs } from "jsr:@std/cli@1/parse-args";
 import { createHandler, type RateLimits } from "../supabase/functions/_shared/handler.ts";
 import { MemoryRateLimiter } from "../supabase/functions/_shared/rate_limit.ts";
+import { devSecret } from "../supabase/functions/_shared/secrets.ts";
 import { MemoryStore } from "../supabase/functions/_shared/store.ts";
+import { mockAi } from "./mock_ai.ts";
 
-const args = parseArgs(Deno.args, { boolean: ["persist", "seed", "rate-limit"] });
+const args = parseArgs(Deno.args, { boolean: ["persist", "seed", "rate-limit", "mock-ai"] });
 const port = Number(Deno.env.get("PORT") ?? 8787);
 const origin = `http://localhost:${port}`;
 const root = new URL("../app/dist/", import.meta.url);
@@ -30,6 +35,8 @@ const DEV_LIMITS: RateLimits = {
   create: { max: 3, seconds: 60 },
   createAll: { max: 10, seconds: 60 },
   write: { max: 30, seconds: 60 },
+  ai: { max: 10, seconds: 60 },
+  aiFamily: { max: 30, seconds: 60 },
 };
 
 const store = new MemoryStore();
@@ -41,10 +48,23 @@ if (args.persist) {
   }
 }
 
-const api = createHandler(
-  store,
-  args["rate-limit"] ? { rateLimiter: new MemoryRateLimiter(), limits: DEV_LIMITS } : {},
-);
+// The key that encrypts the AI keys: kept in .dev/ with --persist, so saved keys stay readable.
+const secretFile = new URL("ai-secret", dataDir);
+let aiSecret = devSecret();
+if (args.persist) {
+  try {
+    aiSecret = (await Deno.readTextFile(secretFile)).trim();
+  } catch {
+    await Deno.mkdir(dataDir, { recursive: true });
+    await Deno.writeTextFile(secretFile, aiSecret);
+  }
+}
+
+const api = createHandler(store, {
+  ...(args["rate-limit"] ? { rateLimiter: new MemoryRateLimiter(), limits: DEV_LIMITS } : {}),
+  aiSecret,
+  allowPrivateNetwork: true,
+});
 
 // Writes run one after another, each with the latest data; rename keeps the file whole.
 let saving = Promise.resolve();
@@ -153,10 +173,24 @@ async function seed() {
 }
 
 if (args.seed && store.families.size === 0) await seed();
+if (args["mock-ai"]) {
+  // Point every family without AI settings at the mock.
+  for (const f of store.families.values()) {
+    if (await store.getAiSettings(f.id)) continue;
+    await handleApi(
+      new Request(`${origin}/api/families/${f.id}/ai/settings`, {
+        method: "PUT",
+        headers: { "content-type": "application/json", "x-forwarded-for": "seed" },
+        body: JSON.stringify({ baseUrl: `${origin}/mock-ai/v1`, model: "mock-large" }),
+      }),
+    );
+  }
+}
 
 Deno.serve({ port, onListen: () => listFamilies() }, async (req) => {
   const { pathname } = new URL(req.url);
   if (pathname === "/api" || pathname.startsWith("/api/")) return handleApi(req);
+  if (args["mock-ai"] && pathname.startsWith("/mock-ai/")) return mockAi(req);
   const file = pathname === "/" ? "index.html" : decodeURIComponent(pathname.slice(1));
   if (file.includes("..")) return new Response("Bad request", { status: 400 });
   // The app routes in the browser (/f/<id>/vacation …): paths without a file extension get
@@ -182,6 +216,7 @@ function listFamilies() {
   const flags = [
     args.persist && "data in .dev/data.json",
     args["rate-limit"] && "low rate limits",
+    args["mock-ai"] && "mock AI at /mock-ai/v1",
   ].filter(Boolean);
   console.log(`Family Planner on ${origin}${flags.length ? ` (${flags.join(", ")})` : ""}`);
   for (const f of store.families.values()) {

@@ -2,8 +2,8 @@
 
 One place per family to plan the year: a shared year calendar for vacation, public holidays,
 sick days and day-care closures (with a coverage check and an iCloud / Apple Calendar feed), a
-transactions log for the family's finances, and a REST API. An AI assistant is next (see
-[the plan](docs/family-planner-plan.md)).
+transactions log for the family's finances, an AI assistant that researches on the web and plans
+in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it came about).
 
 **Live:** https://family-planner.fa-krug.de/
 
@@ -11,8 +11,8 @@ transactions log for the family's finances, and a REST API. An AI assistant is n
 
 - **Families:** every family is one secret id. The left sidebar switches between the families
   opened on this device (or creates / opens another one) and between the topics: **Vacation**
-  and **Finance**. **Settings** holds everything else. The right sidebar (✨, `Ctrl/⌘+J`)
-  is where the AI chat will live; phones open both as sheets.
+  and **Finance**. **Settings** holds everything else. The right sidebar (✨, `Ctrl/⌘+J`) is
+  the AI chat; phones open both as sheets.
 - No login: every family has a secret **edit link** (`/f/<id>`) and a separate **view-only
   link**. Anyone with the edit link can change it, so only share it with people who should. The
   calendar feed has an id of its own (see [Links](#links)). Old links (`/?s=<id>`) still work.
@@ -60,6 +60,22 @@ transactions log for the family's finances, and a REST API. An AI assistant is n
 - The view-only link shows the finances read-only; the legacy view link and the calendar feed
   never do.
 
+### AI assistant
+
+- Chat with any **OpenAI-compatible** model (OpenAI, OpenRouter, Mistral, Groq, a local Ollama /
+  LM Studio …), set up per family in *Settings* → *AI assistant*: API URL, key, and a model
+  picked from the API's list. Keys are stored encrypted and never shown again; everyone with
+  the edit link uses the setup (the view-only link has no chat).
+- It **looks things up** in the calendar and the finances, **changes** them (entries, notes,
+  types, transactions), **searches the web** (Tavily or Brave, with their own key) and **reads
+  pages**. Every change shows up in the chat with **Undo**; bigger changes (more than 31 days,
+  deleting types or transactions) need the user's OK first. *Allow changes* off makes it
+  read-only.
+- Chats are kept on the device (the last 20 per family).
+- The server runs the tool loop: the app streams the answer from the Edge Function, which talks
+  to the model. Requests to private networks are refused (also after redirects), pages are
+  size- and time-limited.
+
 ### Settings
 
 - **General:** the family's name; language (English / German) and light / dark per device.
@@ -70,6 +86,7 @@ transactions log for the family's finances, and a REST API. An AI assistant is n
 - **Vacation:** the entry types of each year, and the calendar options of this device.
 - **Finance:** the currency, the categories (name, color, icon, income / expense / both) and the
   remembered bank formats.
+- **AI assistant:** the model, web search and whether the assistant may change things.
 - **Integrations:** a ready-to-paste prompt with one link for an AI agent that can send HTTP
   requests (Claude Code, Codex, ChatGPT agent mode …). The link returns instructions with the
   family's types and ready-to-use API URLs; the agent then reads and changes the calendar
@@ -119,7 +136,12 @@ migrations → Edge Function → frontend to the `gh-pages` branch.
    The custom domain `family-planner.fa-krug.de` comes from the workflow (`cname:`); its DNS
    needs a `CNAME` record pointing to `saschakrug.github.io`.
 
-3. Run the workflow: *Actions → Deploy → Run workflow* (or push to `main`).
+3. **AI assistant** (optional) – add the repository secret `AI_CONFIG_KEY` with 32 random
+   bytes (`openssl rand -base64 32`). The deploy sets it as an Edge Function secret; it
+   encrypts the families' AI and search keys. Changing it makes the stored keys unreadable
+   (families enter them again).
+
+4. Run the workflow: *Actions → Deploy → Run workflow* (or push to `main`).
 
 The tables use Row Level Security without policies, so they are not reachable with the public
 anon key; all access goes through the Edge Function, which uses the service role key.
@@ -134,6 +156,8 @@ deleted. Over the limit, it answers `429` with a `Retry-After` header.
 | --- | --- |
 | New families (`POST /families`, `…/clone`) per client | 20 per hour |
 | New families of all clients together | 500 per hour |
+| AI requests (chat, model list, test) per client | 60 per 5 minutes |
+| AI requests per family | 300 per hour |
 | Changes (`POST`, `PATCH`, `DELETE`) per client | 300 per 5 minutes |
 
 Reads, including the calendar feed, are not limited: iCloud fetches every subscription from a
@@ -161,6 +185,10 @@ No database needed: the dev server runs the real API handler on an in-memory sto
 | `--persist` | Keeps the data in `.dev/data.json` across restarts (delete the file to start over) |
 | `--seed` | Adds a *Demo family* with types, entries, notes and uncovered days in this and next year, and six months of transactions, if there are no families yet |
 | `--rate-limit` | Low rate limits (3 new families, 30 changes per minute) to try the app's 429 handling |
+| `--mock-ai` | A scripted OpenAI-compatible endpoint at `/mock-ai/v1`, set up for every family without AI settings, so the chat and its tools can be tried without a key (see `dev/mock_ai.ts` for what it reacts to) |
+
+The dev server lets the assistant reach localhost, e.g. a local model at
+`http://localhost:11434/v1` (Ollama); production refuses private addresses.
 
 On start, the server prints the edit and view links of all families it holds.
 
@@ -219,6 +247,18 @@ changing the edit id.
 | `POST /families/{id}/finance/transactions` | `{"ops": [...]}`: `{"action": "add", "date", "amountCents", "payee", "description", "categoryId", "note"}`, `{"action": "update", "id", ...fields}`, `{"action": "delete", "ids": [...]}`. Returns `inverse`, the ops that undo the request |
 | `POST /families/{id}/finance/import` | `{"rows": [{"date", "amountCents", "payee", "description", "categoryId"}], "dryRun": true}`: adds the rows that weren't imported before; returns `added`, `duplicates` (row indexes) and the new `ids` |
 | `GET /families/{id}/finance/summary?from=&to=` | `{"currency", "incomeCents", "expenseCents", "count", "months": [{"month", "incomeCents", "expenseCents"}], "categories": [{"categoryId", "incomeCents", "expenseCents", "count"}]}` |
+
+### AI assistant
+
+All need the edit id.
+
+| Method & path | Description |
+| --- | --- |
+| `GET /families/{id}/ai/settings` | `{"configured", "baseUrl", "model", "hasKey", "keyHint", "searchProvider", "hasSearchKey", "searchKeyHint", "allowWrites", "serverReady"}` (keys are never returned, only their last 4 characters) |
+| `PUT /families/{id}/ai/settings` | Any of `{"baseUrl", "apiKey", "model", "searchProvider": "none" \| "tavily" \| "brave", "searchKey", "allowWrites"}`; `""` removes a key |
+| `POST /families/{id}/ai/models` | The API's models: `{"models": [...]}`; `{"baseUrl", "apiKey"}` in the body try values before saving them |
+| `POST /families/{id}/ai/test` | One short completion with the saved settings |
+| `POST /families/{id}/ai/chat` | `{"messages": [...], "lang", "today", "year", "page"}` (OpenAI format, the last one the user's) → `text/event-stream` with `text`, `tool`, `tool_result`, `change` (with `undo`: requests against the family that undo it), `messages` (to append to the history), `done` / `error` |
 
 ### Links
 

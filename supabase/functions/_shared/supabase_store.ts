@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import type {
+  AiSettingsRow,
   CategoryRow,
   EntryRow,
   FamilyPatch,
@@ -248,5 +249,16 @@ export class SupabaseStore implements Store {
       for (const r of rows) found.add(r.import_hash);
     }
     return found;
+  }
+
+  async getAiSettings(familyId: string) {
+    const rows = check(
+      await this.db.from("ai_settings").select("*").eq("family_id", familyId).limit(1),
+    ) as AiSettingsRow[] | null;
+    return rows?.[0] ?? null;
+  }
+
+  async saveAiSettings(row: AiSettingsRow) {
+    check(await this.db.from("ai_settings").upsert(row, { onConflict: "family_id" }));
   }
 }

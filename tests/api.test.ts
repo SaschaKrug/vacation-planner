@@ -819,6 +819,8 @@ const SMALL_LIMITS = {
   create: { max: 2, seconds: 3600 },
   createAll: { max: 5, seconds: 3600 },
   write: { max: 3, seconds: 3600 },
+  ai: { max: 100, seconds: 3600 },
+  aiFamily: { max: 100, seconds: 3600 },
 };
 
 Deno.test("limits how many planners one client creates", async () => {

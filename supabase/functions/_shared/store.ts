@@ -72,6 +72,21 @@ export interface FinanceSettingsRow {
   csv_mappings: unknown[];
 }
 
+export type SearchProvider = "none" | "tavily" | "brave";
+export const SEARCH_PROVIDERS: SearchProvider[] = ["none", "tavily", "brave"];
+
+/** The AI assistant's settings; the keys are encrypted (see secrets.ts). */
+export interface AiSettingsRow {
+  family_id: string;
+  base_url: string;
+  model: string;
+  api_key_enc: string;
+  search_provider: SearchProvider;
+  search_key_enc: string;
+  allow_writes: boolean;
+  updated_at: string;
+}
+
 /** Everything of the finances, for an import that replaces them. */
 export interface FinanceContents {
   categories: CategoryRow[];
@@ -124,6 +139,9 @@ export interface Store {
   deleteTransactions(familyId: string, ids: string[]): Promise<void>;
   /** Which of the hashes imported transactions already have. */
   existingImportHashes(familyId: string, hashes: string[]): Promise<Set<string>>;
+
+  getAiSettings(familyId: string): Promise<AiSettingsRow | null>;
+  saveAiSettings(row: AiSettingsRow): Promise<void>;
 }
 
 export class MemoryStore implements Store {
@@ -134,6 +152,7 @@ export class MemoryStore implements Store {
   financeSettings = new Map<string, FinanceSettingsRow>();
   categories = new Map<string, CategoryRow[]>();
   transactions = new Map<string, Map<string, TransactionRow>>(); // familyId -> id -> row
+  aiSettings = new Map<string, AiSettingsRow>();
 
   createFamily(family: FamilyRow, types: TypeRow[]) {
     this.families.set(family.id, { ...family });
@@ -327,6 +346,16 @@ export class MemoryStore implements Store {
     return Promise.resolve();
   }
 
+  getAiSettings(familyId: string) {
+    const row = this.aiSettings.get(familyId);
+    return Promise.resolve(row ? { ...row } : null);
+  }
+
+  saveAiSettings(row: AiSettingsRow) {
+    this.aiSettings.set(row.family_id, { ...row });
+    return Promise.resolve();
+  }
+
   existingImportHashes(familyId: string, hashes: string[]) {
     const wanted = new Set(hashes);
     const found = new Set<string>();
@@ -346,6 +375,7 @@ export class MemoryStore implements Store {
       financeSettings: this.financeSettings.get(family.id) ?? null,
       categories: this.categories.get(family.id) ?? [],
       transactions: [...(this.transactions.get(family.id)?.values() ?? [])],
+      aiSettings: this.aiSettings.get(family.id) ?? null,
     }));
   }
 
@@ -367,6 +397,7 @@ export class MemoryStore implements Store {
         family.id,
         new Map((item.transactions ?? []).map((t) => [t.id, { ...t }])),
       );
+      if (item.aiSettings) this.aiSettings.set(family.id, item.aiSettings);
     }
   }
 }
@@ -380,6 +411,7 @@ export type MemorySnapshot = {
   financeSettings?: FinanceSettingsRow | null;
   categories?: CategoryRow[];
   transactions?: TransactionRow[];
+  aiSettings?: AiSettingsRow | null;
 }[];
 
 /** A 32-character alphanumeric id, like the database migration makes them. */
