@@ -377,6 +377,13 @@ export class FinanceStore {
     this.reload();
   }
 
+  /** Deletes all transactions, categories and settings; there is no undo. */
+  async clearAll() {
+    const out = await this.withOverview(() => api.clearFinance(this.token));
+    this.reload();
+    if (out) toast(t("finance.cleared"));
+  }
+
   get mappings(): CsvMapping[] {
     return (this.overview?.csvMappings ?? []) as CsvMapping[];
   }

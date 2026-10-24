@@ -236,6 +236,7 @@ export const api = {
   applyNoteOps: (token: string, ops: NoteOp[]) =>
     request<unknown>("POST", `${fam(token)}/notes`, { ops }),
   finance: (token: string) => request<FinanceOverview>("GET", `${fam(token)}/finance`),
+  clearFinance: (token: string) => request<FinanceOverview>("DELETE", `${fam(token)}/finance`),
   financeSettings: (token: string, patch: { currency?: string; csvMappings?: unknown[] }) =>
     request<FinanceOverview>("PATCH", `${fam(token)}/finance/settings`, patch),
   addCategory: (token: string, c: Omit<Category, "id" | "position">) =>
@@ -325,7 +326,6 @@ export const api = {
       if ((err as Error).name !== "AbortError") throw err;
     }
   },
-  agentUrl: (token: string) => `${apiBase()}${fam(token)}/agent`,
   calendarUrl: (feedId: string, params: Record<string, string> = {}) => {
     const qs = new URLSearchParams(params).toString();
     return `${apiBase()}${fam(feedId)}/calendar.ics${qs ? "?" + qs : ""}`;

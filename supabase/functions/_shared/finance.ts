@@ -358,6 +358,7 @@ export function handleFinance(ctx: Ctx): Promise<Response> | null {
   const [, sub, id] = ctx.rest;
   const { method } = ctx;
   if (sub === undefined && method === "GET") return overview(ctx);
+  if (sub === undefined && method === "DELETE") return clearRoute(ctx);
   if (sub === "settings" && id === undefined && method === "PATCH") return updateSettings(ctx);
   if (sub === "categories") return categoriesRoute(ctx, id);
   if (sub === "transactions" && id === undefined) {
@@ -385,6 +386,13 @@ async function overviewData(store: Store, familyId: string) {
 /** GET /finance: currency, saved CSV mappings and the categories. */
 async function overview({ store, load }: Ctx): Promise<Response> {
   const { family } = await load("view");
+  return json(await overviewData(store, family.id));
+}
+
+/** DELETE /finance: deletes all transactions, categories and settings. */
+async function clearRoute({ store, load }: Ctx): Promise<Response> {
+  const { family } = await load("edit");
+  await store.clearFinance(family.id);
   return json(await overviewData(store, family.id));
 }
 
