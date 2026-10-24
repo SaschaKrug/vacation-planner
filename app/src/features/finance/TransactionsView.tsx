@@ -103,6 +103,12 @@ export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void
           <li
             key={tx.id}
             className="grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-1 px-3 py-2.5 sm:grid-cols-[6.5rem_1fr_12rem_8rem_auto]"
+            // a stripe in the category's color down the row's left edge
+            style={{
+              boxShadow: `inset 3px 0 0 ${
+                finance.categoryById(tx.categoryId)?.color ?? "transparent"
+              }`,
+            }}
           >
             <time
               className="text-xs text-muted-foreground tabular-nums sm:text-sm"
@@ -151,7 +157,13 @@ export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void
                 )
                 : <CategoryLabel category={finance.categoryById(tx.categoryId)} />}
             </div>
-            <div className="col-start-3 row-start-1 text-right font-semibold whitespace-nowrap tabular-nums sm:col-auto sm:row-auto">
+            <div
+              className={cn(
+                "col-start-3 row-start-1 text-right font-semibold whitespace-nowrap tabular-nums sm:col-auto sm:row-auto",
+                tx.amountCents > 0 && "text-ok",
+                tx.amountCents < 0 && "text-gap",
+              )}
+            >
               {formatMoney(tx.amountCents, finance.currency, lang, { sign: tx.amountCents > 0 })}
             </div>
             <div className="col-start-3 row-span-2 row-start-2 flex justify-end gap-0.5 sm:col-auto sm:row-auto">
