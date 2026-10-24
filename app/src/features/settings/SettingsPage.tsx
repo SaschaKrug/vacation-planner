@@ -1,11 +1,13 @@
-import { Database, Laptop, Palette, Plug, Share2, Users } from "lucide-react";
+import { Database, Laptop, Palette, Plug, Share2, Sparkles, Users, Wallet } from "lucide-react";
 import type { ReactNode } from "react";
 import { Navigate, NavLink, useParams } from "react-router";
 import { usePlanner } from "@/features/family/context";
 import { t, useLang } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/layout/PageHeader";
+import { AiSection } from "./AiSection";
 import { DataSection } from "./DataSection";
+import { FinanceSection } from "./FinanceSection";
 import { GeneralSection } from "./GeneralSection";
 import { IntegrationsSection } from "./IntegrationsSection";
 import { SharingSection } from "./SharingSection";
@@ -15,6 +17,8 @@ const SECTIONS = [
   { id: "general", icon: Palette, Component: GeneralSection },
   { id: "sharing", icon: Share2, Component: SharingSection },
   { id: "vacation", icon: Users, Component: VacationSection },
+  { id: "finance", icon: Wallet, Component: FinanceSection },
+  { id: "ai", icon: Sparkles, Component: AiSection },
   { id: "integrations", icon: Plug, Component: IntegrationsSection },
   { id: "data", icon: Database, Component: DataSection },
 ] as const;

@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Navigate, Outlet, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { ChatStore } from "@/features/chat/store";
+import { FinanceStore } from "@/features/finance/store";
 import { PlannerStore } from "@/features/vacation/store";
 import { t, useLang } from "@/lib/i18n";
 import { forgetFamily } from "@/lib/recent";
@@ -9,7 +11,7 @@ import { readFlag, writeFlag } from "@/lib/storage";
 import { ChatPanel } from "@/layout/ChatPanel";
 import { LeftSidebar } from "@/layout/LeftSidebar";
 import { HelpDialog } from "@/features/vacation/HelpDialog";
-import { PlannerContext, usePlanner } from "./context";
+import { ChatContext, FinanceContext, PlannerContext, usePlanner } from "./context";
 
 const SIDEBAR_KEY = "fp-sidebar-collapsed";
 
@@ -23,6 +25,24 @@ export function FamilyLayout() {
   const store = useMemo(
     () => new PlannerStore(token, year, (msg) => toast(msg)),
     [token],
+  );
+
+  const finance = useMemo(() => new FinanceStore(token), [token]);
+  const chat = useMemo(
+    () =>
+      new ChatStore(
+        token,
+        (kind) => {
+          // The assistant changed something: show it right away.
+          if (kind === "transactions") finance.refresh();
+          else store.load({ quiet: true });
+        },
+        () => ({
+          page: /\/(finance|settings)/.exec(location.pathname)?.[1] ?? "vacation",
+          year: store.year,
+        }),
+      ),
+    [token, store, finance],
   );
 
   useEffect(() => {
@@ -39,7 +59,11 @@ export function FamilyLayout() {
 
   return (
     <PlannerContext.Provider value={store}>
-      <FamilyShell />
+      <FinanceContext.Provider value={finance}>
+        <ChatContext.Provider value={chat}>
+          <FamilyShell />
+        </ChatContext.Provider>
+      </FinanceContext.Provider>
     </PlannerContext.Provider>
   );
 }

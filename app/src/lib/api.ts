@@ -29,6 +29,119 @@ export interface FamilyState {
   notes?: Record<string, { icon: string; comment: string }>;
 }
 
+export type CategoryKind = "income" | "expense" | "both";
+
+export interface Category {
+  id: string;
+  name: string;
+  color: string;
+  icon: string;
+  kind: CategoryKind;
+  position: number;
+}
+
+export interface Transaction {
+  id: string;
+  date: string;
+  amountCents: number;
+  payee: string;
+  description: string;
+  categoryId: string | null;
+  note: string;
+  imported: boolean;
+}
+
+export interface FinanceOverview {
+  currency: string;
+  csvMappings: unknown[];
+  categories: Category[];
+}
+
+export interface TransactionList {
+  transactions: Transaction[];
+  total: number;
+  incomeCents: number;
+  expenseCents: number;
+}
+
+export interface FinanceSummary {
+  currency: string;
+  incomeCents: number;
+  expenseCents: number;
+  count: number;
+  months: { month: string; incomeCents: number; expenseCents: number }[];
+  categories: {
+    categoryId: string | null;
+    incomeCents: number;
+    expenseCents: number;
+    count: number;
+  }[];
+}
+
+/** An op for POST /finance/transactions; the response's `inverse` ops undo a request. */
+export type TransactionOp = Record<string, unknown> & { action: "add" | "update" | "delete" };
+
+export interface TransactionResult {
+  ok: true;
+  changed: number;
+  added: string[];
+  inverse: TransactionOp[];
+}
+
+export interface AiSettings {
+  configured: boolean;
+  baseUrl: string;
+  model: string;
+  hasKey: boolean;
+  keyHint: string;
+  searchProvider: "none" | "tavily" | "brave";
+  hasSearchKey: boolean;
+  searchKeyHint: string;
+  allowWrites: boolean;
+  serverReady: boolean;
+}
+
+export interface AiSettingsPatch {
+  baseUrl?: string;
+  apiKey?: string;
+  model?: string;
+  searchProvider?: AiSettings["searchProvider"];
+  searchKey?: string;
+  allowWrites?: boolean;
+}
+
+/** A message in the OpenAI format, as the chat endpoint takes and returns them. */
+export interface ChatMessage {
+  role: "user" | "assistant" | "tool";
+  content: string | null;
+  tool_calls?: { id: string; type: "function"; function: { name: string; arguments: string } }[];
+  tool_call_id?: string;
+}
+
+/** A request against /families/{id} that undoes (part of) a change the assistant made. */
+export interface UndoStep {
+  method: "POST" | "PATCH" | "DELETE";
+  path: string;
+  body?: unknown;
+}
+
+export type ChatEvent =
+  | { event: "text"; data: { delta: string } }
+  | { event: "tool"; data: { id: string; name: string; args: Record<string, unknown> } }
+  | { event: "tool_result"; data: { id: string; name: string; ok: boolean; summary: string } }
+  | {
+    event: "change";
+    data: {
+      id: string;
+      kind: "entries" | "notes" | "types" | "transactions";
+      summary: string;
+      undo: UndoStep[];
+    };
+  }
+  | { event: "messages"; data: { messages: ChatMessage[] } }
+  | { event: "done"; data: Record<string, never> }
+  | { event: "error"; data: { message: string } };
+
 export class ApiError extends Error {
   constructor(message: string, public status?: number) {
     super(message);
@@ -108,6 +221,91 @@ export const api = {
     request<unknown>("POST", `${fam(token)}/entries`, { ops }),
   applyNoteOps: (token: string, ops: NoteOp[]) =>
     request<unknown>("POST", `${fam(token)}/notes`, { ops }),
+  finance: (token: string) => request<FinanceOverview>("GET", `${fam(token)}/finance`),
+  financeSettings: (token: string, patch: { currency?: string; csvMappings?: unknown[] }) =>
+    request<FinanceOverview>("PATCH", `${fam(token)}/finance/settings`, patch),
+  addCategory: (token: string, c: Omit<Category, "id" | "position">) =>
+    request<Category>("POST", `${fam(token)}/finance/categories`, c),
+  updateCategory: (token: string, id: string, patch: Partial<Category>) =>
+    request<Category>("PATCH", `${fam(token)}/finance/categories/${enc(id)}`, patch),
+  deleteCategory: (token: string, id: string) =>
+    request<unknown>("DELETE", `${fam(token)}/finance/categories/${enc(id)}`),
+  defaultCategories: (token: string, lang: string) =>
+    request<Category[]>("POST", `${fam(token)}/finance/categories/defaults`, { lang }),
+  transactions: (token: string, query: Record<string, string>) =>
+    request<TransactionList>(
+      "GET",
+      `${fam(token)}/finance/transactions?${new URLSearchParams(query)}`,
+    ),
+  changeTransactions: (token: string, ops: TransactionOp[]) =>
+    request<TransactionResult>("POST", `${fam(token)}/finance/transactions`, { ops }),
+  importTransactions: (
+    token: string,
+    rows: { date: string; amountCents: number; payee: string; description: string }[],
+    dryRun = false,
+  ) =>
+    request<{ added: number; duplicates: number[]; ids: string[] }>(
+      "POST",
+      `${fam(token)}/finance/import`,
+      { rows, dryRun },
+    ),
+  financeSummary: (token: string, query: Record<string, string>) =>
+    request<FinanceSummary>("GET", `${fam(token)}/finance/summary?${new URLSearchParams(query)}`),
+  aiSettings: (token: string) => request<AiSettings>("GET", `${fam(token)}/ai/settings`),
+  saveAiSettings: (token: string, patch: AiSettingsPatch) =>
+    request<AiSettings>("PUT", `${fam(token)}/ai/settings`, patch),
+  aiModels: (token: string, body: { baseUrl?: string; apiKey?: string } = {}) =>
+    request<{ models: string[] }>("POST", `${fam(token)}/ai/models`, body),
+  aiTest: (token: string) =>
+    request<{ ok: boolean; model: string; reply: string }>("POST", `${fam(token)}/ai/test`, {}),
+  /** Runs undo steps in order (they are relative to the family). */
+  undo: async (token: string, steps: UndoStep[]) => {
+    for (const step of steps) await request(step.method, fam(token) + step.path, step.body);
+  },
+  /** Sends a chat turn and calls `onEvent` for every server-sent event until the end. */
+  chat: async (
+    token: string,
+    body: Record<string, unknown>,
+    onEvent: (e: ChatEvent) => void,
+    signal?: AbortSignal,
+  ) => {
+    let res: Response;
+    try {
+      res = await fetch(`${apiBase()}${fam(token)}/ai/chat`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+        signal,
+      });
+    } catch (err) {
+      if ((err as Error).name === "AbortError") return;
+      throw new ApiError((err as Error).message);
+    }
+    if (!res.ok || !res.body) {
+      const data = await res.json().catch(() => ({}));
+      throw new ApiError(data.error || `HTTP ${res.status}`, res.status);
+    }
+    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buffer = "";
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += value;
+        let end: number;
+        while ((end = buffer.indexOf("\n\n")) >= 0) {
+          const block = buffer.slice(0, end);
+          buffer = buffer.slice(end + 2);
+          const event = /^event: (.*)$/m.exec(block)?.[1];
+          const data = /^data: (.*)$/m.exec(block)?.[1];
+          if (!event || data === undefined || event === "ping") continue;
+          onEvent({ event, data: JSON.parse(data) } as ChatEvent);
+        }
+      }
+    } catch (err) {
+      if ((err as Error).name !== "AbortError") throw err;
+    }
+  },
   agentUrl: (token: string) => `${apiBase()}${fam(token)}/agent`,
   calendarUrl: (feedId: string, params: Record<string, string> = {}) => {
     const qs = new URLSearchParams(params).toString();

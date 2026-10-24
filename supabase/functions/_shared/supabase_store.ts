@@ -1,5 +1,17 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
-import type { EntryRow, FamilyPatch, FamilyRow, NoteRow, Store, TypeRow } from "./store.ts";
+import type {
+  AiSettingsRow,
+  CategoryRow,
+  EntryRow,
+  FamilyPatch,
+  FamilyRow,
+  FinanceContents,
+  FinanceSettingsRow,
+  NoteRow,
+  Store,
+  TransactionRow,
+  TypeRow,
+} from "./store.ts";
 
 const PAGE = 1000; // PostgREST default max rows per request
 const CHUNK = 200; // keeps `in (...)` filters well below URL length limits
@@ -136,6 +148,7 @@ export class SupabaseStore implements Store {
     types: TypeRow[],
     entries: EntryRow[],
     notes: NoteRow[],
+    finance?: FinanceContents,
   ) {
     // One database function, so a failed import leaves the family as it was.
     check(
@@ -144,7 +157,108 @@ export class SupabaseStore implements Store {
         p_types: types.map(({ family_id: _, ...t }) => t),
         p_entries: entries,
         p_notes: notes,
+        p_finance: finance
+          ? {
+            currency: finance.currency,
+            categories: finance.categories.map(({ family_id: _, ...c }) => c),
+            transactions: finance.transactions.map(({ family_id: _, created_at: __, ...t }) => t),
+          }
+          : null,
       }),
     );
+  }
+
+  async getFinanceSettings(familyId: string) {
+    const rows = check(
+      await this.db.from("family_settings").select("*").eq("family_id", familyId).limit(1),
+    ) as FinanceSettingsRow[] | null;
+    return rows?.[0] ?? null;
+  }
+
+  async saveFinanceSettings(row: FinanceSettingsRow) {
+    check(await this.db.from("family_settings").upsert(row, { onConflict: "family_id" }));
+  }
+
+  async listCategories(familyId: string) {
+    const rows = check(
+      await this.db.from("finance_categories").select("*").eq("family_id", familyId)
+        .order("position"),
+    );
+    return (rows ?? []) as CategoryRow[];
+  }
+
+  async upsertCategories(rows: CategoryRow[]) {
+    if (!rows.length) return;
+    check(
+      await this.db.from("finance_categories").upsert(rows, { onConflict: "family_id,id" }),
+    );
+  }
+
+  async deleteCategory(familyId: string, id: string) {
+    // Transactions keep their rows: ON DELETE SET NULL clears their category.
+    check(
+      await this.db.from("finance_categories").delete().eq("family_id", familyId).eq("id", id),
+    );
+  }
+
+  async listTransactions(familyId: string, from?: string, to?: string) {
+    const out: TransactionRow[] = [];
+    for (let offset = 0;; offset += PAGE) {
+      let q = this.db.from("transactions").select("*").eq("family_id", familyId);
+      if (from) q = q.gte("day", from);
+      if (to) q = q.lte("day", to);
+      const rows = check(
+        await q.order("day", { ascending: false }).order("created_at", { ascending: false })
+          .order("id").range(offset, offset + PAGE - 1),
+      ) as TransactionRow[];
+      out.push(...rows.map((r) => ({ ...r, amount_cents: Number(r.amount_cents) })));
+      if (rows.length < PAGE) return out;
+    }
+  }
+
+  async getTransactions(familyId: string, ids: string[]) {
+    const out: TransactionRow[] = [];
+    for (const part of chunks(ids, CHUNK)) {
+      const rows = check(
+        await this.db.from("transactions").select("*").eq("family_id", familyId).in("id", part),
+      ) as TransactionRow[];
+      out.push(...rows.map((r) => ({ ...r, amount_cents: Number(r.amount_cents) })));
+    }
+    return out;
+  }
+
+  async upsertTransactions(rows: TransactionRow[]) {
+    for (const part of chunks(rows, 500)) {
+      check(await this.db.from("transactions").upsert(part, { onConflict: "family_id,id" }));
+    }
+  }
+
+  async deleteTransactions(familyId: string, ids: string[]) {
+    for (const part of chunks(ids, CHUNK)) {
+      check(await this.db.from("transactions").delete().eq("family_id", familyId).in("id", part));
+    }
+  }
+
+  async existingImportHashes(familyId: string, hashes: string[]) {
+    const found = new Set<string>();
+    for (const part of chunks(hashes, CHUNK)) {
+      const rows = check(
+        await this.db.from("transactions").select("import_hash").eq("family_id", familyId)
+          .in("import_hash", part),
+      ) as { import_hash: string }[];
+      for (const r of rows) found.add(r.import_hash);
+    }
+    return found;
+  }
+
+  async getAiSettings(familyId: string) {
+    const rows = check(
+      await this.db.from("ai_settings").select("*").eq("family_id", familyId).limit(1),
+    ) as AiSettingsRow[] | null;
+    return rows?.[0] ?? null;
+  }
+
+  async saveAiSettings(row: AiSettingsRow) {
+    check(await this.db.from("ai_settings").upsert(row, { onConflict: "family_id" }));
   }
 }
