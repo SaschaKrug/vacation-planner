@@ -2,9 +2,12 @@ import {
   CalendarDays,
   Check,
   CircleAlert,
+  FileText,
   Globe,
   History,
+  ImageIcon,
   Loader2,
+  Paperclip,
   Plus,
   Search,
   SendHorizontal,
@@ -15,9 +18,11 @@ import {
   Wallet,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { type DragEvent, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,7 +36,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useChat } from "@/features/family/context";
 import { Markdown } from "@/features/chat/Markdown";
-import type { Item } from "@/features/chat/store";
+import {
+  ACCEPT,
+  type Attachment,
+  kindOf,
+  MAX_ATTACHMENTS,
+  readAttachment,
+} from "@/features/chat/attachments";
+import type { Item, ItemAttachment } from "@/features/chat/store";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { getLang, t } from "@/lib/i18n";
 import { readFlag, writeFlag } from "@/lib/storage";
@@ -117,7 +129,12 @@ export function ChatPanel() {
 function ChatView({ onClose }: { onClose: () => void }) {
   const chat = useChat();
   const [text, setText] = useState("");
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  // Files still being read or shrunk.
+  const [pending, setPending] = useState<{ id: string; name: string }[]>([]);
+  const [dragging, setDragging] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const current = chat.current;
 
   useEffect(() => {
@@ -130,17 +147,65 @@ function ChatView({ onClose }: { onClose: () => void }) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [chat.rev]);
 
-  const send = (value = text) => {
-    if (!value.trim() || chat.busy) return;
-    chat.send(value);
-    setText("");
-  };
-
   const settings = chat.settings;
   const ready = settings?.configured;
 
+  const send = (value = text) => {
+    if ((!value.trim() && !attachments.length) || pending.length || chat.busy) return;
+    chat.send(value, attachments);
+    setText("");
+    setAttachments([]);
+  };
+
+  const attach = (files: File[]) => {
+    if (!ready) return;
+    const ok = files.filter((f) => {
+      if (kindOf(f)) return true;
+      toast(t("chat.attach_unsupported", { name: f.name }));
+      return false;
+    });
+    const room = MAX_ATTACHMENTS - attachments.length - pending.length;
+    if (ok.length > room) toast(t("chat.attach_limit", { n: MAX_ATTACHMENTS }));
+    for (const file of ok.slice(0, Math.max(0, room))) {
+      const id = crypto.randomUUID();
+      setPending((p) => [...p, { id, name: file.name }]);
+      readAttachment(file)
+        .then((a) => setAttachments((list) => [...list, a]))
+        .catch((err) => toast((err as Error).message))
+        .finally(() => setPending((p) => p.filter((x) => x.id !== id)));
+    }
+  };
+
+  const hasFiles = (e: DragEvent) => ready && e.dataTransfer.types.includes("Files");
+
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div
+      className="relative flex h-full min-h-0 flex-col"
+      onDragEnter={(e) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        setDragging(true);
+      }}
+      onDragOver={(e) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+      }}
+      onDrop={(e) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        setDragging(false);
+        attach(Array.from(e.dataTransfer.files));
+      }}
+    >
+      {dragging && (
+        <div className="pointer-events-none absolute inset-2 z-20 flex items-center justify-center rounded-xl border-2 border-dashed border-primary bg-background/85 text-sm font-medium">
+          <Paperclip className="mr-2 size-4 text-primary" /> {t("chat.drop")}
+        </div>
+      )}
       <header className="flex h-14 shrink-0 items-center gap-1 border-b px-3">
         <Sparkles className="mx-1 size-4 text-primary" />
         <h2 className="min-w-0 flex-1 truncate font-semibold">
@@ -239,45 +304,101 @@ function ChatView({ onClose }: { onClose: () => void }) {
           send();
         }}
       >
-        <div className="flex items-end gap-2 rounded-xl border bg-background p-1.5 focus-within:ring-2 focus-within:ring-ring/40">
-          <Textarea
-            rows={1}
-            value={text}
-            disabled={!ready}
-            aria-label={t("chat.placeholder")}
-            placeholder={ready ? t("chat.placeholder") : t("chat.setup_first")}
-            className="max-h-40 min-h-9 resize-none border-0 bg-transparent p-1.5 shadow-none focus-visible:ring-0 dark:bg-transparent"
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+        <div className="rounded-xl border bg-background p-1.5 focus-within:ring-2 focus-within:ring-ring/40">
+          {(attachments.length > 0 || pending.length > 0) && (
+            <div className="flex flex-wrap gap-2 p-1 pb-2">
+              {attachments.map((a, i) => (
+                <PendingChip
+                  key={i}
+                  attachment={a}
+                  onRemove={() => setAttachments((list) => list.filter((x) => x !== a))}
+                />
+              ))}
+              {pending.map((p) => (
+                <div
+                  key={p.id}
+                  className="flex size-12 items-center justify-center rounded-md border bg-muted"
+                  role="status"
+                  aria-label={t("chat.attach_processing", { name: p.name })}
+                  title={p.name}
+                >
+                  <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex items-end gap-1">
+            <input
+              ref={fileRef}
+              type="file"
+              multiple
+              accept={ACCEPT}
+              className="hidden"
+              onChange={(e) => {
+                attach(Array.from(e.target.files ?? []));
+                e.target.value = "";
+              }}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="text-muted-foreground"
+              aria-label={t("chat.attach")}
+              title={t("chat.attach")}
+              disabled={!ready}
+              onClick={() => fileRef.current?.click()}
+            >
+              <Paperclip />
+            </Button>
+            <Textarea
+              rows={1}
+              value={text}
+              disabled={!ready}
+              aria-label={t("chat.placeholder")}
+              placeholder={ready ? t("chat.placeholder") : t("chat.setup_first")}
+              className="max-h-40 min-h-9 resize-none border-0 bg-transparent p-1.5 shadow-none focus-visible:ring-0 dark:bg-transparent"
+              onChange={(e) => setText(e.target.value)}
+              onPaste={(e) => {
+                // Screenshots arrive as image files; plain text pastes as usual.
+                const images = Array.from(e.clipboardData.files).filter((f) =>
+                  f.type.startsWith("image/")
+                );
+                if (!images.length) return;
                 e.preventDefault();
-                send();
-              }
-            }}
-          />
-          {chat.busy
-            ? (
-              <Button
-                type="button"
-                size="icon"
-                variant="secondary"
-                aria-label={t("chat.stop")}
-                title={t("chat.stop")}
-                onClick={() => chat.stop()}
-              >
-                <Square className="fill-current" />
-              </Button>
-            )
-            : (
-              <Button
-                type="submit"
-                size="icon"
-                aria-label={t("chat.send")}
-                disabled={!ready || !text.trim()}
-              >
-                <SendHorizontal />
-              </Button>
-            )}
+                attach(images);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  send();
+                }
+              }}
+            />
+            {chat.busy
+              ? (
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="secondary"
+                  aria-label={t("chat.stop")}
+                  title={t("chat.stop")}
+                  onClick={() => chat.stop()}
+                >
+                  <Square className="fill-current" />
+                </Button>
+              )
+              : (
+                <Button
+                  type="submit"
+                  size="icon"
+                  aria-label={t("chat.send")}
+                  disabled={!ready || pending.length > 0 || (!text.trim() && !attachments.length)}
+                >
+                  <SendHorizontal />
+                </Button>
+              )}
+          </div>
         </div>
         <p className="mt-1.5 px-1 text-[11px] text-muted-foreground">{t("chat.hint")}</p>
       </form>
@@ -343,11 +464,82 @@ function toolLabel(item: Item & { kind: "tool" }) {
   return t(`chat.tool.${item.name}`);
 }
 
+/** An attachment in the composer, with a remove button. */
+function PendingChip(
+  { attachment: a, onRemove }: { attachment: Attachment; onRemove: () => void },
+) {
+  return (
+    <div className="relative">
+      {a.kind === "image"
+        ? <img src={a.url} alt={a.name} className="size-12 rounded-md border object-cover" />
+        : (
+          <div
+            className="flex h-12 max-w-40 items-center gap-1.5 rounded-md border bg-muted px-2 text-xs"
+            title={a.name}
+          >
+            <FileText className="size-4 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 truncate">{a.name}</span>
+          </div>
+        )}
+      <button
+        type="button"
+        className="absolute -top-1.5 -right-1.5 flex size-5 items-center justify-center rounded-full border bg-background text-muted-foreground shadow-sm hover:text-foreground"
+        aria-label={t("chat.remove_attachment", { name: a.name })}
+        title={t("chat.remove_attachment", { name: a.name })}
+        onClick={onRemove}
+      >
+        <X className="size-3" />
+      </button>
+    </div>
+  );
+}
+
+/** An attachment in a sent message: an image (click for full size) or a file chip. */
+function SentAttachment({ attachment: a }: { attachment: ItemAttachment }) {
+  if (a.kind === "image" && a.url) {
+    return (
+      <Dialog>
+        <DialogTrigger asChild>
+          <button type="button" className="block cursor-zoom-in" title={a.name}>
+            <img
+              src={a.url}
+              alt={a.name}
+              className="max-h-40 max-w-40 rounded-lg bg-background object-cover"
+            />
+          </button>
+        </DialogTrigger>
+        <DialogContent className="p-2 sm:max-w-4xl">
+          <DialogTitle className="sr-only">{a.name}</DialogTitle>
+          <img src={a.url} alt={a.name} className="max-h-[85vh] w-full rounded object-contain" />
+        </DialogContent>
+      </Dialog>
+    );
+  }
+  const Icon = a.kind === "image" ? ImageIcon : FileText;
+  return (
+    <div
+      className={cn(
+        "flex max-w-full items-center gap-1.5 rounded-md bg-primary-foreground/15 px-2 py-1 text-xs",
+        a.kind === "image" && "opacity-75",
+      )}
+      title={a.kind === "image" ? t("chat.image_gone") : a.name}
+    >
+      <Icon className="size-3.5 shrink-0" />
+      <span className="min-w-0 truncate">{a.name}</span>
+    </div>
+  );
+}
+
 function ItemView({ item, onUndo }: { item: Item; onUndo: (id: string) => void }) {
   if (item.kind === "user") {
     return (
-      <div className="ml-8 rounded-2xl rounded-br-md bg-primary px-3 py-2 whitespace-pre-wrap text-primary-foreground">
-        {item.text}
+      <div className="ml-8 space-y-2 rounded-2xl rounded-br-md bg-primary px-3 py-2 text-primary-foreground">
+        {!!item.attachments?.length && (
+          <div className="flex flex-wrap gap-2">
+            {item.attachments.map((a, i) => <SentAttachment key={i} attachment={a} />)}
+          </div>
+        )}
+        {item.text && <div className="whitespace-pre-wrap">{item.text}</div>}
       </div>
     );
   }

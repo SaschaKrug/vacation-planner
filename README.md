@@ -71,6 +71,8 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   pages**. Every change shows up in the chat with **Undo**; bigger changes (more than 31 days,
   deleting types or transactions) need the user's OK first. *Allow changes* off makes it
   read-only.
+- **Attach** images (screenshots, photos) and text files (e.g. CSV) to a message; images need a
+  model with vision support.
 - Chats are kept on the device (the last 20 per family).
 - The server runs the tool loop: the app streams the answer from the Edge Function, which talks
   to the model. Requests to private networks are refused (also after redirects), pages are
@@ -258,7 +260,7 @@ All need the edit id.
 | `PUT /families/{id}/ai/settings` | Any of `{"baseUrl", "apiKey", "model", "searchProvider": "none" \| "tavily" \| "brave", "searchKey", "allowWrites"}`; `""` removes a key |
 | `POST /families/{id}/ai/models` | The API's models: `{"models": [...]}`; `{"baseUrl", "apiKey"}` in the body try values before saving them |
 | `POST /families/{id}/ai/test` | One short completion with the saved settings |
-| `POST /families/{id}/ai/chat` | `{"messages": [...], "lang", "today", "year", "page"}` (OpenAI format, the last one the user's) → `text/event-stream` with `text`, `tool`, `tool_result`, `change` (with `undo`: requests against the family that undo it), `messages` (to append to the history), `done` / `error` |
+| `POST /families/{id}/ai/chat` | `{"messages": [...], "lang", "today", "year", "page"}` (OpenAI format, the last one the user's; a user message's `content` may be parts: `{"type": "text", "text"}` and up to 4 `{"type": "image_url", "image_url": {"url": "data:image/png;base64,…"}}`, the newest 8 images are sent) → `text/event-stream` with `text`, `tool`, `tool_result`, `change` (with `undo`: requests against the family that undo it), `messages` (to append to the history), `done` / `error` |
 
 ### Links
 
