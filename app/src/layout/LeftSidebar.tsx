@@ -37,7 +37,6 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
-  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
@@ -93,11 +92,16 @@ export function LeftSidebar() {
               </NavLink>
             </SidebarMenuItem>
             <SidebarMenuItem>
-              <SidebarMenuButton disabled tooltip={t("nav.finance")}>
-                <Wallet />
-                <span>{t("nav.finance")}</span>
-              </SidebarMenuButton>
-              <SidebarMenuBadge>{t("nav.soon")}</SidebarMenuBadge>
+              <NavLink to={`${base}/finance`} onClick={closeOnMobile}>
+                {({ isActive }) => (
+                  <SidebarMenuButton asChild isActive={isActive} tooltip={t("nav.finance")}>
+                    <span>
+                      <Wallet />
+                      <span>{t("nav.finance")}</span>
+                    </span>
+                  </SidebarMenuButton>
+                )}
+              </NavLink>
             </SidebarMenuItem>
           </SidebarMenu>
         </SidebarGroup>

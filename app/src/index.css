@@ -37,6 +37,9 @@
   --chart-3: #f59e0b;
   --chart-4: #ec4899;
   --chart-5: #8b5cf6;
+  /* chart series (dataviz reference palette slots 1-2, validated on these surfaces) */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
 
   /* the year calendar (grid.ts) */
   --cal-surface: #ffffff;
@@ -87,6 +90,8 @@
   --sidebar-accent-foreground: #e8eaf0;
   --sidebar-border: #1f2430;
   --sidebar-ring: #6c9dff;
+  --series-1: #3987e5;
+  --series-2: #d95926;
 
   --cal-surface: #13161d;
   --cal-surface-2: #1a1e27;

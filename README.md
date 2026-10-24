@@ -1,8 +1,8 @@
 # Family Planner
 
-One place per family to plan the year. Today that's a shared year calendar for vacation, public
-holidays, sick days and day-care closures, with a coverage check, a REST API and an iCloud /
-Apple Calendar feed. Finances and an AI assistant are next (see
+One place per family to plan the year: a shared year calendar for vacation, public holidays,
+sick days and day-care closures (with a coverage check and an iCloud / Apple Calendar feed), a
+transactions log for the family's finances, and a REST API. An AI assistant is next (see
 [the plan](docs/family-planner-plan.md)).
 
 **Live:** https://family-planner.fa-krug.de/
@@ -11,7 +11,7 @@ Apple Calendar feed. Finances and an AI assistant are next (see
 
 - **Families:** every family is one secret id. The left sidebar switches between the families
   opened on this device (or creates / opens another one) and between the topics: **Vacation**
-  now, **Finance** next. **Settings** holds everything else. The right sidebar (✨, `Ctrl/⌘+J`)
+  and **Finance**. **Settings** holds everything else. The right sidebar (✨, `Ctrl/⌘+J`)
   is where the AI chat will live; phones open both as sheets.
 - No login: every family has a secret **edit link** (`/f/<id>`) and a separate **view-only
   link**. Anyone with the edit link can change it, so only share it with people who should. The
@@ -43,6 +43,23 @@ Apple Calendar feed. Finances and an AI assistant are next (see
   selection).
 - **Undo / redo:** ↶ / ↷ at the top, or `Ctrl/⌘+Z` / `Ctrl/⌘+Y`.
 
+### Finance
+
+- A **transactions log**: amounts in the family's currency, money in or out, with payee,
+  description, note and a **category** (new families get defaults like Groceries, Housing,
+  Salary; edit them in *Settings* → *Finance*). Pick a month, a year or all time; search, filter
+  by category (or *Uncategorized*) and by in / out; change a category right in the list. Every
+  change can be undone from its message.
+- **Import bank statements (CSV):** the import guesses the format (UTF-8 or Windows-1252,
+  separator, lines before the table, which column is the date, amount or debit / credit,
+  payee and description, German or English numbers and dates) and shows a preview to correct
+  it. Rows that were imported before are skipped, so overlapping statements can be imported
+  again; identical rows on one day (two coffees) stay apart. The format is remembered per bank.
+- **Overview:** income, expenses and the balance, a chart per month and the spending (or
+  income) per category, also as a table.
+- The view-only link shows the finances read-only; the legacy view link and the calendar feed
+  never do.
+
 ### Settings
 
 - **General:** the family's name; language (English / German) and light / dark per device.
@@ -51,6 +68,8 @@ Apple Calendar feed. Finances and an AI assistant are next (see
   Mac: Calendar → File → New Calendar Subscription → paste the feed URL → Location **iCloud**.
   The feed URL opens nothing but the feed, so it never exposes the edit or view link.
 - **Vacation:** the entry types of each year, and the calendar options of this device.
+- **Finance:** the currency, the categories (name, color, icon, income / expense / both) and the
+  remembered bank formats.
 - **Integrations:** a ready-to-paste prompt with one link for an AI agent that can send HTTP
   requests (Claude Code, Codex, ChatGPT agent mode …). The link returns instructions with the
   family's types and ready-to-use API URLs; the agent then reads and changes the calendar
@@ -68,7 +87,7 @@ Apple Calendar feed. Finances and an AI assistant are next (see
 ## Architecture
 
 ```
-GitHub Pages (app/)  ──fetch──▶  Supabase Edge Function "api"  ──▶  Postgres (5 tables)
+GitHub Pages (app/)  ──fetch──▶  Supabase Edge Function "api"  ──▶  Postgres (8 tables)
 iCloud / Apple Calendar ──GET calendar.ics──┘
 ```
 
@@ -140,7 +159,7 @@ No database needed: the dev server runs the real API handler on an in-memory sto
 | Option | Effect |
 | --- | --- |
 | `--persist` | Keeps the data in `.dev/data.json` across restarts (delete the file to start over) |
-| `--seed` | Adds a *Demo family* with types, entries, notes and uncovered days in this and next year, if there are no families yet |
+| `--seed` | Adds a *Demo family* with types, entries, notes and uncovered days in this and next year, and six months of transactions, if there are no families yet |
 | `--rate-limit` | Low rate limits (3 new families, 30 changes per minute) to try the app's 429 handling |
 
 On start, the server prints the edit and view links of all families it holds.
@@ -167,8 +186,8 @@ working across years.
 | `PATCH /families/{id}` | Rename: `{"name": "..."}` |
 | `POST /families/{id}/links` | New link: `{"link": "view"}` or `{"link": "feed"}` makes a new view or feed id (the old one stops working); `{"link": "legacy"}` removes the legacy view link. Returns the family like `GET /families/{id}` |
 | `POST /families/{id}/clone` | Copy the family (all years, types, entries, notes) into a new one with new ids. Body (optional): `{"name": "..."}`, default *“… (copy)”*. The view-only id works too |
-| `GET /families/{id}/export` | The whole family as a file: `{"format": "family-planner", "version": 1, "name", "types": [...], "entries": {...}, "notes": {...}}`, all years, without the family's ids. The view-only id works too |
-| `POST /families/{id}/import?year=2026` | Replace all years, types, entries and notes with those of an export file (the body), in one transaction; name and ids stay. Files with `"format": "vacation-planner"` (exported before the rename) work too. Returns the family like `GET /families/{id}` |
+| `GET /families/{id}/export` | The whole family as a file: `{"format": "family-planner", "version": 2, "name", "types": [...], "entries": {...}, "notes": {...}, "finance": {"currency", "categories", "transactions"}}`, all years, without the family's ids. The view-only id works too; the legacy id exports without `finance` |
+| `POST /families/{id}/import?year=2026` | Replace all years, types, entries and notes with those of an export file (the body), in one transaction, and the finances if the file has them; name and ids stay. Version 1 files and `"format": "vacation-planner"` (exported before the rename) work too. Returns the family like `GET /families/{id}` |
 | `GET /families/{id}/entries?year=2026` | `{"2026-08-03": ["vacation", "day-care-closed"], ...}` |
 | `POST /families/{id}/entries` | Change entries (see below) |
 | `GET /families/{id}/notes?year=2026` | `{"2026-12-25": {"icon": "🎄", "comment": "Christmas"}, ...}` |
@@ -184,6 +203,23 @@ working across years.
 
 Roles: `none`, `needs_cover`, `covers`, `day_off`.
 
+### Finance
+
+Amounts are integer **cents**, negative for money going out. Reading needs the view or edit id,
+changing the edit id.
+
+| Method & path | Description |
+| --- | --- |
+| `GET /families/{id}/finance` | `{"currency", "csvMappings", "categories": [{"id", "name", "color", "icon", "kind", "position"}]}` |
+| `PATCH /families/{id}/finance/settings` | `{"currency": "EUR"}` (ISO 4217) and/or `{"csvMappings": [...]}` |
+| `POST /families/{id}/finance/categories` | Add `{"name", "color", "icon", "kind": "income" \| "expense" \| "both"}` |
+| `PATCH` / `DELETE /families/{id}/finance/categories/{category}` | Change or delete (its transactions become uncategorized); by id or name |
+| `POST /families/{id}/finance/categories/defaults` | Add the default categories the family doesn't have: `{"lang": "de"}` |
+| `GET /families/{id}/finance/transactions` | `?from=&to=&category=<id or none>&kind=income\|expense&q=&limit=&offset=` → `{"transactions": [{"id", "date", "amountCents", "payee", "description", "categoryId", "note", "imported"}], "total", "incomeCents", "expenseCents"}`, newest first |
+| `POST /families/{id}/finance/transactions` | `{"ops": [...]}`: `{"action": "add", "date", "amountCents", "payee", "description", "categoryId", "note"}`, `{"action": "update", "id", ...fields}`, `{"action": "delete", "ids": [...]}`. Returns `inverse`, the ops that undo the request |
+| `POST /families/{id}/finance/import` | `{"rows": [{"date", "amountCents", "payee", "description", "categoryId"}], "dryRun": true}`: adds the rows that weren't imported before; returns `added`, `duplicates` (row indexes) and the new `ids` |
+| `GET /families/{id}/finance/summary?from=&to=` | `{"currency", "incomeCents", "expenseCents", "count", "months": [{"month", "incomeCents", "expenseCents"}], "categories": [{"categoryId", "incomeCents", "expenseCents", "count"}]}` |
+
 ### Links
 
 Every family has several ids; each one is a link with its own access:
@@ -191,7 +227,7 @@ Every family has several ids; each one is a link with its own access:
 | Id | In `family` | Can |
 | --- | --- | --- |
 | Edit id | `id` | Everything |
-| View id | `readId` | Read everything, export, clone |
+| View id | `readId` | Read everything (finances too), export, clone |
 | Feed id | `feedId` | Only `calendar.ics` |
 | Legacy id | `legacyId` | Read the calendar, its feed, export, clone. Only planners from before families have one: their old view id, so links and calendar subscriptions shared back then keep working without ever seeing anything that's new in families (like finances) |
 

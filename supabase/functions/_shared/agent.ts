@@ -10,6 +10,8 @@ export interface AgentDocInput {
   /** The token in the URL: the edit id (full access) or a read-only id. */
   token: string;
   readOnly: boolean;
+  /** Whether the link may see the finances (not the legacy calendar-only link). */
+  finance: boolean;
   family: FamilyRow;
   /** Types of all years. */
   types: TypeRow[];
@@ -36,7 +38,7 @@ function typesTable(types: TypeRow[]): string {
 }
 
 export function buildAgentDoc(input: AgentDocInput): string {
-  const { base, token, readOnly, family, types, today, refreshSeconds } = input;
+  const { base, token, readOnly, finance, family, types, today, refreshSeconds } = input;
   const years = [...new Set(types.map((t) => t.year))].sort((a, b) => a - b);
   // Examples use the current year, or the latest year with types if it has none.
   const thisYear = Number(today.slice(0, 4));
@@ -76,7 +78,7 @@ ${concepts()}
 ${typeSections}
 
 ${read}
-`;
+${finance ? financeDoc(s, year, false) : ""}`;
   }
 
   const addOp = {
@@ -158,7 +160,7 @@ asked for):
 curl -X POST "${s}/entries" -H "content-type: application/json" \\
   -d '${JSON.stringify(addOp)}'
 \`\`\`
-`;
+${finance ? "\n" + financeDoc(s, year, true) : ""}`;
 }
 
 function concepts(): string {
@@ -173,4 +175,31 @@ function concepts(): string {
   \`none\`. Day-off entries don't count as used vacation days.
 - A day can also have one **note**: an icon (emoji) and/or a comment, e.g. 🎄 Christmas.
   Notes are independent of entries.`;
+}
+
+/** The finances: transactions (integer cents, negative = money out), categories, summary. */
+function financeDoc(s: string, year: number, edit: boolean): string {
+  const f = `${s}/finance`;
+  const read = `## Finances
+
+The family also keeps a transactions log. Amounts are integer **cents**, negative for money
+going out (\`-4599\` = −45.99 in the family's currency).
+
+- Currency and categories: ${f}
+- Transactions (newest first): ${f}/transactions?from=${year}-01-01&to=${year}-12-31 –
+  also \`category=<id>\` (or \`none\`), \`kind=income|expense\`, \`q=<text>\`, \`limit\`, \`offset\`.
+  Returns \`{"transactions": [...], "total", "incomeCents", "expenseCents"}\`.
+- Per month and category: ${f}/summary?from=${year}-01-01&to=${year}-12-31
+`;
+  if (!edit) return read;
+  return `${read}
+Changing: \`POST ${f}/transactions\` with \`{"ops": [...]}\` (applied in order):
+
+- \`{"action": "add", "date": "${year}-03-02", "amountCents": -4599, "payee": "Supermarket", "description": "", "categoryId": "groceries", "note": ""}\`
+- \`{"action": "update", "id": "<uuid>", "categoryId": "groceries"}\` (any of the fields above)
+- \`{"action": "delete", "ids": ["<uuid>", ...]}\`
+
+The response has \`inverse\`: ops that undo the request (send them to the same endpoint).
+Categories are referenced by id or name. Ask before deleting or changing many transactions.
+`;
 }

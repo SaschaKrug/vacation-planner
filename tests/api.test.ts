@@ -742,7 +742,7 @@ Deno.test("exports a planner and imports the file over another one", async () =>
   assertEquals(res.headers.get("content-disposition"), 'attachment; filename="family.json"');
   const file = res.data;
   assertEquals(file.format, "family-planner");
-  assertEquals(file.version, 1);
+  assertEquals(file.version, 2);
   assertEquals(file.name, "Family");
   assertEquals(file.types.length, 6);
   assertEquals(file.entries, { "2026-08-03": ["vacation", "sick"], "2027-01-01": ["holiday"] });
@@ -782,7 +782,7 @@ Deno.test("import needs the edit id and validates the file", async () => {
   assertEquals((await call("POST", "/families/unknownToken123/import", file)).status, 404);
   assertEquals((await call("GET", path)).status, 405);
   assertEquals(await status({ ...file, format: "other" }), 400);
-  assertEquals(await status({ ...file, version: 2 }), 400);
+  assertEquals(await status({ ...file, version: 3 }), 400);
   assertEquals(await status({ ...file, types: {} }), 400);
   assertEquals(await status({ ...file, types: [type, type] }), 400);
   assertEquals(await status({ ...file, types: [{ ...type, id: "../x" }] }), 400);
@@ -1080,4 +1080,252 @@ Deno.test("a memory store snapshot from before families gets a legacy id", () =>
   assert(family.read_id !== "ViewId123456");
   assertMatch(family.feed_id, /^[A-Za-z0-9]{32}$/);
   assertEquals(store.types.get("EditId123456")![0].family_id, "EditId123456");
+});
+
+// ------------------------------------------------------------------ finance
+
+async function financeFamily() {
+  const { call, store } = setup();
+  const s = await newFamily(call);
+  const f = `/families/${s.id}/finance`;
+  return { call, store, s, f };
+}
+
+Deno.test("new families get default finance categories", async () => {
+  const { call, f } = await financeFamily();
+  const res = await call("GET", f);
+  assertEquals(res.status, 200);
+  assertEquals(res.data.currency, "EUR");
+  assertEquals(res.data.categories[0], {
+    id: "salary",
+    name: "Salary",
+    color: "#22c55e",
+    icon: "💼",
+    kind: "income",
+    position: 0,
+  });
+  const de = await call("POST", "/families", { lang: "de" });
+  const cats = (await call("GET", `/families/${de.data.family.id}/finance`)).data.categories;
+  assertEquals(cats.find((c: any) => c.id === "groceries").name, "Lebensmittel");
+});
+
+Deno.test("manages finance categories and settings", async () => {
+  const { call, store, s, f } = await financeFamily();
+  await store.deleteCategory(s.id, "groceries"); // like a family from before finances
+  const add = await call("POST", `${f}/categories`, { name: "Pets", color: "#ff0000", icon: "🐶" });
+  assertEquals(add.status, 201);
+  assertEquals(add.data.id, "pets");
+  assertEquals(add.data.kind, "expense");
+  const patched = await call("PATCH", `${f}/categories/Pets`, { kind: "both", position: 99 });
+  assertEquals([patched.data.kind, patched.data.position], ["both", 99]);
+  assertEquals((await call("POST", `${f}/categories`, { name: "X", color: "red" })).status, 400);
+
+  const defaults = await call("POST", `${f}/categories/defaults`, { lang: "en" });
+  assert(defaults.data.some((c: any) => c.id === "groceries"));
+  assertEquals(defaults.data.filter((c: any) => c.id === "salary").length, 1);
+
+  const settings = await call("PATCH", `${f}/settings`, {
+    currency: "CHF",
+    csvMappings: [{ signature: "a;b", date: 0 }],
+  });
+  assertEquals(settings.data.currency, "CHF");
+  assertEquals(settings.data.csvMappings, [{ signature: "a;b", date: 0 }]);
+  assertEquals((await call("PATCH", `${f}/settings`, { currency: "euro" })).status, 400);
+  assertEquals((await call("PATCH", `/families/${s.readId}/finance/settings`, {})).status, 403);
+
+  assertEquals((await call("DELETE", `${f}/categories/pets`)).status, 200);
+  assertEquals((await call("DELETE", `${f}/categories/pets`)).status, 404);
+});
+
+Deno.test("adds, updates and deletes transactions with undo ops", async () => {
+  const { call, f } = await financeFamily();
+  const add = await call("POST", `${f}/transactions`, {
+    ops: [
+      { date: "2026-03-01", amountCents: 250000, payee: "Employer", categoryId: "salary" },
+      { date: "2026-03-02", amountCents: -4599, payee: "Supermarket", categoryId: "Groceries" },
+      { date: "2026-04-10", amountCents: -120000, payee: "Landlord", categoryId: "housing" },
+    ],
+  });
+  assertEquals(add.status, 200);
+  assertEquals(add.data.added.length, 3);
+  const [salary, groceries] = add.data.added;
+
+  const list = await call("GET", `${f}/transactions?from=2026-03-01&to=2026-03-31`);
+  assertEquals(list.data.total, 2);
+  assertEquals(list.data.incomeCents, 250000);
+  assertEquals(list.data.expenseCents, 4599);
+  // Newest first.
+  assertEquals(list.data.transactions.map((t: any) => t.payee), ["Supermarket", "Employer"]);
+  assertEquals(list.data.transactions[0].categoryId, "groceries");
+
+  const update = await call("POST", `${f}/transactions`, {
+    action: "update",
+    id: groceries,
+    amountCents: -5000,
+    categoryId: null,
+  });
+  assertEquals(update.status, 200);
+  const none = await call("GET", `${f}/transactions?category=none`);
+  assertEquals(none.data.transactions.map((t: any) => t.amountCents), [-5000]);
+
+  // The inverse ops put it back.
+  await call("POST", `${f}/transactions`, { ops: update.data.inverse });
+  const back = (await call("GET", `${f}/transactions?q=supermarket`)).data.transactions[0];
+  assertEquals([back.amountCents, back.categoryId], [-4599, "groceries"]);
+
+  const del = await call("POST", `${f}/transactions`, { action: "delete", ids: [salary] });
+  assertEquals(del.data.changed, 1);
+  assertEquals((await call("GET", `${f}/transactions?kind=income`)).data.total, 0);
+  await call("POST", `${f}/transactions`, { ops: del.data.inverse });
+  const restored = (await call("GET", `${f}/transactions?kind=income`)).data.transactions;
+  assertEquals(restored.map((t: any) => [t.id, t.payee]), [[salary, "Employer"]]);
+
+  // Undoing an add deletes it.
+  await call("POST", `${f}/transactions`, { ops: add.data.inverse });
+  assertEquals((await call("GET", `${f}/transactions`)).data.total, 0);
+});
+
+Deno.test("validates transaction ops", async () => {
+  const { call, s, f } = await financeFamily();
+  const status = async (body: unknown) => (await call("POST", `${f}/transactions`, body)).status;
+  assertEquals(await status({ date: "2026-02-30", amountCents: 1 }), 400);
+  assertEquals(await status({ date: "2026-02-01", amountCents: 1.5 }), 400);
+  assertEquals(await status({ date: "2026-02-01", amountCents: 1, categoryId: "nope" }), 404);
+  assertEquals(await status({ date: "2026-02-01", amountCents: 1, payee: "x".repeat(201) }), 400);
+  assertEquals(await status({ action: "update", id: "not-a-uuid" }), 400);
+  assertEquals(await status({ action: "update", id: crypto.randomUUID(), payee: "x" }), 404);
+  assertEquals(await status({ action: "fly" }), 400);
+  // Reading needs the view link, writing the edit link.
+  assertEquals((await call("GET", `/families/${s.readId}/finance/transactions`)).status, 200);
+  assertEquals(
+    (await call("POST", `/families/${s.readId}/finance/transactions`, {
+      date: "2026-02-01",
+      amountCents: 1,
+    })).status,
+    403,
+  );
+});
+
+Deno.test("the legacy and feed links never see finances", async () => {
+  const { call, store, s, f } = await financeFamily();
+  await call("POST", `${f}/transactions`, {
+    date: "2026-03-01",
+    amountCents: -100,
+    payee: "Secret",
+  });
+  await store.updateFamily(s.id, { legacy_id: "OldViewId1234567890" });
+  for (const token of ["OldViewId1234567890", s.feedId]) {
+    for (const path of ["/finance", "/finance/transactions", "/finance/summary"]) {
+      assertEquals((await call("GET", `/families/${token}${path}`)).status, 403, token + path);
+    }
+  }
+  // The legacy link exports and clones the calendar only.
+  const file = (await call("GET", "/families/OldViewId1234567890/export")).data;
+  assertEquals(file.finance, undefined);
+  assert(!JSON.stringify(file).includes("Secret"));
+  const copy = (await call("POST", "/families/OldViewId1234567890/clone", {})).data.family;
+  assertEquals((await call("GET", `/families/${copy.id}/finance/transactions`)).data.total, 0);
+  // The view link clones the finances too.
+  const full = (await call("POST", `/families/${s.readId}/clone`, {})).data.family;
+  assertEquals((await call("GET", `/families/${full.id}/finance/transactions`)).data.total, 1);
+});
+
+Deno.test("imports statement rows once, keeping identical rows apart", async () => {
+  const { call, f } = await financeFamily();
+  const rows = [
+    { date: "2026-05-02", amountCents: -350, payee: "Café", description: "Coffee" },
+    { date: "2026-05-02", amountCents: -350, payee: "Café", description: "Coffee" },
+    { date: "2026-05-03", amountCents: 100000, payee: "Employer", categoryId: "salary" },
+  ];
+  const dry = await call("POST", `${f}/import`, { rows, dryRun: true });
+  assertEquals([dry.data.added, dry.data.duplicates], [0, []]);
+  assertEquals((await call("GET", `${f}/transactions`)).data.total, 0);
+
+  const first = await call("POST", `${f}/import`, { rows });
+  assertEquals([first.data.added, first.data.duplicates], [3, []]);
+  // Same statement again: nothing new.
+  const again = await call("POST", `${f}/import`, { rows });
+  assertEquals([again.data.added, again.data.duplicates], [0, [0, 1, 2]]);
+  // A longer statement with a third coffee: only that one is new.
+  const more = await call("POST", `${f}/import`, { rows: [...rows, rows[0]] });
+  assertEquals([more.data.added, more.data.duplicates], [1, [0, 1, 2]]);
+  const list = (await call("GET", `${f}/transactions`)).data;
+  assertEquals(list.total, 4);
+  assert(list.transactions.every((t: any) => t.imported));
+  assertEquals((await call("POST", `${f}/import`, { rows: [{ date: "x" }] })).status, 400);
+});
+
+Deno.test("summarizes income and expenses per month and category", async () => {
+  const { call, f } = await financeFamily();
+  await call("POST", `${f}/transactions`, {
+    ops: [
+      { date: "2026-01-31", amountCents: 300000, categoryId: "salary" },
+      { date: "2026-01-15", amountCents: -5000, categoryId: "groceries" },
+      { date: "2026-02-03", amountCents: -7000, categoryId: "groceries" },
+      { date: "2026-02-10", amountCents: -2000 },
+      { date: "2025-12-24", amountCents: -99999, categoryId: "shopping" },
+    ],
+  });
+  const res = await call("GET", `${f}/summary?from=2026-01-01&to=2026-12-31`);
+  assertEquals(res.status, 200);
+  assertEquals(res.data.currency, "EUR");
+  assertEquals([res.data.incomeCents, res.data.expenseCents, res.data.count], [300000, 14000, 4]);
+  assertEquals(res.data.months, [
+    { month: "2026-01", incomeCents: 300000, expenseCents: 5000 },
+    { month: "2026-02", incomeCents: 0, expenseCents: 9000 },
+  ]);
+  assertEquals(res.data.categories[0], {
+    categoryId: "groceries",
+    incomeCents: 0,
+    expenseCents: 12000,
+    count: 2,
+  });
+  assert(res.data.categories.some((c: any) => c.categoryId === null && c.expenseCents === 2000));
+});
+
+Deno.test("exports and imports the finances", async () => {
+  const { call, s, f } = await financeFamily();
+  await call("PATCH", `${f}/settings`, { currency: "USD" });
+  await call("POST", `${f}/categories`, { name: "Pets", color: "#ff0000" });
+  await call("POST", `${f}/transactions`, {
+    date: "2026-03-01",
+    amountCents: -1234,
+    payee: "Vet",
+    categoryId: "pets",
+  });
+  const file = (await call("GET", `/families/${s.id}/export`)).data;
+  assertEquals(file.finance.currency, "USD");
+  assertEquals(file.finance.transactions.length, 1);
+
+  const target = (await call("POST", "/families", {})).data.family;
+  const t = `/families/${target.id}/finance`;
+  await call("POST", `${t}/transactions`, { date: "2026-01-01", amountCents: 1, payee: "Old" });
+  assertEquals((await call("POST", `/families/${target.id}/import`, file)).status, 200);
+  const list = (await call("GET", `${t}/transactions`)).data.transactions;
+  assertEquals(list.map((x: any) => [x.payee, x.categoryId, x.amountCents]), [[
+    "Vet",
+    "pets",
+    -1234,
+  ]]);
+  assertEquals((await call("GET", t)).data.currency, "USD");
+
+  // A file without finances (version 1) leaves them alone.
+  const { finance: _, ...v1 } = file;
+  await call("POST", `/families/${target.id}/import`, { ...v1, version: 1 });
+  assertEquals((await call("GET", `${t}/transactions`)).data.total, 1);
+
+  const bad = { ...file, finance: { ...file.finance, transactions: [{ date: "2026-01-01" }] } };
+  assertEquals((await call("POST", `/families/${target.id}/import`, bad)).status, 400);
+});
+
+Deno.test("the agent page explains the finances to links that may see them", async () => {
+  const { call, store, s } = await financeFamily();
+  const edit: string = (await call("GET", `/families/${s.id}/agent`)).data;
+  assert(edit.includes("## Finances"));
+  assert(edit.includes(`POST ${BASE}/families/${s.id}/finance/transactions`));
+  const view: string = (await call("GET", `/families/${s.readId}/agent`)).data;
+  assert(view.includes("## Finances") && !view.includes("finance/transactions` with"));
+  await store.updateFamily(s.id, { legacy_id: "OldViewId1234567890" });
+  const legacy: string = (await call("GET", "/families/OldViewId1234567890/agent")).data;
+  assert(!legacy.includes("Finances"));
 });

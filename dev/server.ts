@@ -112,6 +112,44 @@ async function seed() {
       { icon: "🎆", comment: "New Year's Eve", date: `${y}-12-31` },
     ],
   });
+  // Six months of household money, so the finance page has something to show.
+  const ops = [];
+  const now = new Date();
+  for (let k = 5; k >= 0; k--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - k, 1);
+    const m = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    ops.push(
+      { date: `${m}-01`, amountCents: 385000, payee: "Employer GmbH", categoryId: "salary" },
+      { date: `${m}-01`, amountCents: -142000, payee: "Landlord", categoryId: "housing" },
+      { date: `${m}-03`, amountCents: -9800, payee: "Power & Water Co.", categoryId: "utilities" },
+      { date: `${m}-15`, amountCents: 25000, payee: "Child benefit", categoryId: "other-income" },
+    );
+    for (const day of ["05", "12", "19", "26"]) {
+      ops.push({
+        date: `${m}-${day}`,
+        amountCents: -(8000 + ((k * 7 + Number(day)) % 9) * 1100),
+        payee: "Supermarket",
+        categoryId: "groceries",
+      });
+    }
+    ops.push({
+      date: `${m}-20`,
+      amountCents: -(4500 + k * 900),
+      payee: "Gas station",
+      categoryId: "mobility",
+    });
+    if (k % 2 === 0) {
+      ops.push({ date: `${m}-22`, amountCents: -6990, payee: "Toy store", categoryId: "kids" });
+    }
+  }
+  ops.push({
+    date: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-02`,
+    amountCents: -2350,
+    payee: "Bakery",
+  });
+  await call("POST", `${s}/finance/transactions`, {
+    ops: ops.filter((o) => o.date <= new Date().toISOString().slice(0, 10)),
+  });
 }
 
 if (args.seed && store.families.size === 0) await seed();

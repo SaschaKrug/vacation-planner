@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Navigate, Outlet, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { FinanceStore } from "@/features/finance/store";
 import { PlannerStore } from "@/features/vacation/store";
 import { t, useLang } from "@/lib/i18n";
 import { forgetFamily } from "@/lib/recent";
@@ -9,7 +10,7 @@ import { readFlag, writeFlag } from "@/lib/storage";
 import { ChatPanel } from "@/layout/ChatPanel";
 import { LeftSidebar } from "@/layout/LeftSidebar";
 import { HelpDialog } from "@/features/vacation/HelpDialog";
-import { PlannerContext, usePlanner } from "./context";
+import { FinanceContext, PlannerContext, usePlanner } from "./context";
 
 const SIDEBAR_KEY = "fp-sidebar-collapsed";
 
@@ -25,6 +26,8 @@ export function FamilyLayout() {
     [token],
   );
 
+  const finance = useMemo(() => new FinanceStore(token), [token]);
+
   useEffect(() => {
     store.open();
     const unload = (e: BeforeUnloadEvent) => {
@@ -39,7 +42,9 @@ export function FamilyLayout() {
 
   return (
     <PlannerContext.Provider value={store}>
-      <FamilyShell />
+      <FinanceContext.Provider value={finance}>
+        <FamilyShell />
+      </FinanceContext.Provider>
     </PlannerContext.Provider>
   );
 }

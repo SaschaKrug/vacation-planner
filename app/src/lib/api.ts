@@ -29,6 +29,65 @@ export interface FamilyState {
   notes?: Record<string, { icon: string; comment: string }>;
 }
 
+export type CategoryKind = "income" | "expense" | "both";
+
+export interface Category {
+  id: string;
+  name: string;
+  color: string;
+  icon: string;
+  kind: CategoryKind;
+  position: number;
+}
+
+export interface Transaction {
+  id: string;
+  date: string;
+  amountCents: number;
+  payee: string;
+  description: string;
+  categoryId: string | null;
+  note: string;
+  imported: boolean;
+}
+
+export interface FinanceOverview {
+  currency: string;
+  csvMappings: unknown[];
+  categories: Category[];
+}
+
+export interface TransactionList {
+  transactions: Transaction[];
+  total: number;
+  incomeCents: number;
+  expenseCents: number;
+}
+
+export interface FinanceSummary {
+  currency: string;
+  incomeCents: number;
+  expenseCents: number;
+  count: number;
+  months: { month: string; incomeCents: number; expenseCents: number }[];
+  categories: {
+    categoryId: string | null;
+    incomeCents: number;
+    expenseCents: number;
+    count: number;
+  }[];
+}
+
+/** An op for POST /finance/transactions; the response's `inverse` ops undo a request. */
+export type TransactionOp = Record<string, unknown> & { action: "add" | "update" | "delete" };
+
+export interface TransactionResult {
+  ok: true;
+  changed: number;
+  added: string[];
+  inverse: TransactionOp[];
+}
+
 export class ApiError extends Error {
   constructor(message: string, public status?: number) {
     super(message);
@@ -108,6 +167,36 @@ export const api = {
     request<unknown>("POST", `${fam(token)}/entries`, { ops }),
   applyNoteOps: (token: string, ops: NoteOp[]) =>
     request<unknown>("POST", `${fam(token)}/notes`, { ops }),
+  finance: (token: string) => request<FinanceOverview>("GET", `${fam(token)}/finance`),
+  financeSettings: (token: string, patch: { currency?: string; csvMappings?: unknown[] }) =>
+    request<FinanceOverview>("PATCH", `${fam(token)}/finance/settings`, patch),
+  addCategory: (token: string, c: Omit<Category, "id" | "position">) =>
+    request<Category>("POST", `${fam(token)}/finance/categories`, c),
+  updateCategory: (token: string, id: string, patch: Partial<Category>) =>
+    request<Category>("PATCH", `${fam(token)}/finance/categories/${enc(id)}`, patch),
+  deleteCategory: (token: string, id: string) =>
+    request<unknown>("DELETE", `${fam(token)}/finance/categories/${enc(id)}`),
+  defaultCategories: (token: string, lang: string) =>
+    request<Category[]>("POST", `${fam(token)}/finance/categories/defaults`, { lang }),
+  transactions: (token: string, query: Record<string, string>) =>
+    request<TransactionList>(
+      "GET",
+      `${fam(token)}/finance/transactions?${new URLSearchParams(query)}`,
+    ),
+  changeTransactions: (token: string, ops: TransactionOp[]) =>
+    request<TransactionResult>("POST", `${fam(token)}/finance/transactions`, { ops }),
+  importTransactions: (
+    token: string,
+    rows: { date: string; amountCents: number; payee: string; description: string }[],
+    dryRun = false,
+  ) =>
+    request<{ added: number; duplicates: number[]; ids: string[] }>(
+      "POST",
+      `${fam(token)}/finance/import`,
+      { rows, dryRun },
+    ),
+  financeSummary: (token: string, query: Record<string, string>) =>
+    request<FinanceSummary>("GET", `${fam(token)}/finance/summary?${new URLSearchParams(query)}`),
   agentUrl: (token: string) => `${apiBase()}${fam(token)}/agent`,
   calendarUrl: (feedId: string, params: Record<string, string> = {}) => {
     const qs = new URLSearchParams(params).toString();

@@ -7,6 +7,7 @@
 
 import { type Access, ACCESS_RANK, accessOf, type Ctx, type Loaded } from "./context.ts";
 import { createFamily, handleFamily } from "./families.ts";
+import { handleFinance } from "./finance.ts";
 import { CORS, HttpError, json } from "./http.ts";
 import { clientAddress, type RateLimiter } from "./rate_limit.ts";
 import type { Store } from "./store.ts";
@@ -151,7 +152,7 @@ export function createHandler(store: Store, options: HandlerOptions = {}) {
       load: (need) => load(token, need),
       loadWith: (need, query) => loadWith(token, need, query),
     };
-    const res = handleFamily(ctx) ?? handleVacation(ctx);
+    const res = handleFamily(ctx) ?? handleVacation(ctx) ?? handleFinance(ctx);
     if (!res) throw new HttpError(404, "Not found");
     return await res;
   }
