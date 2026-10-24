@@ -234,6 +234,7 @@ changing the edit id.
 | Method & path | Description |
 | --- | --- |
 | `GET /families/{id}/finance` | `{"currency", "csvMappings", "categories": [{"id", "name", "color", "icon", "kind", "position"}]}` |
+| `DELETE /families/{id}/finance` | Delete all transactions, categories, saved CSV mappings and the currency; returns the (empty) overview |
 | `PATCH /families/{id}/finance/settings` | `{"currency": "EUR"}` (ISO 4217) and/or `{"csvMappings": [...]}` |
 | `POST /families/{id}/finance/categories` | Add `{"name", "color", "icon", "kind": "income" \| "expense" \| "both"}` |
 | `PATCH` / `DELETE /families/{id}/finance/categories/{category}` | Change or delete (its transactions become uncategorized); by id or name |
