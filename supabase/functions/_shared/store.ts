@@ -149,8 +149,8 @@ export interface Store {
   /** Accounts ordered by position. */
   listAccounts(familyId: string): Promise<AccountRow[]>;
   upsertAccounts(rows: AccountRow[]): Promise<void>;
-  /** Deletes the account; its transactions keep their rows without an account. */
-  deleteAccount(familyId: string, id: string): Promise<void>;
+  /** Deletes the account and its transactions; returns those transactions. */
+  deleteAccount(familyId: string, id: string): Promise<TransactionRow[]>;
   /** Sum of all transactions (all time) per account id, for the balances. */
   accountTotals(familyId: string): Promise<Map<string, number>>;
   /** Transactions in the range (all without one), newest first. */
@@ -361,10 +361,10 @@ export class MemoryStore implements Store {
   deleteAccount(familyId: string, id: string) {
     const list = this.accounts.get(familyId) ?? [];
     this.accounts.set(familyId, list.filter((a) => a.id !== id));
-    for (const t of this.transactions.get(familyId)?.values() ?? []) {
-      if (t.account_id === id) t.account_id = null;
-    }
-    return Promise.resolve();
+    const map = this.transactions.get(familyId);
+    const gone = [...map?.values() ?? []].filter((t) => t.account_id === id);
+    for (const t of gone) map!.delete(t.id);
+    return Promise.resolve(gone);
   }
 
   accountTotals(familyId: string) {

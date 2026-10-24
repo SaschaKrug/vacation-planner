@@ -224,10 +224,14 @@ export class SupabaseStore implements Store {
   }
 
   async deleteAccount(familyId: string, id: string) {
-    // Transactions keep their rows: ON DELETE SET NULL clears their account.
+    const gone = check(
+      await this.db.from("transactions").delete().eq("family_id", familyId)
+        .eq("account_id", id).select("*"),
+    ) as TransactionRow[] | null;
     check(
       await this.db.from("finance_accounts").delete().eq("family_id", familyId).eq("id", id),
     );
+    return (gone ?? []).map(txRow);
   }
 
   async accountTotals(familyId: string) {

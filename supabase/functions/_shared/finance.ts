@@ -807,8 +807,10 @@ async function accountsRoute(ctx: Ctx, id: string | undefined): Promise<Response
       return json(publicAccount(next, await store.accountTotals(family.id)));
     }
     if (method === "DELETE") {
-      await store.deleteAccount(family.id, current.id);
-      return json({ deleted: current.id });
+      // Its transactions go too; a transfer's leg on another account is left alone.
+      const gone = await store.deleteAccount(family.id, current.id);
+      await clearLoneLegs(store, family.id, gone);
+      return json({ deleted: current.id, transactions: gone.length });
     }
   }
   throw new HttpError(405, "Method not allowed");

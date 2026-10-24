@@ -449,7 +449,7 @@ const STRINGS: Record<Lang, Dict> = {
     "finance.add_account": "Add account",
     "finance.new_account": "Account {n}",
     "finance.account_delete_confirm":
-      "Delete the account “{name}”?\n\nIts transactions stay, without an account.",
+      "Delete the account “{name}”?\n\nAll its transactions are deleted too. This can't be undone.",
     "finance.opening": "Opening balance",
     "finance.balance": "Balance",
     "finance.transfer": "Transfer",
@@ -1008,7 +1008,7 @@ const STRINGS: Record<Lang, Dict> = {
     "finance.add_account": "Konto hinzufügen",
     "finance.new_account": "Konto {n}",
     "finance.account_delete_confirm":
-      "Das Konto „{name}“ löschen?\n\nSeine Buchungen bleiben erhalten, ohne Konto.",
+      "Das Konto „{name}“ löschen?\n\nAlle seine Buchungen werden ebenfalls gelöscht. Das lässt sich nicht rückgängig machen.",
     "finance.opening": "Anfangsstand",
     "finance.balance": "Kontostand",
     "finance.transfer": "Umbuchung",
