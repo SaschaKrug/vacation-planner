@@ -10,7 +10,7 @@ import {
   streamChat,
   type ToolCall,
 } from "./provider.ts";
-import { runTool, type ToolContext, toolsFor } from "./tools.ts";
+import { MAX_TOOL_RESULT, runTool, type ToolContext, toolsFor } from "./tools.ts";
 
 /** Model calls per answer (across hand-offs); the last one gets no tools, so the model answers
  *  with what it has. */
@@ -26,7 +26,6 @@ const IMAGES_PER_MESSAGE = 4;
 const MAX_IMAGES = 8;
 const IMAGE_URL = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/;
 const OLD_IMAGE = "(an earlier image, no longer sent)";
-const MAX_TOOL_RESULT = 16_000;
 /** Edge Functions run at most 150 s (free plan): after this, a request hands the turn back to
  *  the app, which goes on with a new request ("continue"). */
 const HAND_OFF_MS = 90_000;

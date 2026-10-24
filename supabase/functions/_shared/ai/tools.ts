@@ -100,6 +100,23 @@ const CONFIRM_DAYS = 31;
 const CONFIRM_TRANSACTIONS = 20;
 const MAX_RANGE_DAYS = 400;
 const MAX_PAGE_TEXT = 12000;
+/** Characters of a tool result the model gets; longer ones are cut off. */
+export const MAX_TOOL_RESULT = 16_000;
+/** list_transactions: rows per call at most (fewer when they don't fit into MAX_TOOL_RESULT),
+ *  and the characters of a description it shows. */
+const MAX_TX_ROWS = 500;
+const MAX_TX_DESCRIPTION = 100;
+const TX_COLUMNS = [
+  "id",
+  "date",
+  "amountCents",
+  "payee",
+  "description",
+  "categoryId",
+  "accountId",
+  "transferId",
+  "note",
+];
 
 class NeedsConfirmation extends Error {}
 
@@ -425,7 +442,7 @@ export const TOOLS: Record<string, Tool> = {
     spec: {
       name: "list_transactions",
       description:
-        'Lists transactions (newest first) with totals. Amounts are integer cents, negative = money out. Legs of a transfer between the family\'s accounts share a transferId; totals count a transfer once by its net (500 moved between two accounts counts 0). Filters: from/to (YYYY-MM-DD), account (id, name or "none"), category (id, name or "none"), kind (income | expense | transfer: legs of transfers), q (text in payee, description, note).',
+        'Lists transactions (newest first) with totals, as rows of `columns`: as many as fit, long descriptions shortened. If `nextOffset` is set there are more: call again with that offset. For totals per month or category use finance_summary instead. Amounts are integer cents, negative = money out. Legs of a transfer between the family\'s accounts share a transferId; totals count a transfer once by its net (500 moved between two accounts counts 0). Filters: from/to (YYYY-MM-DD), account (id, name or "none"), category (id, name or "none"), kind (income | expense | transfer: legs of transfers), q (text in payee, description, note).',
       parameters: {
         type: "object",
         properties: {
@@ -435,7 +452,8 @@ export const TOOLS: Record<string, Tool> = {
           category: { type: "string" },
           kind: { type: "string", enum: ["income", "expense", "transfer"] },
           q: { type: "string" },
-          limit: { type: "integer", description: "Default 50, at most 200" },
+          offset: { type: "integer", description: "Rows to skip, from nextOffset" },
+          limit: { type: "integer", description: "Rows at most; leave out to get as many as fit" },
         },
       },
     },
@@ -449,13 +467,39 @@ export const TOOLS: Record<string, Tool> = {
         familyId,
         query,
       );
-      const limit = Math.min(200, Math.max(1, Number(args.limit) || 50));
+      const offset = Math.max(0, Math.floor(Number(args.offset)) || 0);
+      const limit = Math.min(MAX_TX_ROWS, Math.max(1, Number(args.limit) || MAX_TX_ROWS));
+      const head = { total: rows.length, incomeCents, expenseCents, columns: TX_COLUMNS };
+      // Rows until the result is about to be cut off (room left for offset and nextOffset).
+      let size = JSON.stringify(head).length + 60;
+      const out: unknown[][] = [];
+      for (const t of rows.slice(offset, offset + limit)) {
+        const p = publicTransaction(t, groups);
+        const description = p.description.length > MAX_TX_DESCRIPTION
+          ? p.description.slice(0, MAX_TX_DESCRIPTION) + "…"
+          : p.description;
+        const row = [
+          p.id,
+          p.date,
+          p.amountCents,
+          p.payee,
+          description,
+          p.categoryId,
+          p.accountId,
+          p.transferId,
+          p.note,
+        ];
+        size += JSON.stringify(row).length + 1;
+        if (size > MAX_TOOL_RESULT && out.length) break;
+        out.push(row);
+      }
+      const next = offset + out.length;
       return {
         result: {
-          total: rows.length,
-          incomeCents,
-          expenseCents,
-          transactions: rows.slice(0, limit).map((t) => publicTransaction(t, groups)),
+          ...head,
+          offset,
+          rows: out,
+          ...(next < rows.length ? { nextOffset: next } : {}),
         },
         summary: `${rows.length} transactions`,
       };
