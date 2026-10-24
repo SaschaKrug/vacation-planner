@@ -8,6 +8,7 @@
 //   "delete category <name>"              -> manage_categories (delete)
 //   "search <words>"                      -> web_search
 //   a URL                                 -> fetch_page
+//   "keep looking"                        -> get_calendar again and again, until tools are off
 // Asked to sort transactions into categories (the categorize prompt), it picks the category
 // whose id or name occurs in a row's payee or description, searching the web once for a payee
 // it can't place.
@@ -113,6 +114,15 @@ export async function mockAi(req: Request): Promise<Response> {
       messages,
       tools.has("web_search") && body.tool_choice !== "none",
     );
+  }
+
+  const asked = textOf(messages.findLast((m) => m.role === "user")?.content ?? "");
+  if (/keep looking/i.test(asked)) {
+    if (body.tool_choice === "none") return reply(stream, "Out of steps: here is what I have.");
+    return reply(stream, "", {
+      name: "get_calendar",
+      args: { from: "2026-01-01", to: "2026-01-31" },
+    });
   }
 
   if (last.role === "tool") {

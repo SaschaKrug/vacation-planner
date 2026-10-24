@@ -23,6 +23,16 @@ const fakeFetch = ((input: string | URL | Request, init?: RequestInit) => {
     return mockAi(new Request(url, init));
   }
   if (url.hostname === "pages.test") {
+    if (url.pathname === "/long") {
+      return Promise.resolve(
+        new Response(
+          `<html><body><p>${"Opening times and prices. ".repeat(300)}</p></body></html>`,
+          {
+            headers: { "content-type": "text/html; charset=utf-8" },
+          },
+        ),
+      );
+    }
     return Promise.resolve(
       new Response(
         "<html><head><title>School holidays 2027</title><script>evil()</script></head>" +
@@ -292,6 +302,11 @@ Deno.test("the assistant searches the web and reads pages, but not private ones"
   assertEquals(tool.title, "School holidays 2027");
   assert(tool.text.includes("Summer: Aug 2 – Sep 13") && !tool.text.includes("evil"));
 
+  // The app gets the whole tool result (it shortens them itself once the turn is over).
+  const long = await chat(t, "read https://pages.test/long please");
+  const longTool = long.find((e) => e.event === "messages")!.data.messages[1].content;
+  assert(longTool.length > 7000 && !longTool.includes("…(truncated)"));
+
   for (const url of ["http://169.254.169.254/latest/meta-data", "https://redirect.test/"]) {
     const ev = await chat(t, `read ${url}`);
     const res = ev.find((e) => e.event === "tool_result")!.data;
@@ -299,6 +314,65 @@ Deno.test("the assistant searches the web and reads pages, but not private ones"
     assertMatch(res.summary, /[Pp]rivate/);
   }
   assert(!requests.some((r) => r.includes("169.254")));
+});
+
+Deno.test("out of steps, the assistant answers with what it has instead of looping on", async () => {
+  const t = await configured();
+  const ev = await chat(t, "keep looking");
+  const tools = ev.filter((e) => e.event === "tool");
+  assertEquals(tools.length, 29);
+  assertEquals(aiBody.tool_choice, "none");
+  assert(aiBody.messages[0].content.includes("## Out of steps"));
+  const added = ev.find((e) => e.event === "messages")!.data.messages;
+  assertEquals(added.at(-1), { role: "assistant", content: "Out of steps: here is what I have." });
+  assert(ev.some((e) => e.event === "done"));
+});
+
+Deno.test("near the time limit, the turn is handed on to the next request", async () => {
+  const t = await configured({ aiHandOffMs: 0 });
+  const user = { role: "user", content: "keep looking" };
+  // Each request takes one step, then hands off.
+  let ev = await chat(t, "keep looking");
+  assertEquals(ev.map((e) => e.event), ["tool", "tool_result", "messages", "continue"]);
+  const history: unknown[] = [user, ...ev.find((e) => e.event === "messages")!.data.messages];
+  assertEquals(history.length, 3);
+  let rounds = 1;
+  for (;;) {
+    const res = await t.call("POST", `${t.ai}/chat`, { messages: history, continue: true });
+    assertEquals(res.status, 200, res.data);
+    ev = events(res.data);
+    history.push(...ev.find((e) => e.event === "messages")!.data.messages);
+    rounds++;
+    if (!ev.some((e) => e.event === "continue")) break;
+    assertEquals(ev.filter((e) => e.event === "tool").length, 1);
+  }
+  // The steps count across requests: the 30th step answers without tools.
+  assertEquals(rounds, 30);
+  assertEquals(aiBody.tool_choice, "none");
+  assert(ev.some((e) => e.event === "done"));
+  assertEquals(history.at(-1), {
+    role: "assistant",
+    content: "Out of steps: here is what I have.",
+  });
+  assertEquals(history.length, 1 + 29 * 2 + 1);
+
+  // A long turn keeps its user message, even past the history limit.
+  const turn = history.slice(0, -1);
+  const long = [...turn, ...turn.slice(1, 41)];
+  const res = await t.call("POST", `${t.ai}/chat`, { messages: long, continue: true });
+  assertEquals(res.status, 200, res.data);
+  assertEquals(aiBody.messages.length, 1 + long.length);
+  assertEquals(aiBody.messages[1], user);
+
+  // Continuing needs tool results last; a new turn needs the user's message last.
+  const bad = [
+    { messages: [user], continue: true },
+    { messages: turn.slice(0, 2), continue: true },
+    { messages: turn },
+  ];
+  for (const body of bad) {
+    assertEquals((await t.call("POST", `${t.ai}/chat`, body)).status, 400, JSON.stringify(body));
+  }
 });
 
 Deno.test("the assistant reads the finances", async () => {

@@ -24,6 +24,8 @@ export interface AiEnv {
   /** Encrypts the stored keys; without it (no AI_CONFIG_KEY) keys can't be saved. */
   secrets: SecretBox | null;
   net: NetOptions;
+  /** When a chat request hands the turn on to the next one (tests). */
+  handOffMs?: number;
 }
 
 const PAGES = ["vacation", "finance", "settings"];
@@ -215,11 +217,13 @@ async function test({ store, req, load }: Ctx, env: AiEnv) {
   return json({ ok: true, model: p.model, reply: reply.trim().slice(0, 200) });
 }
 
-/** POST /ai/chat {messages, year, page, lang, today}: streams the answer (text/event-stream). */
+/** POST /ai/chat {messages, year, page, lang, today, continue?}: streams the answer
+ *  (text/event-stream). With `continue: true` the history ends with tool results and the turn
+ *  that a "continue" event handed back goes on. */
 async function chat({ store, req, load }: Ctx, env: AiEnv) {
   const { family } = await load("edit");
   const body = await readBody(req);
-  const history: ChatMessage[] = cleanHistory(body.messages);
+  const history: ChatMessage[] = cleanHistory(body.messages, body.continue === true);
   const row = await loadRow(store, family.id);
   if (!row.base_url || !row.model) throw new HttpError(400, "The AI assistant isn't set up yet");
   const p: Provider = await provider(row, env);
@@ -264,6 +268,7 @@ async function chat({ store, req, load }: Ctx, env: AiEnv) {
         search: !!search,
         emit,
         signal: req.signal,
+        handOffMs: env.handOffMs,
       }),
     CORS,
   );

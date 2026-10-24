@@ -64,6 +64,8 @@ export interface HandlerOptions {
   allowPrivateNetwork?: boolean;
   /** Resolves host names for the private-address check (tests). */
   resolve?: (host: string) => Promise<string[]>;
+  /** When an AI chat request hands the turn on to a new one (tests). Default: 90 s. */
+  aiHandOffMs?: number;
 }
 
 export function createHandler(store: Store, options: HandlerOptions = {}) {
@@ -76,6 +78,7 @@ export function createHandler(store: Store, options: HandlerOptions = {}) {
       allowPrivate: options.allowPrivateNetwork,
       resolve: options.resolve,
     },
+    handOffMs: options.aiHandOffMs,
   };
 
   /** Counts the request against a limit; 429 once the window's limit is used up. */
