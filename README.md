@@ -82,6 +82,14 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   read-only.
 - **Attach** images (screenshots, photos) and text files (e.g. CSV) to a message; images need a
   model with vision support.
+- **Auto-categorize** on the finance page sorts the period's uncategorized transactions into
+  categories. First without AI: a transaction gets the category that earlier ones of the same
+  payee mostly have (numbers and case don't matter, so "REWE Markt 1234" matches "Rewe Markt
+  99"). The rest goes to the model, which sees the categories and how payees were sorted before,
+  and looks up payees it doesn't know on the web when web search is set up. Only categories
+  that fit income / expense are used, unsure rows stay open. After a CSV import it can sort the
+  new rows right away. *Undo* in the toast puts them back. Without the AI assistant, only the
+  similar-transactions step runs.
 - Chats are kept on the device (the last 20 per family).
 - The server runs the tool loop: the app streams the answer from the Edge Function, which talks
   to the model. Requests to private networks are refused (also after redirects), pages are
@@ -98,12 +106,6 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
 - **Finance:** the currency, the accounts (name, color, icon, opening balance), the categories
   (name, color, icon, income / expense / both) and the remembered bank formats.
 - **AI assistant:** the model, web search and whether the assistant may change things.
-- **Integrations:** a ready-to-paste prompt with one link for an AI agent that can send HTTP
-  requests (Claude Code, Codex, ChatGPT agent mode …). The link returns instructions with the
-  family's types and ready-to-use API URLs; the agent then reads and changes the calendar
-  through the API, and the open app shows the changes within seconds. The link carries the edit
-  id, so it's as powerful as the edit link (the view-only link gives a read-only version). Also
-  ready-to-run `curl` examples for scripts.
 - **Data:** *Export (JSON)* downloads the whole family (all years, types, entries and notes, but
   not its links) as a file; *Import from file…* (edit link only) replaces all of that with such
   a file, e.g. to restore a backup (the family keeps its name and links; can't be undone).
@@ -167,7 +169,7 @@ deleted. Over the limit, it answers `429` with a `Retry-After` header.
 | --- | --- |
 | New families (`POST /families`, `…/clone`) per client | 20 per hour |
 | New families of all clients together | 500 per hour |
-| AI requests (chat, model list, test) per client | 60 per 5 minutes |
+| AI requests (chat, model list, test, categorize) per client | 60 per 5 minutes |
 | AI requests per family | 300 per hour |
 | Changes (`POST`, `PATCH`, `DELETE`) per client | 300 per 5 minutes |
 
@@ -205,10 +207,9 @@ On start, the server prints the edit and view links of all families it holds.
 
 ## API
 
-Base URL: `https://<project-ref>.supabase.co/functions/v1/api` (*Settings* → *Integrations* in the app
-shows ready-to-run examples for your family). The family id from the edit link is the access
-key; the other links can only read (see [Links](#links)). Types can be referenced by id or by
-name (case-insensitive). Dates are `YYYY-MM-DD`.
+Base URL: `https://<project-ref>.supabase.co/functions/v1/api`. The family id from the edit link
+is the access key; the other links can only read (see [Links](#links)). Types can be referenced
+by id or by name (case-insensitive). Dates are `YYYY-MM-DD`.
 
 `/sessions/...` is the name from before families and works as an alias of `/families/...`
 everywhere, so existing calendar subscriptions and scripts keep working.
@@ -250,6 +251,7 @@ changing the edit id.
 | Method & path | Description |
 | --- | --- |
 | `GET /families/{id}/finance` | `{"currency", "csvMappings", "accounts": [{"id", "name", "color", "icon", "openingCents", "position", "balanceCents"}], "categories": [{"id", "name", "color", "icon", "kind", "position"}]}` |
+| `DELETE /families/{id}/finance` | Delete all transactions, accounts, categories, saved CSV mappings and the currency; returns the (empty) overview |
 | `PATCH /families/{id}/finance/settings` | `{"currency": "EUR"}` (ISO 4217) and/or `{"csvMappings": [...]}` |
 | `POST /families/{id}/finance/accounts` | Add `{"name", "color", "icon", "openingCents"}` |
 | `PATCH` / `DELETE /families/{id}/finance/accounts/{account}` | Change or delete (its transactions keep their rows, without an account); by id or name |
@@ -273,6 +275,7 @@ All need the edit id.
 | `PUT /families/{id}/ai/settings` | Any of `{"baseUrl", "apiKey", "model", "searchProvider": "none" \| "tavily" \| "brave", "searchKey", "allowWrites"}`; `""` removes a key |
 | `POST /families/{id}/ai/models` | The API's models: `{"models": [...]}`; `{"baseUrl", "apiKey"}` in the body try values before saving them |
 | `POST /families/{id}/ai/test` | One short completion with the saved settings |
+| `POST /families/{id}/ai/categorize` | `{"ids": [...]}` or `{"from", "to", "skip"}`, and `"lang"`: sorts uncategorized transactions (the given ones, at most 200, or those in the range after the first `skip`, at most 200 per request) into categories: like similar earlier transactions where those agree, the rest by the model (with web search if set up; without AI settings this step is skipped) → `{"changed", "matched" (of these, like similar ones), "considered", "remaining", "ai", "inverse", "assignments": [{"id", "categoryId", "source": "similar" \| "ai"}]}`; `remaining` are the range's uncategorized rows not looked at yet (call again with `skip` + the ones left open), `inverse` undoes it via `/finance/transactions` |
 | `POST /families/{id}/ai/chat` | `{"messages": [...], "lang", "today", "year", "page"}` (OpenAI format, the last one the user's; a user message's `content` may be parts: `{"type": "text", "text"}` and up to 4 `{"type": "image_url", "image_url": {"url": "data:image/png;base64,…"}}`, the newest 8 images are sent) → `text/event-stream` with `text`, `tool`, `tool_result`, `change` (with `undo`: requests against the family that undo it), `messages` (to append to the history), `done` / `error` |
 
 ### Links

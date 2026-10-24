@@ -4,7 +4,12 @@
 import { parseMoney } from "./money.ts";
 
 export type Encoding = "utf-8" | "windows-1252";
-export type DateFormat = "YYYY-MM-DD" | "DD.MM.YYYY" | "DD.MM.YY" | "DD/MM/YYYY" | "MM/DD/YYYY";
+export type DateFormat =
+  | "YYYY-MM-DD"
+  | "DD.MM.YYYY"
+  | "DD.MM.YY"
+  | "DD/MM/YYYY"
+  | "MM/DD/YYYY";
 export const DATE_FORMATS: DateFormat[] = [
   "YYYY-MM-DD",
   "DD.MM.YYYY",
@@ -57,7 +62,10 @@ export function decode(
       if (encoding === "utf-8") throw new Error("The file is not valid UTF-8");
     }
   }
-  return { text: new TextDecoder("windows-1252").decode(bytes), encoding: "windows-1252" };
+  return {
+    text: new TextDecoder("windows-1252").decode(bytes),
+    encoding: "windows-1252",
+  };
 }
 
 /** Splits CSV text into rows of cells (quotes with "" escapes, newlines inside quotes). */
@@ -112,7 +120,9 @@ function modal(values: number[]): number {
   const n = new Map<number, number>();
   for (const v of values) n.set(v, (n.get(v) ?? 0) + 1);
   let best = 0, count = 0;
-  for (const [v, c] of n) if (c > count || (c === count && v > best)) [best, count] = [v, c];
+  for (const [v, c] of n) {
+    if (c > count || (c === count && v > best)) [best, count] = [v, c];
+  }
   return best;
 }
 
@@ -134,7 +144,10 @@ export function parseDate(cell: string, format: DateFormat): string | null {
   else [d, mo, y] = [+m[1], +m[2], +m[3]];
   if (format === "DD.MM.YY") y += y < 70 ? 2000 : 1900;
   const date = new Date(Date.UTC(y, mo - 1, d));
-  if (date.getUTCFullYear() !== y || date.getUTCMonth() !== mo - 1 || date.getUTCDate() !== d) {
+  if (
+    date.getUTCFullYear() !== y || date.getUTCMonth() !== mo - 1 ||
+    date.getUTCDate() !== d
+  ) {
     return null;
   }
   return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
@@ -152,7 +165,10 @@ export function detectDateFormat(samples: string[]): DateFormat | null {
   const count = (f: DateFormat) => cells.filter((c) => parseDate(c, f)).length;
   let best: DateFormat | null = null;
   for (const f of DATE_FORMATS) {
-    if (mostly(cells, (c) => !!parseDate(c, f)) && (!best || count(f) > count(best))) best = f;
+    if (
+      mostly(cells, (c) => !!parseDate(c, f)) &&
+      (!best || count(f) > count(best))
+    ) best = f;
   }
   return best;
 }
@@ -167,7 +183,10 @@ export function detectDecimal(samples: string[]): "," | "." {
   return comma >= dot ? "," : ".";
 }
 
-const GUESS: Record<"date" | "amount" | "debit" | "credit" | "payee" | "description", RegExp> = {
+const GUESS: Record<
+  "date" | "amount" | "debit" | "credit" | "payee" | "description",
+  RegExp
+> = {
   date: /buchungstag|buchungsdatum|^datum|date|booking/i,
   amount: /betrag|amount|umsatz|^summe|value/i,
   debit: /^soll|debit|ausgang|withdrawal/i,
@@ -204,7 +223,8 @@ export function guessMapping(text: string, encoding: Encoding): CsvMapping {
   const isAmounts = (i: number) => i >= 0 && mostly(column(i), (c) => parseMoney(c) !== null);
   let amount: number | null = byName(GUESS.amount);
   const debit = byName(GUESS.debit), credit = byName(GUESS.credit);
-  const split = debit >= 0 && credit >= 0 && isAmounts(debit) && isAmounts(credit);
+  const split = debit >= 0 && credit >= 0 && isAmounts(debit) &&
+    isAmounts(credit);
   if (!isAmounts(amount)) {
     amount = split
       ? null
@@ -212,7 +232,12 @@ export function guessMapping(text: string, encoding: Encoding): CsvMapping {
         isAmounts(i) && column(i).some((c) => /[,.]\d{2}/.test(c))
       ) ?? null);
   }
-  const used = new Set([date, amount ?? -1, split ? debit : -1, split ? credit : -1]);
+  const used = new Set([
+    date,
+    amount ?? -1,
+    split ? debit : -1,
+    split ? credit : -1,
+  ]);
   let payee: number | null = byName(GUESS.payee);
   if (payee < 0 || used.has(payee)) payee = null;
   if (payee !== null) used.add(payee);
@@ -276,7 +301,9 @@ export function mapRows(rows: string[][], m: CsvMapping) {
       date,
       amountCents: cents,
       payee: m.payee !== null ? (r[m.payee] ?? "").slice(0, 200) : "",
-      description: m.description.map((i) => r[i] ?? "").filter(Boolean).join(" ").replace(
+      description: m.description.map((i) => r[i] ?? "").filter(Boolean).join(
+        " ",
+      ).replace(
         /\s+/g,
         " ",
       ).slice(0, 500),

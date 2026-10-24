@@ -1,4 +1,4 @@
-import { Database, Laptop, Palette, Plug, Share2, Sparkles, Users, Wallet } from "lucide-react";
+import { Database, Laptop, Palette, Share2, Sparkles, Users, Wallet } from "lucide-react";
 import type { ReactNode } from "react";
 import { Navigate, NavLink, useParams } from "react-router";
 import { usePlanner } from "@/features/family/context";
@@ -9,7 +9,6 @@ import { AiSection } from "./AiSection";
 import { DataSection } from "./DataSection";
 import { FinanceSection } from "./FinanceSection";
 import { GeneralSection } from "./GeneralSection";
-import { IntegrationsSection } from "./IntegrationsSection";
 import { SharingSection } from "./SharingSection";
 import { VacationSection } from "./VacationSection";
 
@@ -19,7 +18,6 @@ const SECTIONS = [
   { id: "vacation", icon: Users, Component: VacationSection },
   { id: "finance", icon: Wallet, Component: FinanceSection },
   { id: "ai", icon: Sparkles, Component: AiSection },
-  { id: "integrations", icon: Plug, Component: IntegrationsSection },
   { id: "data", icon: Database, Component: DataSection },
 ] as const;
 
@@ -71,18 +69,25 @@ export function SettingsPage() {
 
 /** A card with a title and whether it applies to the whole family or only this device. */
 export function SettingsCard(
-  { title, scope, description, children }: {
+  { title, scope, description, danger, children }: {
     title: string;
     scope?: "family" | "device";
     description?: ReactNode;
+    /** Styles the card as a danger zone (destructive actions). */
+    danger?: boolean;
     children: ReactNode;
   },
 ) {
   return (
-    <section className="rounded-xl border bg-card p-5 shadow-xs">
+    <section
+      className={cn(
+        "rounded-xl border bg-card p-5 shadow-xs",
+        danger && "border-destructive/50",
+      )}
+    >
       <div className="mb-4 flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
         <div className="min-w-0">
-          <h2 className="font-semibold">{title}</h2>
+          <h2 className={cn("font-semibold", danger && "text-destructive")}>{title}</h2>
           {description && (
             <div className="mt-1 text-sm text-muted-foreground">
               {description}

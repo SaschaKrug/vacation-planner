@@ -2,8 +2,10 @@ import {
   ArrowLeftRight,
   Download,
   Link,
+  Loader2,
   Pencil,
   Search,
+  Sparkles,
   Trash2,
   Unlink,
   WandSparkles,
@@ -20,7 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useFinance, usePlanner } from "@/features/family/context";
+import { useChat, useFinance, usePlanner } from "@/features/family/context";
 import type { Account, Category, Transaction } from "@/lib/api";
 import { getLang, t } from "@/lib/i18n";
 import { formatMoney } from "@/lib/money";
@@ -48,6 +50,39 @@ export function AccountChip({ account }: { account: Account }) {
       <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: account.color }} />
       <span className="truncate">{account.icon ? `${account.icon} ` : ""}{account.name}</span>
     </span>
+  );
+}
+
+/** Sorts the period's uncategorized transactions like similar ones, and with the AI if it is
+ *  set up. */
+function AutoCategorizeButton() {
+  const finance = useFinance();
+  const chat = useChat();
+
+  useEffect(() => {
+    chat.loadSettings();
+  }, [chat]);
+
+  if (!chat.settings || !finance.categories.length) return null;
+  const progress = finance.categorizing;
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={!!progress}
+      title={progress ? undefined : t(
+        chat.settings.configured
+          ? "finance.auto_categorize_help"
+          : "finance.auto_categorize_similar",
+      )}
+      aria-label={progress?.total ? t("finance.categorizing", progress) : undefined}
+      onClick={() => finance.autoCategorize()}
+    >
+      {progress ? <Loader2 className="animate-spin" /> : <Sparkles />}{" "}
+      <span className="tabular-nums max-sm:sr-only">
+        {progress?.total ? `${progress.done}/${progress.total}` : t("finance.auto_categorize")}
+      </span>
+    </Button>
   );
 }
 
@@ -167,6 +202,7 @@ export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void
         </Select>
         {onEdit && (
           <>
+            <AutoCategorizeButton />
             <Button
               variant="outline"
               title={t("finance.find_transfers")}
@@ -208,6 +244,12 @@ export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void
                   : "sm:grid-cols-[6.5rem_1fr_12rem_8rem_auto]",
                 finance.selected.has(tx.id) && "bg-accent/50",
               )}
+              // a stripe in the category's color down the row's left edge
+              style={{
+                boxShadow: `inset 3px 0 0 ${
+                  finance.categoryById(tx.categoryId)?.color ?? "transparent"
+                }`,
+              }}
             >
               <div className="flex items-center gap-2.5">
                 {onEdit && (
@@ -284,7 +326,12 @@ export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void
               <div
                 className={cn(
                   "col-start-3 row-start-1 text-right font-semibold whitespace-nowrap tabular-nums sm:col-auto sm:row-auto",
-                  tx.transferId && "text-muted-foreground",
+                  // a transfer leg doesn't count on its own
+                  tx.transferId
+                    ? "text-muted-foreground"
+                    : tx.amountCents > 0
+                    ? "text-ok"
+                    : tx.amountCents < 0 && "text-gap",
                 )}
                 title={tx.transferId ? t("finance.transfer_amount_hint") : undefined}
               >

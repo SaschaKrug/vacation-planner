@@ -111,6 +111,17 @@ export interface TransactionResult {
   inverse: TransactionOp[];
 }
 
+/** What one POST /ai/categorize call did; `inverse` undoes it. */
+export interface CategorizeResult {
+  changed: number; // how many got a category
+  matched: number; // of these, how many like similar earlier ones (no AI)
+  considered: number; // how many the model looked at (at most 200)
+  remaining: number; // uncategorized ones after these, not looked at yet
+  ai: boolean; // whether the AI is set up (without, only similar ones are matched)
+  inverse: TransactionOp[];
+  assignments: { id: string; categoryId: string; source: "similar" | "ai" }[];
+}
+
 export interface AiSettings {
   configured: boolean;
   baseUrl: string;
@@ -250,6 +261,7 @@ export const api = {
   applyNoteOps: (token: string, ops: NoteOp[]) =>
     request<unknown>("POST", `${fam(token)}/notes`, { ops }),
   finance: (token: string) => request<FinanceOverview>("GET", `${fam(token)}/finance`),
+  clearFinance: (token: string) => request<FinanceOverview>("DELETE", `${fam(token)}/finance`),
   financeSettings: (token: string, patch: { currency?: string; csvMappings?: unknown[] }) =>
     request<FinanceOverview>("PATCH", `${fam(token)}/finance/settings`, patch),
   addCategory: (token: string, c: Omit<Category, "id" | "position">) =>
@@ -316,6 +328,12 @@ export const api = {
     request<{ models: string[] }>("POST", `${fam(token)}/ai/models`, body),
   aiTest: (token: string) =>
     request<{ ok: boolean; model: string; reply: string }>("POST", `${fam(token)}/ai/test`, {}),
+  /** Sorts uncategorized transactions (the given ids, or those of a range) like similar ones,
+   *  and the rest with the AI if it is set up. */
+  categorize: (
+    token: string,
+    body: { ids?: string[]; from?: string; to?: string; skip?: number; lang?: "en" | "de" },
+  ) => request<CategorizeResult>("POST", `${fam(token)}/ai/categorize`, body),
   /** Runs undo steps in order (they are relative to the family). */
   undo: async (token: string, steps: UndoStep[]) => {
     for (const step of steps) await request(step.method, fam(token) + step.path, step.body);
@@ -364,7 +382,6 @@ export const api = {
       if ((err as Error).name !== "AbortError") throw err;
     }
   },
-  agentUrl: (token: string) => `${apiBase()}${fam(token)}/agent`,
   calendarUrl: (feedId: string, params: Record<string, string> = {}) => {
     const qs = new URLSearchParams(params).toString();
     return `${apiBase()}${fam(feedId)}/calendar.ics${qs ? "?" + qs : ""}`;

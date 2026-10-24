@@ -1188,6 +1188,30 @@ Deno.test("adds, updates and deletes transactions with undo ops", async () => {
   assertEquals((await call("GET", `${f}/transactions`)).data.total, 0);
 });
 
+Deno.test("deletes all finance data", async () => {
+  const { call, s, f } = await financeFamily();
+  await call("POST", `${f}/transactions`, {
+    ops: [{ date: "2026-03-01", amountCents: 250000, payee: "Employer", categoryId: "salary" }],
+  });
+  await call("PATCH", `${f}/settings`, { currency: "CHF", csvMappings: [{ signature: "a;b" }] });
+  await call("POST", `${f}/accounts`, { name: "Checking", color: "#3b82f6" });
+  const other = await newFamily(call);
+  const o = `/families/${other.id}/finance`;
+  await call("POST", `${o}/transactions`, { date: "2026-03-01", amountCents: 1 });
+  await call("POST", `${o}/accounts`, { name: "Cash", color: "#22c55e" });
+
+  // Only the edit link may.
+  assertEquals((await call("DELETE", `/families/${s.readId}/finance`)).status, 403);
+  const res = await call("DELETE", f);
+  assertEquals(res.status, 200);
+  assertEquals(res.data, { currency: "EUR", csvMappings: [], accounts: [], categories: [] });
+  assertEquals((await call("GET", `${f}/transactions`)).data.total, 0);
+  // Other families keep theirs.
+  assertEquals((await call("GET", `${o}/transactions`)).data.total, 1);
+  assert((await call("GET", o)).data.categories.length > 0);
+  assertEquals((await call("GET", o)).data.accounts.length, 1);
+});
+
 Deno.test("validates transaction ops", async () => {
   const { call, s, f } = await financeFamily();
   const status = async (body: unknown) => (await call("POST", `${f}/transactions`, body)).status;

@@ -231,39 +231,6 @@ const STRINGS: Record<Lang, Dict> = {
     "copy": "Copy",
     "close": "Close",
 
-    // AI dialog
-    "ai.title": "Let an AI manage this family's calendar",
-    "ai.intro":
-      "Point an AI agent at one link: it explains the calendar and the API, so the agent can read and change entries, types and notes for you. Changes show up here within seconds.",
-    "ai.readonly": "This is a view-only link, so the AI can only read the calendar.",
-    "ai.quickstart": "Quickstart",
-    "ai.quickstart_help":
-      "Copy this prompt into an AI agent that can send HTTP requests, e.g. Claude Code, Codex or ChatGPT agent mode.",
-    "ai.prompt_text":
-      "Read {url} – it explains how to view and change my family's vacation calendar. Then help me plan with it.",
-    "ai.prompt_text_readonly":
-      "Read {url} – it explains how to view my family's vacation calendar. Then answer my questions about it.",
-    "ai.prompt": "Prompt",
-    "ai.copy": "Copy prompt",
-    "ai.warning":
-      "Like the edit link, this link is the key: anyone who has it – including the AI service – can change the calendar.",
-
-    // API dialog
-    "api.intro":
-      "Fill entries from scripts, shortcuts or other tools. Types can be referenced by id or name and belong to a year: a day uses the types of its year. The session id in the URL is the access key.",
-    "api.read": "Read the calendar (types, entries and notes of a year)",
-    "api.add": "Add “{name}” from Aug 3 to Aug 14, skipping weekends",
-    "api.ops": "Several operations at once (actions: add | remove | set | clear)",
-    "api.notes": "Icon and comment on days (set replaces a day's note, clear removes it)",
-    "api.types": "Entry types of a year (every year has its own; copy them into another year)",
-    "api.feed": "Calendar feed (read-only id works too). Optional: ?types=a,b&gaps=1&notes=1",
-    "api.new": "New family",
-    "api.ex_vacation": "Vacation",
-    "api.ex_needs": "Day care closed",
-    "api.ex_rename": "Vacation Dad",
-    "api.ex_planner": "Family {year}",
-    "api.ex_note": "Christmas",
-
     // help dialog
     "help.title": "How it works",
     "help.tap": "Tap",
@@ -329,7 +296,6 @@ const STRINGS: Record<Lang, Dict> = {
     "settings.general": "General",
     "settings.sharing": "Sharing",
     "settings.vacation": "Vacation",
-    "settings.integrations": "Integrations",
     "settings.data": "Data",
     "settings.family_scope": "For the whole family",
     "settings.device_scope": "Only on this device",
@@ -369,8 +335,6 @@ const STRINGS: Record<Lang, Dict> = {
       "Replaces all years, types, entries and notes of this family with an exported file; the name and the links stay. Can't be undone.",
     "data.clone_help": "A copy of this family with all its data and its own new links.",
     "data.imported": "Imported",
-    "integrations.ai": "AI agents",
-    "integrations.api": "API for scripts",
     // ---- Finance
     "settings.finance": "Finance",
     "finance.calendar_only":
@@ -437,6 +401,13 @@ const STRINGS: Record<Lang, Dict> = {
     "finance.mappings": "Saved bank formats",
     "finance.mappings_help":
       "How the columns of a bank's CSV files map, remembered by their header row. Remove one to set it up again on the next import.",
+    "finance.danger_zone": "Danger zone",
+    "finance.clear": "Delete all finance data",
+    "finance.clear_help":
+      "Deletes all transactions, accounts, categories and saved bank formats of this family and resets the currency. The calendar stays as it is.",
+    "finance.clear_confirm":
+      "Delete all finance data?\n\nAll transactions, accounts, categories and saved bank formats are deleted for everyone in this family. This can't be undone — export the family first under Data if you might need them again.",
+    "finance.cleared": "All finance data deleted",
     "finance.import_title": "Import a bank statement",
     "finance.import_help":
       "Export the transactions from your online banking as a CSV file and pick it here. Rows that were imported before are skipped.",
@@ -509,6 +480,21 @@ const STRINGS: Record<Lang, Dict> = {
     "finance.import_auto_transfers": "Combine transfers between accounts automatically",
     "finance.import_transfers": ({ n }) => `${n} ${s(n, "transfer", "transfers")} will be combined`,
     "finance.imported_transfers": ({ n }) => ` · ${n} ${s(n, "transfer", "transfers")} combined`,
+    "finance.import_categorize":
+      "Sort the new transactions into categories (like similar ones, the rest with AI)",
+    "finance.import_categorize_similar":
+      "Sort the new transactions into categories like similar earlier ones",
+    "finance.auto_categorize": "Auto-categorize",
+    "finance.auto_categorize_help":
+      "Sort this period's uncategorized transactions into your categories: like similar earlier ones, the rest with AI (it may look up unknown payees on the web)",
+    "finance.auto_categorize_similar":
+      "Sort this period's uncategorized transactions like similar earlier ones (set up the AI assistant to sort the rest too)",
+    "finance.categorizing": ({ done, total }) => `Categorizing… ${done} of ${total}`,
+    "finance.categorized": ({ n, matched }) =>
+      `Sorted ${n} ${s(n, "transaction", "transactions")} into categories` +
+      (Number(matched) ? ` (${matched} like similar ones)` : ""),
+    "finance.categorized_none": "Nothing could be categorized",
+    "finance.categorize_failed": "The AI couldn't categorize: {msg}",
     // ---- AI assistant
     "settings.ai": "AI assistant",
     "chat.history": "Chats",
@@ -800,40 +786,6 @@ const STRINGS: Record<Lang, Dict> = {
     "copy": "Kopieren",
     "close": "Schließen",
 
-    "ai.title": "Den Kalender der Familie von einer KI verwalten lassen",
-    "ai.intro":
-      "Gib einem KI-Agenten einen einzigen Link: Er erklärt den Kalender und die API, damit der Agent Einträge, Arten und Notizen für dich lesen und ändern kann. Änderungen erscheinen hier nach wenigen Sekunden.",
-    "ai.readonly": "Das ist ein Nur-Lese-Link, die KI kann den Kalender also nur lesen.",
-    "ai.quickstart": "Schnellstart",
-    "ai.quickstart_help":
-      "Kopiere diesen Prompt in einen KI-Agenten, der HTTP-Anfragen senden kann, z. B. Claude Code, Codex oder den ChatGPT-Agentenmodus.",
-    "ai.prompt_text":
-      "Lies {url} – dort steht, wie du den Urlaubskalender meiner Familie ansehen und ändern kannst. Hilf mir dann bei der Planung.",
-    "ai.prompt_text_readonly":
-      "Lies {url} – dort steht, wie du den Urlaubskalender meiner Familie ansehen kannst. Beantworte mir dann Fragen dazu.",
-    "ai.prompt": "Prompt",
-    "ai.copy": "Prompt kopieren",
-    "ai.warning":
-      "Wie der Bearbeitungslink ist dieser Link der Schlüssel: Wer ihn hat – auch der KI-Dienst –, kann den Kalender ändern.",
-
-    "api.intro":
-      "Einträge aus Skripten, Kurzbefehlen oder anderen Tools füllen. Arten können über ID oder Namen angegeben werden und gehören zu einem Jahr: Ein Tag nutzt die Arten seines Jahres. Die Session-ID in der URL ist der Zugangsschlüssel.",
-    "api.read": "Kalender lesen (Arten, Einträge und Notizen eines Jahres)",
-    "api.add": "„{name}“ vom 3. bis 14. Aug. eintragen, ohne Wochenenden",
-    "api.ops": "Mehrere Operationen auf einmal (Aktionen: add | remove | set | clear)",
-    "api.notes":
-      "Symbol und Kommentar an Tagen (set ersetzt die Notiz eines Tages, clear entfernt sie)",
-    "api.types":
-      "Eintragsarten eines Jahres (jedes Jahr hat eigene; in ein anderes Jahr übernehmen)",
-    "api.feed":
-      "Kalender-Feed (Nur-Lese-ID geht auch). Optional: ?types=a,b&gaps=1&notes=1&lang=de",
-    "api.new": "Neue Familie",
-    "api.ex_vacation": "Urlaub",
-    "api.ex_needs": "Kita geschlossen",
-    "api.ex_rename": "Urlaub Papa",
-    "api.ex_planner": "Familie {year}",
-    "api.ex_note": "Weihnachten",
-
     "help.title": "So funktioniert's",
     "help.tap": "Tippen",
     "help.tap_do": "Tag auswählen; ein anderer Tag verschiebt die Auswahl",
@@ -900,7 +852,6 @@ const STRINGS: Record<Lang, Dict> = {
     "settings.general": "Allgemein",
     "settings.sharing": "Teilen",
     "settings.vacation": "Urlaub",
-    "settings.integrations": "Integrationen",
     "settings.data": "Daten",
     "settings.family_scope": "Für die ganze Familie",
     "settings.device_scope": "Nur auf diesem Gerät",
@@ -940,8 +891,6 @@ const STRINGS: Record<Lang, Dict> = {
       "Ersetzt alle Jahre, Arten, Einträge und Notizen dieser Familie durch eine exportierte Datei; Name und Links bleiben. Lässt sich nicht rückgängig machen.",
     "data.clone_help": "Eine Kopie dieser Familie mit allen Daten und eigenen, neuen Links.",
     "data.imported": "Importiert",
-    "integrations.ai": "KI-Agenten",
-    "integrations.api": "API für Skripte",
     // ---- Finance
     "settings.finance": "Finanzen",
     "finance.calendar_only":
@@ -1009,6 +958,13 @@ const STRINGS: Record<Lang, Dict> = {
     "finance.mappings": "Gespeicherte Bankformate",
     "finance.mappings_help":
       "Wie die Spalten der CSV-Dateien einer Bank zugeordnet werden, erkannt an der Kopfzeile. Entferne eins, um es beim nächsten Import neu einzustellen.",
+    "finance.danger_zone": "Gefahrenzone",
+    "finance.clear": "Alle Finanzdaten löschen",
+    "finance.clear_help":
+      "Löscht alle Buchungen, Konten, Kategorien und gespeicherten Bankformate dieser Familie und setzt die Währung zurück. Der Kalender bleibt unverändert.",
+    "finance.clear_confirm":
+      "Alle Finanzdaten löschen?\n\nAlle Buchungen, Konten, Kategorien und gespeicherten Bankformate werden für alle in dieser Familie gelöscht. Das lässt sich nicht rückgängig machen – exportiere die Familie vorher unter Daten, falls du sie noch brauchst.",
+    "finance.cleared": "Alle Finanzdaten gelöscht",
     "finance.import_title": "Kontoauszug importieren",
     "finance.import_help":
       "Exportiere die Umsätze aus deinem Online-Banking als CSV-Datei und wähle sie hier aus. Schon importierte Zeilen werden übersprungen.",
@@ -1084,6 +1040,21 @@ const STRINGS: Record<Lang, Dict> = {
       `${n} ${s(n, "Umbuchung wird", "Umbuchungen werden")} zusammengefasst`,
     "finance.imported_transfers": ({ n }) =>
       ` · ${n} ${s(n, "Umbuchung", "Umbuchungen")} zusammengefasst`,
+    "finance.import_categorize":
+      "Die neuen Buchungen in Kategorien einsortieren (wie ähnliche, den Rest mit KI)",
+    "finance.import_categorize_similar":
+      "Die neuen Buchungen wie ähnliche frühere in Kategorien einsortieren",
+    "finance.auto_categorize": "Automatisch einsortieren",
+    "finance.auto_categorize_help":
+      "Die Buchungen ohne Kategorie in diesem Zeitraum einsortieren: wie ähnliche frühere, den Rest mit KI (sie kann unbekannte Empfänger im Web nachschlagen)",
+    "finance.auto_categorize_similar":
+      "Die Buchungen ohne Kategorie in diesem Zeitraum wie ähnliche frühere einsortieren (mit eingerichtetem KI-Assistenten auch den Rest)",
+    "finance.categorizing": ({ done, total }) => `Sortiere ein… ${done} von ${total}`,
+    "finance.categorized": ({ n, matched }) =>
+      `${n} ${s(n, "Buchung", "Buchungen")} in Kategorien einsortiert` +
+      (Number(matched) ? ` (${matched} wie ähnliche)` : ""),
+    "finance.categorized_none": "Keine Buchung konnte einsortiert werden",
+    "finance.categorize_failed": "Die KI konnte nicht einsortieren: {msg}",
     // ---- AI assistant
     "settings.ai": "KI-Assistent",
     "chat.history": "Chats",

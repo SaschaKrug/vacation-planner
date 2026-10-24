@@ -161,6 +161,8 @@ export interface Store {
   /** Inserts or replaces transactions (by id). */
   upsertTransactions(rows: TransactionRow[]): Promise<void>;
   deleteTransactions(familyId: string, ids: string[]): Promise<void>;
+  /** Deletes all transactions, accounts, categories and finance settings of the family. */
+  clearFinance(familyId: string): Promise<void>;
   /** Which of the hashes imported transactions already have. */
   existingImportHashes(familyId: string, hashes: string[]): Promise<Set<string>>;
 
@@ -410,6 +412,14 @@ export class MemoryStore implements Store {
   deleteTransactions(familyId: string, ids: string[]) {
     const map = this.transactions.get(familyId);
     if (map) { for (const id of ids) map.delete(id); }
+    return Promise.resolve();
+  }
+
+  clearFinance(familyId: string) {
+    this.transactions.delete(familyId);
+    this.accounts.delete(familyId);
+    this.categories.delete(familyId);
+    this.financeSettings.delete(familyId);
     return Promise.resolve();
   }
 

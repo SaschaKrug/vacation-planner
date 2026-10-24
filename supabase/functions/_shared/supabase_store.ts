@@ -292,6 +292,14 @@ export class SupabaseStore implements Store {
     }
   }
 
+  async clearFinance(familyId: string) {
+    for (
+      const table of ["transactions", "finance_accounts", "finance_categories", "family_settings"]
+    ) {
+      check(await this.db.from(table).delete().eq("family_id", familyId));
+    }
+  }
+
   async existingImportHashes(familyId: string, hashes: string[]) {
     const found = new Set<string>();
     for (const part of chunks(hashes, CHUNK)) {
