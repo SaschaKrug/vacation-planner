@@ -1,20 +1,34 @@
-# Vacation Planner
+# Family Planner
 
-A shared year calendar for planning vacation, public holidays, sick days and day-care
-closures, with a coverage check, a REST API and an iCloud / Apple Calendar feed.
+One place per family to plan the year: a shared year calendar for vacation, public holidays,
+sick days and day-care closures (with a coverage check and an iCloud / Apple Calendar feed), a
+transactions log for the family's finances, an AI assistant that researches on the web and plans
+in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it came about).
 
-**Live:** https://vacation-planner.fa-krug.de/
+**Live:** https://family-planner.fa-krug.de/
+
+### The app
+
+- **Families:** every family is one secret id. The left sidebar switches between the families
+  opened on this device (or creates / opens another one) and between the topics: **Vacation**
+  and **Finance**. **Settings** holds everything else. The right sidebar (✨, `Ctrl/⌘+J`) is
+  the AI chat; phones open both as sheets.
+- No login: every family has a secret **edit link** (`/f/<id>`) and a separate **view-only
+  link**. Anyone with the edit link can change it, so only share it with people who should. The
+  calendar feed has an id of its own (see [Links](#links)). Old links (`/?s=<id>`) still work.
+
+### Vacation
 
 - All days of a year as 12 rows × 31 days; pick the year at the top. Phones show one calendar
   per month instead (Monday to Sunday), with the type chips and the actions for the selected
   days in a bar at the bottom.
 - **Zoom:** the 🔍 slider below the calendar (or `Ctrl/⌘` + `+` / `−` / `0`) sets how many days
-  fit across it, 7 to 31; zoomed in, the cells also show the weekday (or always, with
-  *⋯* → *Always show weekdays*). Remembered per device.
-- Your own entry types (name + color), **per year**: every year has its own types, so 2027 can
-  have different people, colors or day-care closures than 2026. New planners start with
-  *Holiday*, *Vacation* and *Sick*; a year without types offers to copy them from the closest
-  year that has some.
+  fit across it, 7 to 31; zoomed in, the cells also show the weekday (or always: *Settings* →
+  *Vacation* → *Always show weekdays*). Remembered per device.
+- Your own entry types (name + color + role), **per year**, edited in *Settings* → *Vacation*:
+  every year has its own types, so 2027 can have different people, colors or day-care closures
+  than 2026. New families start with *Holiday*, *Vacation* and *Sick*; a year without types
+  offers to copy them from the closest year that has some.
 - A day can hold **several entries**, e.g. *Day care closed* + *Vacation Dad*.
 - **Icons & comments on days**, e.g. 🎄 *Christmas* or 🐣 *Easter*: shown in the grid and in
   the tooltip, optionally in the calendar feed. They are independent of entries (no coverage,
@@ -27,38 +41,76 @@ closures, with a coverage check, a REST API and an iCloud / Apple Calendar feed.
   day, `?` shows all shortcuts. On touch screens: tap a day, or long-press and drag to select a
   range; *Multi-select* lets taps add or remove single days (and long-press ranges add to the
   selection).
-- **Undo / redo:** “Undo” / “Redo” in the ⋯ menu, or `Ctrl/⌘+Z` / `Ctrl/⌘+Y`.
-- No login: every planner has a secret **edit link** (`?s=<id>`) and a separate **view-only link**.
-  Anyone with the edit link can change it, so only share it with people who should.
-- **iCloud:** *Share* → *Calendar & iCloud* → *Subscribe on this device*, or on a Mac: Calendar → File →
-  New Calendar Subscription → paste the feed URL → Location **iCloud**. The feed uses the
-  view-only id, so it never exposes the edit link.
-- **Let an AI agent manage it:** *✨ AI* gives a ready-to-paste prompt with one link for an AI
-  agent that can send HTTP requests (Claude Code, Codex, ChatGPT agent mode …). The link returns
-  instructions with the planner's types and ready-to-use API URLs; the agent then reads and
-  changes the planner through the API, and the open app shows the changes within seconds. The
-  link carries the edit id, so it's as powerful as the edit link (the view-only link gives a
-  read-only version).
-- **Clone:** *⋯* → *Clone planner* copies the planner with all years, types, entries and notes
-  into a new one with its own links; the original stays unchanged. Works from a view-only
-  link too, which gives you your own editable copy.
-- **Export / import:** *⋯* → *Export (JSON)* downloads the whole planner (all years, types,
-  entries and notes, but not its links) as a file. *⋯* → *Import from file…* (edit link only)
-  replaces all years, types, entries and notes of the open planner with such a file, e.g. to
-  restore a backup; the planner keeps its name and links. Importing can't be undone.
-- **English and German:** the language follows the browser and can be switched at the top right.
-  New planners get default types in that language, and the calendar feed uses it for its texts.
+- **Undo / redo:** ↶ / ↷ at the top, or `Ctrl/⌘+Z` / `Ctrl/⌘+Y`.
+
+### Finance
+
+- A **transactions log**: amounts in the family's currency, money in or out, with payee,
+  description, note and a **category** (new families get defaults like Groceries, Housing,
+  Salary; edit them in *Settings* → *Finance*). Pick a month, a year or all time; search, filter
+  by category (or *Uncategorized*) and by in / out; change a category right in the list. Every
+  change can be undone from its message.
+- **Import bank statements (CSV):** the import guesses the format (UTF-8 or Windows-1252,
+  separator, lines before the table, which column is the date, amount or debit / credit,
+  payee and description, German or English numbers and dates) and shows a preview to correct
+  it. Rows that were imported before are skipped, so overlapping statements can be imported
+  again; identical rows on one day (two coffees) stay apart. The format is remembered per bank.
+- **Overview:** income, expenses and the balance, a chart per month and the spending (or
+  income) per category, also as a table.
+- The view-only link shows the finances read-only; the legacy view link and the calendar feed
+  never do.
+
+### AI assistant
+
+- Chat with any **OpenAI-compatible** model (OpenAI, OpenRouter, Mistral, Groq, a local Ollama /
+  LM Studio …), set up per family in *Settings* → *AI assistant*: API URL, key, and a model
+  picked from the API's list. Keys are stored encrypted and never shown again; everyone with
+  the edit link uses the setup (the view-only link has no chat).
+- It **looks things up** in the calendar and the finances, **changes** them (entries, notes,
+  types, transactions), **searches the web** (Tavily or Brave, with their own key) and **reads
+  pages**. Every change shows up in the chat with **Undo**; bigger changes (more than 31 days,
+  deleting types or transactions) need the user's OK first. *Allow changes* off makes it
+  read-only.
+- Chats are kept on the device (the last 20 per family).
+- The server runs the tool loop: the app streams the answer from the Edge Function, which talks
+  to the model. Requests to private networks are refused (also after redirects), pages are
+  size- and time-limited.
+
+### Settings
+
+- **General:** the family's name; language (English / German) and light / dark per device.
+- **Sharing:** the edit and view-only links, a new view-only link when the old one got around,
+  and the **calendar feed**: pick what it includes, then *Subscribe on this device*, or on a
+  Mac: Calendar → File → New Calendar Subscription → paste the feed URL → Location **iCloud**.
+  The feed URL opens nothing but the feed, so it never exposes the edit or view link.
+- **Vacation:** the entry types of each year, and the calendar options of this device.
+- **Finance:** the currency, the categories (name, color, icon, income / expense / both) and the
+  remembered bank formats.
+- **AI assistant:** the model, web search and whether the assistant may change things.
+- **Integrations:** a ready-to-paste prompt with one link for an AI agent that can send HTTP
+  requests (Claude Code, Codex, ChatGPT agent mode …). The link returns instructions with the
+  family's types and ready-to-use API URLs; the agent then reads and changes the calendar
+  through the API, and the open app shows the changes within seconds. The link carries the edit
+  id, so it's as powerful as the edit link (the view-only link gives a read-only version). Also
+  ready-to-run `curl` examples for scripts.
+- **Data:** *Export (JSON)* downloads the whole family (all years, types, entries and notes, but
+  not its links) as a file; *Import from file…* (edit link only) replaces all of that with such
+  a file, e.g. to restore a backup (the family keeps its name and links; can't be undone).
+  *Clone family* copies everything into a new family with its own links; it works from a
+  view-only link too, which gives you your own editable copy.
+- New families get default types in the app's language, and the calendar feed uses it for its
+  texts.
 
 ## Architecture
 
 ```
-GitHub Pages (web/)  ──fetch──▶  Supabase Edge Function "api"  ──▶  Postgres (5 tables)
+GitHub Pages (app/)  ──fetch──▶  Supabase Edge Function "api"  ──▶  Postgres (8 tables)
 iCloud / Apple Calendar ──GET calendar.ics──┘
 ```
 
 | Path | What |
 | --- | --- |
-| `web/` | Static frontend (plain HTML/CSS/JS, no build step) |
+| `app/` | Frontend: Vite + React + TypeScript, Tailwind + shadcn/ui |
 | `supabase/functions/api/` | Edge Function entry point |
 | `supabase/functions/_shared/` | API handler, iCalendar builder, storage (Supabase + in-memory), rate limits |
 | `supabase/migrations/` | Database schema |
@@ -81,8 +133,15 @@ migrations → Edge Function → frontend to the `gh-pages` branch.
 
 2. **GitHub Pages** – *Settings → Pages → Build and deployment*: Source **Deploy from a branch**,
    Branch **gh-pages** / **(root)**. (Only needed once, after the first deploy created the branch.)
+   The custom domain `family-planner.fa-krug.de` comes from the workflow (`cname:`); its DNS
+   needs a `CNAME` record pointing to `saschakrug.github.io`.
 
-3. Run the workflow: *Actions → Deploy → Run workflow* (or push to `main`).
+3. **AI assistant** (optional) – add the repository secret `AI_CONFIG_KEY` with 32 random
+   bytes (`openssl rand -base64 32`). The deploy sets it as an Edge Function secret; it
+   encrypts the families' AI and search keys. Changing it makes the stored keys unreadable
+   (families enter them again).
+
+4. Run the workflow: *Actions → Deploy → Run workflow* (or push to `main`).
 
 The tables use Row Level Security without policies, so they are not reachable with the public
 anon key; all access goes through the Edge Function, which uses the service role key.
@@ -95,8 +154,10 @@ deleted. Over the limit, it answers `429` with a `Retry-After` header.
 
 | What | Limit |
 | --- | --- |
-| New planners (`POST /sessions`, `…/clone`) per client | 20 per hour |
-| New planners of all clients together | 500 per hour |
+| New families (`POST /families`, `…/clone`) per client | 20 per hour |
+| New families of all clients together | 500 per hour |
+| AI requests (chat, model list, test) per client | 60 per 5 minutes |
+| AI requests per family | 300 per hour |
 | Changes (`POST`, `PATCH`, `DELETE`) per client | 300 per 5 minutes |
 
 Reads, including the calendar feed, are not limited: iCloud fetches every subscription from a
@@ -106,10 +167,15 @@ few shared addresses. If counting fails, requests go through. The limits are in
 ## Local development
 
 ```sh
-deno task dev     # http://localhost:8787 (data is kept in memory)
+(cd app && npm ci && npm run build)   # once, and after changing the app
+deno task dev     # http://localhost:8787: the built app + the API (data is kept in memory)
 deno task test    # unit + API tests
-deno task check   # type-check, lint, format check
+deno task check   # type-check, lint, format check (backend and app/src)
+
+cd app && npm run dev   # the app with hot reload on http://localhost:5173 (needs `deno task dev`)
 ```
+
+`npm run build` in `app/` also type-checks the app (`tsc -b`). The app uses Node 22.
 
 No database needed: the dev server runs the real API handler on an in-memory store. Options
 (combinable, e.g. `deno task dev --persist --seed`):
@@ -117,17 +183,24 @@ No database needed: the dev server runs the real API handler on an in-memory sto
 | Option | Effect |
 | --- | --- |
 | `--persist` | Keeps the data in `.dev/data.json` across restarts (delete the file to start over) |
-| `--seed` | Adds a *Demo family* planner with types, entries, notes and uncovered days in this and next year, if there are no planners yet |
-| `--rate-limit` | Low rate limits (3 new planners, 30 changes per minute) to try the app's 429 handling |
+| `--seed` | Adds a *Demo family* with types, entries, notes and uncovered days in this and next year, and six months of transactions, if there are no families yet |
+| `--rate-limit` | Low rate limits (3 new families, 30 changes per minute) to try the app's 429 handling |
+| `--mock-ai` | A scripted OpenAI-compatible endpoint at `/mock-ai/v1`, set up for every family without AI settings, so the chat and its tools can be tried without a key (see `dev/mock_ai.ts` for what it reacts to) |
 
-On start, the server prints the edit and view links of all planners it holds.
+The dev server lets the assistant reach localhost, e.g. a local model at
+`http://localhost:11434/v1` (Ollama); production refuses private addresses.
+
+On start, the server prints the edit and view links of all families it holds.
 
 ## API
 
-Base URL: `https://<project-ref>.supabase.co/functions/v1/api` (*⋯* → *API for scripts* in the app
-shows ready-to-run examples for your planner). The session id from the edit link is the access
-key; the view-only id can only read. Types can be referenced by id or by name
-(case-insensitive). Dates are `YYYY-MM-DD`.
+Base URL: `https://<project-ref>.supabase.co/functions/v1/api` (*Settings* → *Integrations* in the app
+shows ready-to-run examples for your family). The family id from the edit link is the access
+key; the other links can only read (see [Links](#links)). Types can be referenced by id or by
+name (case-insensitive). Dates are `YYYY-MM-DD`.
+
+`/sessions/...` is the name from before families and works as an alias of `/families/...`
+everywhere, so existing calendar subscriptions and scripts keep working.
 
 Every year has its own entry types, and a day can only use the types of its year: a reference
 like `"type": "vacation"` is resolved in the year of each day. The types endpoints work on one
@@ -136,36 +209,80 @@ working across years.
 
 | Method & path | Description |
 | --- | --- |
-| `POST /sessions` | Create a planner. Body (optional): `{"name": "...", "year": 2026, "types": [{"name","color","role"}]}`; the types go into `year` (default: current year); `"lang": "de"` gives German default types and name |
-| `GET /sessions/{id}?year=2026` | Planner, the year's types, entries and notes, and `typeYears` (all years with types). `?from=&to=` also works; no filter = all |
-| `PATCH /sessions/{id}` | Rename: `{"name": "..."}` |
-| `POST /sessions/{id}/clone` | Copy the planner (all years, types, entries, notes) into a new one with new ids. Body (optional): `{"name": "..."}`, default *“… (copy)”*. The view-only id works too |
-| `GET /sessions/{id}/export` | The whole planner as a file: `{"format": "vacation-planner", "version": 1, "name", "types": [...], "entries": {...}, "notes": {...}}`, all years, without the planner's ids. The view-only id works too |
-| `POST /sessions/{id}/import?year=2026` | Replace all years, types, entries and notes with those of an export file (the body), in one transaction; name and ids stay. Returns the planner like `GET /sessions/{id}` |
-| `GET /sessions/{id}/entries?year=2026` | `{"2026-08-03": ["vacation", "day-care-closed"], ...}` |
-| `POST /sessions/{id}/entries` | Change entries (see below) |
-| `GET /sessions/{id}/notes?year=2026` | `{"2026-12-25": {"icon": "🎄", "comment": "Christmas"}, ...}` |
-| `POST /sessions/{id}/notes` | Set or clear day notes (see below) |
-| `GET /sessions/{id}/types?year=2026` | List the year's entry types |
-| `POST /sessions/{id}/types?year=2026` | Add a type to the year: `{"name", "color": "#rrggbb", "role"}` (`"year"` in the body works too) |
-| `PATCH /sessions/{id}/types/{type}?year=2026` | Change `name`, `color`, `role`, `position` |
-| `DELETE /sessions/{id}/types/{type}?year=2026` | Delete a type and all its entries in that year |
-| `POST /sessions/{id}/types/copy` | Copy a year's types into another year: `{"from": 2026, "to": 2027}`; types the target year already has (same id) are kept |
-| `GET /sessions/{id}/calendar.ics` | iCalendar feed. `?types=a,b` filters (by id or name, in every year), `?gaps=1` adds “⚠ Not covered” events, `?notes=1` adds day notes as events, `?name=` overrides the calendar name, `?lang=de` German event texts |
+| `POST /families` | Create a family. Body (optional): `{"name": "...", "year": 2026, "types": [{"name","color","role"}]}`; the types go into `year` (default: current year); `"lang": "de"` gives German default types and name |
+| `GET /families/{id}?year=2026` | `family` (the links this id may know, `name`, `access`), the year's types, entries and notes, and `typeYears` (all years with types). `?from=&to=` also works; no filter = all. The same object is also in `session`, for scripts from before families |
+| `PATCH /families/{id}` | Rename: `{"name": "..."}` |
+| `POST /families/{id}/links` | New link: `{"link": "view"}` or `{"link": "feed"}` makes a new view or feed id (the old one stops working); `{"link": "legacy"}` removes the legacy view link. Returns the family like `GET /families/{id}` |
+| `POST /families/{id}/clone` | Copy the family (all years, types, entries, notes) into a new one with new ids. Body (optional): `{"name": "..."}`, default *“… (copy)”*. The view-only id works too |
+| `GET /families/{id}/export` | The whole family as a file: `{"format": "family-planner", "version": 2, "name", "types": [...], "entries": {...}, "notes": {...}, "finance": {"currency", "categories", "transactions"}}`, all years, without the family's ids. The view-only id works too; the legacy id exports without `finance` |
+| `POST /families/{id}/import?year=2026` | Replace all years, types, entries and notes with those of an export file (the body), in one transaction, and the finances if the file has them; name and ids stay. Version 1 files and `"format": "vacation-planner"` (exported before the rename) work too. Returns the family like `GET /families/{id}` |
+| `GET /families/{id}/entries?year=2026` | `{"2026-08-03": ["vacation", "day-care-closed"], ...}` |
+| `POST /families/{id}/entries` | Change entries (see below) |
+| `GET /families/{id}/notes?year=2026` | `{"2026-12-25": {"icon": "🎄", "comment": "Christmas"}, ...}` |
+| `POST /families/{id}/notes` | Set or clear day notes (see below) |
+| `GET /families/{id}/types?year=2026` | List the year's entry types |
+| `POST /families/{id}/types?year=2026` | Add a type to the year: `{"name", "color": "#rrggbb", "role"}` (`"year"` in the body works too) |
+| `PATCH /families/{id}/types/{type}?year=2026` | Change `name`, `color`, `role`, `position` |
+| `DELETE /families/{id}/types/{type}?year=2026` | Delete a type and all its entries in that year |
+| `POST /families/{id}/types/copy` | Copy a year's types into another year: `{"from": 2026, "to": 2027}`; types the target year already has (same id) are kept |
+| `GET /families/{id}/calendar.ics` | iCalendar feed. `?types=a,b` filters (by id or name, in every year), `?gaps=1` adds “⚠ Not covered” events, `?notes=1` adds day notes as events, `?name=` overrides the calendar name, `?lang=de` German event texts |
 
-| `GET /sessions/{id}/agent` | Instructions for AI agents (Markdown) with this planner's types and API URLs |
+| `GET /families/{id}/agent` | Instructions for AI agents (Markdown) with this family's types and API URLs |
 
 Roles: `none`, `needs_cover`, `covers`, `day_off`.
+
+### Finance
+
+Amounts are integer **cents**, negative for money going out. Reading needs the view or edit id,
+changing the edit id.
+
+| Method & path | Description |
+| --- | --- |
+| `GET /families/{id}/finance` | `{"currency", "csvMappings", "categories": [{"id", "name", "color", "icon", "kind", "position"}]}` |
+| `PATCH /families/{id}/finance/settings` | `{"currency": "EUR"}` (ISO 4217) and/or `{"csvMappings": [...]}` |
+| `POST /families/{id}/finance/categories` | Add `{"name", "color", "icon", "kind": "income" \| "expense" \| "both"}` |
+| `PATCH` / `DELETE /families/{id}/finance/categories/{category}` | Change or delete (its transactions become uncategorized); by id or name |
+| `POST /families/{id}/finance/categories/defaults` | Add the default categories the family doesn't have: `{"lang": "de"}` |
+| `GET /families/{id}/finance/transactions` | `?from=&to=&category=<id or none>&kind=income\|expense&q=&limit=&offset=` → `{"transactions": [{"id", "date", "amountCents", "payee", "description", "categoryId", "note", "imported"}], "total", "incomeCents", "expenseCents"}`, newest first |
+| `POST /families/{id}/finance/transactions` | `{"ops": [...]}`: `{"action": "add", "date", "amountCents", "payee", "description", "categoryId", "note"}`, `{"action": "update", "id", ...fields}`, `{"action": "delete", "ids": [...]}`. Returns `inverse`, the ops that undo the request |
+| `POST /families/{id}/finance/import` | `{"rows": [{"date", "amountCents", "payee", "description", "categoryId"}], "dryRun": true}`: adds the rows that weren't imported before; returns `added`, `duplicates` (row indexes) and the new `ids` |
+| `GET /families/{id}/finance/summary?from=&to=` | `{"currency", "incomeCents", "expenseCents", "count", "months": [{"month", "incomeCents", "expenseCents"}], "categories": [{"categoryId", "incomeCents", "expenseCents", "count"}]}` |
+
+### AI assistant
+
+All need the edit id.
+
+| Method & path | Description |
+| --- | --- |
+| `GET /families/{id}/ai/settings` | `{"configured", "baseUrl", "model", "hasKey", "keyHint", "searchProvider", "hasSearchKey", "searchKeyHint", "allowWrites", "serverReady"}` (keys are never returned, only their last 4 characters) |
+| `PUT /families/{id}/ai/settings` | Any of `{"baseUrl", "apiKey", "model", "searchProvider": "none" \| "tavily" \| "brave", "searchKey", "allowWrites"}`; `""` removes a key |
+| `POST /families/{id}/ai/models` | The API's models: `{"models": [...]}`; `{"baseUrl", "apiKey"}` in the body try values before saving them |
+| `POST /families/{id}/ai/test` | One short completion with the saved settings |
+| `POST /families/{id}/ai/chat` | `{"messages": [...], "lang", "today", "year", "page"}` (OpenAI format, the last one the user's) → `text/event-stream` with `text`, `tool`, `tool_result`, `change` (with `undo`: requests against the family that undo it), `messages` (to append to the history), `done` / `error` |
+
+### Links
+
+Every family has several ids; each one is a link with its own access:
+
+| Id | In `family` | Can |
+| --- | --- | --- |
+| Edit id | `id` | Everything |
+| View id | `readId` | Read everything (finances too), export, clone |
+| Feed id | `feedId` | Only `calendar.ics` |
+| Legacy id | `legacyId` | Read the calendar, its feed, export, clone. Only planners from before families have one: their old view id, so links and calendar subscriptions shared back then keep working without ever seeing anything that's new in families (like finances) |
+
+`family.access` says which one opened the family (`edit`, `view` or `calendar` for the legacy
+id); a response only names the ids that link may know.
 
 ### Changing entries
 
 ```sh
 # Vacation from Aug 3 to Aug 14, weekdays only
-curl -X POST "$BASE/sessions/$SESSION/entries" -H "content-type: application/json" \
+curl -X POST "$BASE/families/$FAMILY/entries" -H "content-type: application/json" \
   -d '{"action":"add","type":"vacation","from":"2026-08-03","to":"2026-08-14","skipWeekends":true}'
 
 # Several operations, applied in order
-curl -X POST "$BASE/sessions/$SESSION/entries" -H "content-type: application/json" \
+curl -X POST "$BASE/families/$FAMILY/entries" -H "content-type: application/json" \
   -d '{"ops":[
         {"action":"remove","type":"vacation","dates":["2026-08-07"]},
         {"action":"set","types":["holiday"],"dates":["2026-12-24","2026-12-31"]},
@@ -187,7 +304,7 @@ Days are given as `dates` (array), `date`, and/or an inclusive `from`/`to` range
 
 ```sh
 # 🎄 Christmas on Dec 24–26, and clear a note
-curl -X POST "$BASE/sessions/$SESSION/notes" -H "content-type: application/json" \
+curl -X POST "$BASE/families/$FAMILY/notes" -H "content-type: application/json" \
   -d '{"ops":[
         {"action":"set","icon":"🎄","comment":"Christmas","from":"2026-12-24","to":"2026-12-26"},
         {"action":"clear","dates":["2026-12-31"]}

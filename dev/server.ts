@@ -1,17 +1,23 @@
-// Local development server: serves web/ and the API with an in-memory store.
-//   deno task dev                ->  http://localhost:8787
+// Local development server: serves the built app (app/dist) and the API with an in-memory store.
+//   deno task dev                ->  http://localhost:8787 (run `npm run build` in app/ first,
+//                                    or `npm run dev` there for the app with hot reload)
 //   deno task dev --persist      keep the data in .dev/data.json across restarts
-//   deno task dev --seed         add a demo planner if there is none yet
+//   deno task dev --seed         add a demo family if there is none yet
 //   deno task dev --rate-limit   enforce low rate limits, to see the app's 429 handling
+//   deno task dev --mock-ai      a scripted AI endpoint at /mock-ai/v1, and the demo family
+//                                (with --seed) uses it, so the chat works without a key
+// The AI assistant may reach localhost here (e.g. Ollama at http://localhost:11434/v1).
 import { parseArgs } from "jsr:@std/cli@1/parse-args";
 import { createHandler, type RateLimits } from "../supabase/functions/_shared/handler.ts";
 import { MemoryRateLimiter } from "../supabase/functions/_shared/rate_limit.ts";
+import { devSecret } from "../supabase/functions/_shared/secrets.ts";
 import { MemoryStore } from "../supabase/functions/_shared/store.ts";
+import { mockAi } from "./mock_ai.ts";
 
-const args = parseArgs(Deno.args, { boolean: ["persist", "seed", "rate-limit"] });
+const args = parseArgs(Deno.args, { boolean: ["persist", "seed", "rate-limit", "mock-ai"] });
 const port = Number(Deno.env.get("PORT") ?? 8787);
 const origin = `http://localhost:${port}`;
-const root = new URL("../web/", import.meta.url);
+const root = new URL("../app/dist/", import.meta.url);
 const dataDir = new URL("../.dev/", import.meta.url);
 const dataFile = new URL("data.json", dataDir);
 const TYPES: Record<string, string> = {
@@ -19,13 +25,18 @@ const TYPES: Record<string, string> = {
   js: "text/javascript; charset=utf-8",
   css: "text/css; charset=utf-8",
   svg: "image/svg+xml",
+  json: "application/json",
+  png: "image/png",
+  woff2: "font/woff2",
 };
 
-// Low enough to hit by hand: a few new planners, or a minute of fast clicking.
+// Low enough to hit by hand: a few new families, or a minute of fast clicking.
 const DEV_LIMITS: RateLimits = {
   create: { max: 3, seconds: 60 },
   createAll: { max: 10, seconds: 60 },
   write: { max: 30, seconds: 60 },
+  ai: { max: 10, seconds: 60 },
+  aiFamily: { max: 30, seconds: 60 },
 };
 
 const store = new MemoryStore();
@@ -37,10 +48,23 @@ if (args.persist) {
   }
 }
 
-const api = createHandler(
-  store,
-  args["rate-limit"] ? { rateLimiter: new MemoryRateLimiter(), limits: DEV_LIMITS } : {},
-);
+// The key that encrypts the AI keys: kept in .dev/ with --persist, so saved keys stay readable.
+const secretFile = new URL("ai-secret", dataDir);
+let aiSecret = devSecret();
+if (args.persist) {
+  try {
+    aiSecret = (await Deno.readTextFile(secretFile)).trim();
+  } catch {
+    await Deno.mkdir(dataDir, { recursive: true });
+    await Deno.writeTextFile(secretFile, aiSecret);
+  }
+}
+
+const api = createHandler(store, {
+  ...(args["rate-limit"] ? { rateLimiter: new MemoryRateLimiter(), limits: DEV_LIMITS } : {}),
+  aiSecret,
+  allowPrivateNetwork: true,
+});
 
 // Writes run one after another, each with the latest data; rename keeps the file whole.
 let saving = Promise.resolve();
@@ -59,7 +83,7 @@ async function handleApi(req: Request) {
   return res;
 }
 
-/** Fills a demo planner through the API, so it is built exactly like one made in the app. */
+/** Fills a demo family through the API, so it is built exactly like one made in the app. */
 async function seed() {
   const call = async (method: string, path: string, body: unknown) => {
     const res = await handleApi(
@@ -74,7 +98,7 @@ async function seed() {
     return data;
   };
   const y = new Date().getFullYear();
-  const { session } = await call("POST", "/sessions", {
+  const { family } = await call("POST", "/families", {
     name: "Demo family",
     year: y,
     types: [
@@ -85,7 +109,7 @@ async function seed() {
       { name: "Sick", color: "#ef4444", role: "none" },
     ],
   });
-  const s = `/sessions/${session.id}`;
+  const s = `/families/${family.id}`;
   await call("POST", `${s}/types/copy`, { from: y, to: y + 1 });
   // Aug 20/21 and Dec 24 stay uncovered, so the coverage check has something to show.
   await call("POST", `${s}/entries`, {
@@ -108,33 +132,94 @@ async function seed() {
       { icon: "🎆", comment: "New Year's Eve", date: `${y}-12-31` },
     ],
   });
+  // Six months of household money, so the finance page has something to show.
+  const ops = [];
+  const now = new Date();
+  for (let k = 5; k >= 0; k--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - k, 1);
+    const m = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    ops.push(
+      { date: `${m}-01`, amountCents: 385000, payee: "Employer GmbH", categoryId: "salary" },
+      { date: `${m}-01`, amountCents: -142000, payee: "Landlord", categoryId: "housing" },
+      { date: `${m}-03`, amountCents: -9800, payee: "Power & Water Co.", categoryId: "utilities" },
+      { date: `${m}-15`, amountCents: 25000, payee: "Child benefit", categoryId: "other-income" },
+    );
+    for (const day of ["05", "12", "19", "26"]) {
+      ops.push({
+        date: `${m}-${day}`,
+        amountCents: -(8000 + ((k * 7 + Number(day)) % 9) * 1100),
+        payee: "Supermarket",
+        categoryId: "groceries",
+      });
+    }
+    ops.push({
+      date: `${m}-20`,
+      amountCents: -(4500 + k * 900),
+      payee: "Gas station",
+      categoryId: "mobility",
+    });
+    if (k % 2 === 0) {
+      ops.push({ date: `${m}-22`, amountCents: -6990, payee: "Toy store", categoryId: "kids" });
+    }
+  }
+  ops.push({
+    date: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-02`,
+    amountCents: -2350,
+    payee: "Bakery",
+  });
+  await call("POST", `${s}/finance/transactions`, {
+    ops: ops.filter((o) => o.date <= new Date().toISOString().slice(0, 10)),
+  });
 }
 
-if (args.seed && store.sessions.size === 0) await seed();
+if (args.seed && store.families.size === 0) await seed();
+if (args["mock-ai"]) {
+  // Point every family without AI settings at the mock.
+  for (const f of store.families.values()) {
+    if (await store.getAiSettings(f.id)) continue;
+    await handleApi(
+      new Request(`${origin}/api/families/${f.id}/ai/settings`, {
+        method: "PUT",
+        headers: { "content-type": "application/json", "x-forwarded-for": "seed" },
+        body: JSON.stringify({ baseUrl: `${origin}/mock-ai/v1`, model: "mock-large" }),
+      }),
+    );
+  }
+}
 
-Deno.serve({ port, onListen: () => listPlanners() }, async (req) => {
+Deno.serve({ port, onListen: () => listFamilies() }, async (req) => {
   const { pathname } = new URL(req.url);
   if (pathname === "/api" || pathname.startsWith("/api/")) return handleApi(req);
-  const file = pathname === "/" ? "index.html" : pathname.slice(1);
+  if (args["mock-ai"] && pathname.startsWith("/mock-ai/")) return mockAi(req);
+  const file = pathname === "/" ? "index.html" : decodeURIComponent(pathname.slice(1));
   if (file.includes("..")) return new Response("Bad request", { status: 400 });
+  // The app routes in the browser (/f/<id>/vacation …): paths without a file extension get
+  // index.html, like GitHub Pages does with 404.html.
+  const path = /\.[a-z0-9]+$/i.test(file) ? file : "index.html";
   try {
-    const body = await Deno.readFile(new URL(file, root));
-    const ext = file.split(".").pop() ?? "";
+    const body = await Deno.readFile(new URL(path, root));
+    const ext = path.split(".").pop() ?? "";
     return new Response(body, {
       headers: { "content-type": TYPES[ext] ?? "application/octet-stream" },
     });
   } catch {
+    if (path === "index.html") {
+      return new Response("app/dist is missing: run `npm ci && npm run build` in app/", {
+        status: 503,
+      });
+    }
     return new Response("Not found", { status: 404 });
   }
 });
 
-function listPlanners() {
+function listFamilies() {
   const flags = [
     args.persist && "data in .dev/data.json",
     args["rate-limit"] && "low rate limits",
+    args["mock-ai"] && "mock AI at /mock-ai/v1",
   ].filter(Boolean);
-  console.log(`Vacation planner on ${origin}${flags.length ? ` (${flags.join(", ")})` : ""}`);
-  for (const s of store.sessions.values()) {
-    console.log(`  ${s.name}: edit ${origin}/?s=${s.id}  view ${origin}/?s=${s.read_id}`);
+  console.log(`Family Planner on ${origin}${flags.length ? ` (${flags.join(", ")})` : ""}`);
+  for (const f of store.families.values()) {
+    console.log(`  ${f.name}: edit ${origin}/f/${f.id}  view ${origin}/f/${f.read_id}`);
   }
 }

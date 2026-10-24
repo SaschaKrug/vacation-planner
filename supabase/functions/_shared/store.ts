@@ -4,19 +4,22 @@
 export type Role = "none" | "needs_cover" | "covers" | "day_off";
 export const ROLES: Role[] = ["none", "needs_cover", "covers", "day_off"];
 
-export interface SessionRow {
+export interface FamilyRow {
   id: string; // secret edit token (in the share URL)
-  read_id: string; // read-only token (view link + calendar feed)
+  read_id: string; // view token: everything, read-only
+  feed_id: string; // calendar feed token: only calendar.ics
+  /** The view token of a planner from before families: the read-only calendar and its feed. */
+  legacy_id: string | null;
   name: string;
   created_at: string;
   updated_at: string;
 }
 
-/** An entry type belongs to one year; each year of a session has its own set. */
+/** An entry type belongs to one year; each year of a family has its own set. */
 export interface TypeRow {
-  session_id: string;
+  family_id: string;
   year: number;
-  id: string; // unique within the session's year
+  id: string; // unique within the family's year
   name: string;
   color: string;
   role: Role;
@@ -35,82 +38,165 @@ export interface NoteRow {
   comment: string;
 }
 
+export type CategoryKind = "income" | "expense" | "both";
+export const CATEGORY_KINDS: CategoryKind[] = ["income", "expense", "both"];
+
+/** A finance category, e.g. Groceries. */
+export interface CategoryRow {
+  family_id: string;
+  id: string; // unique within the family
+  name: string;
+  color: string;
+  icon: string; // an emoji, or ""
+  kind: CategoryKind;
+  position: number;
+}
+
+export interface TransactionRow {
+  family_id: string;
+  id: string; // uuid
+  day: string;
+  amount_cents: number; // negative: money going out
+  payee: string;
+  description: string;
+  category_id: string | null;
+  note: string;
+  /** Set for imported rows, so the same statement isn't imported twice. */
+  import_hash: string | null;
+  created_at: string;
+}
+
+export interface FinanceSettingsRow {
+  family_id: string;
+  currency: string; // ISO 4217, e.g. EUR
+  csv_mappings: unknown[];
+}
+
+export type SearchProvider = "none" | "tavily" | "brave";
+export const SEARCH_PROVIDERS: SearchProvider[] = ["none", "tavily", "brave"];
+
+/** The AI assistant's settings; the keys are encrypted (see secrets.ts). */
+export interface AiSettingsRow {
+  family_id: string;
+  base_url: string;
+  model: string;
+  api_key_enc: string;
+  search_provider: SearchProvider;
+  search_key_enc: string;
+  allow_writes: boolean;
+  updated_at: string;
+}
+
+/** Everything of the finances, for an import that replaces them. */
+export interface FinanceContents {
+  categories: CategoryRow[];
+  transactions: TransactionRow[];
+  currency: string;
+}
+
+export type FamilyPatch = Partial<Pick<FamilyRow, "name" | "read_id" | "feed_id" | "legacy_id">>;
+
 export interface Store {
-  createSession(session: SessionRow, types: TypeRow[]): Promise<void>;
-  /** Looks a session up by its edit id or its read-only id. */
-  findSession(token: string): Promise<SessionRow | null>;
-  updateSession(id: string, patch: { name?: string }): Promise<void>;
+  createFamily(family: FamilyRow, types: TypeRow[]): Promise<void>;
+  /** Looks a family up by any of its tokens: edit, view, feed or legacy id. */
+  findFamily(token: string): Promise<FamilyRow | null>;
+  updateFamily(id: string, patch: FamilyPatch): Promise<void>;
   /** Types of all years, ordered by year and position. */
-  listTypes(sessionId: string): Promise<TypeRow[]>;
+  listTypes(familyId: string): Promise<TypeRow[]>;
   upsertTypes(types: TypeRow[]): Promise<void>;
   /** Deletes the type and all of its day entries (which are all in its year). */
-  deleteType(sessionId: string, year: number, typeId: string): Promise<void>;
-  listEntries(sessionId: string, from?: string, to?: string): Promise<EntryRow[]>;
-  addEntries(sessionId: string, rows: EntryRow[]): Promise<void>;
+  deleteType(familyId: string, year: number, typeId: string): Promise<void>;
+  listEntries(familyId: string, from?: string, to?: string): Promise<EntryRow[]>;
+  addEntries(familyId: string, rows: EntryRow[]): Promise<void>;
   /** Removes entries on `days`; only the given types if `typeIds` is set. */
-  removeEntries(sessionId: string, days: string[], typeIds?: string[]): Promise<void>;
-  listNotes(sessionId: string, from?: string, to?: string): Promise<NoteRow[]>;
+  removeEntries(familyId: string, days: string[], typeIds?: string[]): Promise<void>;
+  listNotes(familyId: string, from?: string, to?: string): Promise<NoteRow[]>;
   /** Inserts or replaces the note on each row's day. */
-  upsertNotes(sessionId: string, rows: NoteRow[]): Promise<void>;
-  removeNotes(sessionId: string, days: string[]): Promise<void>;
-  /** Replaces all types, entries and notes of the session at once: all or nothing. */
+  upsertNotes(familyId: string, rows: NoteRow[]): Promise<void>;
+  removeNotes(familyId: string, days: string[]): Promise<void>;
+  /** Replaces all types, entries and notes of the family at once, and the finances too if
+   *  given: all or nothing. */
   replaceContents(
-    sessionId: string,
+    familyId: string,
     types: TypeRow[],
     entries: EntryRow[],
     notes: NoteRow[],
+    finance?: FinanceContents,
   ): Promise<void>;
+
+  getFinanceSettings(familyId: string): Promise<FinanceSettingsRow | null>;
+  saveFinanceSettings(row: FinanceSettingsRow): Promise<void>;
+  /** Categories ordered by position. */
+  listCategories(familyId: string): Promise<CategoryRow[]>;
+  upsertCategories(rows: CategoryRow[]): Promise<void>;
+  /** Deletes the category; its transactions become uncategorized. */
+  deleteCategory(familyId: string, id: string): Promise<void>;
+  /** Transactions in the range (all without one), newest first. */
+  listTransactions(familyId: string, from?: string, to?: string): Promise<TransactionRow[]>;
+  getTransactions(familyId: string, ids: string[]): Promise<TransactionRow[]>;
+  /** Inserts or replaces transactions (by id). */
+  upsertTransactions(rows: TransactionRow[]): Promise<void>;
+  deleteTransactions(familyId: string, ids: string[]): Promise<void>;
+  /** Which of the hashes imported transactions already have. */
+  existingImportHashes(familyId: string, hashes: string[]): Promise<Set<string>>;
+
+  getAiSettings(familyId: string): Promise<AiSettingsRow | null>;
+  saveAiSettings(row: AiSettingsRow): Promise<void>;
 }
 
 export class MemoryStore implements Store {
-  sessions = new Map<string, SessionRow>();
+  families = new Map<string, FamilyRow>();
   types = new Map<string, TypeRow[]>();
-  entries = new Map<string, Set<string>>(); // sessionId -> "day|type"
-  notes = new Map<string, Map<string, NoteRow>>(); // sessionId -> day -> note
+  entries = new Map<string, Set<string>>(); // familyId -> "day|type"
+  notes = new Map<string, Map<string, NoteRow>>(); // familyId -> day -> note
+  financeSettings = new Map<string, FinanceSettingsRow>();
+  categories = new Map<string, CategoryRow[]>();
+  transactions = new Map<string, Map<string, TransactionRow>>(); // familyId -> id -> row
+  aiSettings = new Map<string, AiSettingsRow>();
 
-  createSession(session: SessionRow, types: TypeRow[]) {
-    this.sessions.set(session.id, { ...session });
-    this.types.set(session.id, types.map((t) => ({ ...t })));
-    this.entries.set(session.id, new Set());
-    this.notes.set(session.id, new Map());
+  createFamily(family: FamilyRow, types: TypeRow[]) {
+    this.families.set(family.id, { ...family });
+    this.types.set(family.id, types.map((t) => ({ ...t })));
+    this.entries.set(family.id, new Set());
+    this.notes.set(family.id, new Map());
     return Promise.resolve();
   }
 
-  findSession(token: string) {
-    const direct = this.sessions.get(token);
+  findFamily(token: string) {
+    const direct = this.families.get(token);
     if (direct) return Promise.resolve({ ...direct });
-    for (const s of this.sessions.values()) {
-      if (s.read_id === token) return Promise.resolve({ ...s });
+    for (const f of this.families.values()) {
+      if ([f.read_id, f.feed_id, f.legacy_id].includes(token)) return Promise.resolve({ ...f });
     }
     return Promise.resolve(null);
   }
 
-  updateSession(id: string, patch: { name?: string }) {
-    const s = this.sessions.get(id);
-    if (s) Object.assign(s, patch, { updated_at: new Date().toISOString() });
+  updateFamily(id: string, patch: FamilyPatch) {
+    const f = this.families.get(id);
+    if (f) Object.assign(f, patch, { updated_at: new Date().toISOString() });
     return Promise.resolve();
   }
 
-  listTypes(sessionId: string) {
-    const list = (this.types.get(sessionId) ?? []).map((t) => ({ ...t }));
+  listTypes(familyId: string) {
+    const list = (this.types.get(familyId) ?? []).map((t) => ({ ...t }));
     return Promise.resolve(list.sort((a, b) => a.year - b.year || a.position - b.position));
   }
 
   upsertTypes(types: TypeRow[]) {
     for (const type of types) {
-      const list = this.types.get(type.session_id) ?? [];
+      const list = this.types.get(type.family_id) ?? [];
       const i = list.findIndex((t) => t.year === type.year && t.id === type.id);
       if (i >= 0) list[i] = { ...type };
       else list.push({ ...type });
-      this.types.set(type.session_id, list);
+      this.types.set(type.family_id, list);
     }
     return Promise.resolve();
   }
 
-  deleteType(sessionId: string, year: number, typeId: string) {
-    const list = this.types.get(sessionId) ?? [];
-    this.types.set(sessionId, list.filter((t) => t.year !== year || t.id !== typeId));
-    const set = this.entries.get(sessionId);
+  deleteType(familyId: string, year: number, typeId: string) {
+    const list = this.types.get(familyId) ?? [];
+    this.types.set(familyId, list.filter((t) => t.year !== year || t.id !== typeId));
+    const set = this.entries.get(familyId);
     if (set) {
       for (const key of [...set]) {
         if (key.startsWith(year + "-") && key.endsWith("|" + typeId)) set.delete(key);
@@ -119,9 +205,9 @@ export class MemoryStore implements Store {
     return Promise.resolve();
   }
 
-  listEntries(sessionId: string, from?: string, to?: string) {
+  listEntries(familyId: string, from?: string, to?: string) {
     const rows: EntryRow[] = [];
-    for (const key of this.entries.get(sessionId) ?? []) {
+    for (const key of this.entries.get(familyId) ?? []) {
       const [day, type_id] = key.split("|");
       if ((from && day < from) || (to && day > to)) continue;
       rows.push({ day, type_id });
@@ -130,14 +216,14 @@ export class MemoryStore implements Store {
     return Promise.resolve(rows);
   }
 
-  addEntries(sessionId: string, rows: EntryRow[]) {
-    const set = this.entries.get(sessionId);
+  addEntries(familyId: string, rows: EntryRow[]) {
+    const set = this.entries.get(familyId);
     if (set) { for (const r of rows) set.add(r.day + "|" + r.type_id); }
     return Promise.resolve();
   }
 
-  removeEntries(sessionId: string, days: string[], typeIds?: string[]) {
-    const set = this.entries.get(sessionId);
+  removeEntries(familyId: string, days: string[], typeIds?: string[]) {
+    const set = this.entries.get(familyId);
     if (!set) return Promise.resolve();
     const daySet = new Set(days);
     for (const key of [...set]) {
@@ -147,56 +233,188 @@ export class MemoryStore implements Store {
     return Promise.resolve();
   }
 
-  listNotes(sessionId: string, from?: string, to?: string) {
-    const rows = [...(this.notes.get(sessionId)?.values() ?? [])]
+  listNotes(familyId: string, from?: string, to?: string) {
+    const rows = [...(this.notes.get(familyId)?.values() ?? [])]
       .filter((n) => !(from && n.day < from) && !(to && n.day > to))
       .map((n) => ({ ...n }));
     rows.sort((a, b) => a.day.localeCompare(b.day));
     return Promise.resolve(rows);
   }
 
-  upsertNotes(sessionId: string, rows: NoteRow[]) {
-    const map = this.notes.get(sessionId);
+  upsertNotes(familyId: string, rows: NoteRow[]) {
+    const map = this.notes.get(familyId);
     if (map) { for (const r of rows) map.set(r.day, { ...r }); }
     return Promise.resolve();
   }
 
-  removeNotes(sessionId: string, days: string[]) {
-    const map = this.notes.get(sessionId);
+  removeNotes(familyId: string, days: string[]) {
+    const map = this.notes.get(familyId);
     if (map) { for (const d of days) map.delete(d); }
     return Promise.resolve();
   }
 
-  replaceContents(sessionId: string, types: TypeRow[], entries: EntryRow[], notes: NoteRow[]) {
-    this.types.set(sessionId, types.map((t) => ({ ...t })));
-    this.entries.set(sessionId, new Set(entries.map((r) => r.day + "|" + r.type_id)));
-    this.notes.set(sessionId, new Map(notes.map((n) => [n.day, { ...n }])));
-    return this.updateSession(sessionId, {});
+  replaceContents(
+    familyId: string,
+    types: TypeRow[],
+    entries: EntryRow[],
+    notes: NoteRow[],
+    finance?: FinanceContents,
+  ) {
+    this.types.set(familyId, types.map((t) => ({ ...t })));
+    this.entries.set(familyId, new Set(entries.map((r) => r.day + "|" + r.type_id)));
+    this.notes.set(familyId, new Map(notes.map((n) => [n.day, { ...n }])));
+    if (finance) {
+      this.categories.set(familyId, finance.categories.map((c) => ({ ...c })));
+      this.transactions.set(
+        familyId,
+        new Map(finance.transactions.map((t) => [t.id, { ...t }])),
+      );
+      const settings = this.financeSettings.get(familyId);
+      this.financeSettings.set(familyId, {
+        family_id: familyId,
+        csv_mappings: settings?.csv_mappings ?? [],
+        currency: finance.currency,
+      });
+    }
+    return this.updateFamily(familyId, {});
+  }
+
+  getFinanceSettings(familyId: string) {
+    const row = this.financeSettings.get(familyId);
+    return Promise.resolve(row ? structuredClone(row) : null);
+  }
+
+  saveFinanceSettings(row: FinanceSettingsRow) {
+    this.financeSettings.set(row.family_id, structuredClone(row));
+    return Promise.resolve();
+  }
+
+  listCategories(familyId: string) {
+    const list = (this.categories.get(familyId) ?? []).map((c) => ({ ...c }));
+    return Promise.resolve(list.sort((a, b) => a.position - b.position));
+  }
+
+  upsertCategories(rows: CategoryRow[]) {
+    for (const row of rows) {
+      const list = this.categories.get(row.family_id) ?? [];
+      const i = list.findIndex((c) => c.id === row.id);
+      if (i >= 0) list[i] = { ...row };
+      else list.push({ ...row });
+      this.categories.set(row.family_id, list);
+    }
+    return Promise.resolve();
+  }
+
+  deleteCategory(familyId: string, id: string) {
+    const list = this.categories.get(familyId) ?? [];
+    this.categories.set(familyId, list.filter((c) => c.id !== id));
+    for (const t of this.transactions.get(familyId)?.values() ?? []) {
+      if (t.category_id === id) t.category_id = null;
+    }
+    return Promise.resolve();
+  }
+
+  listTransactions(familyId: string, from?: string, to?: string) {
+    const rows = [...(this.transactions.get(familyId)?.values() ?? [])]
+      .filter((t) => !(from && t.day < from) && !(to && t.day > to))
+      .map((t) => ({ ...t }));
+    rows.sort((a, b) => b.day.localeCompare(a.day) || b.created_at.localeCompare(a.created_at));
+    return Promise.resolve(rows);
+  }
+
+  getTransactions(familyId: string, ids: string[]) {
+    const map = this.transactions.get(familyId);
+    return Promise.resolve(
+      ids.map((id) => map?.get(id)).filter((t): t is TransactionRow => !!t).map((t) => ({
+        ...t,
+      })),
+    );
+  }
+
+  upsertTransactions(rows: TransactionRow[]) {
+    for (const row of rows) {
+      const map = this.transactions.get(row.family_id) ?? new Map();
+      map.set(row.id, { ...row });
+      this.transactions.set(row.family_id, map);
+    }
+    return Promise.resolve();
+  }
+
+  deleteTransactions(familyId: string, ids: string[]) {
+    const map = this.transactions.get(familyId);
+    if (map) { for (const id of ids) map.delete(id); }
+    return Promise.resolve();
+  }
+
+  getAiSettings(familyId: string) {
+    const row = this.aiSettings.get(familyId);
+    return Promise.resolve(row ? { ...row } : null);
+  }
+
+  saveAiSettings(row: AiSettingsRow) {
+    this.aiSettings.set(row.family_id, { ...row });
+    return Promise.resolve();
+  }
+
+  existingImportHashes(familyId: string, hashes: string[]) {
+    const wanted = new Set(hashes);
+    const found = new Set<string>();
+    for (const t of this.transactions.get(familyId)?.values() ?? []) {
+      if (t.import_hash && wanted.has(t.import_hash)) found.add(t.import_hash);
+    }
+    return Promise.resolve(found);
   }
 
   /** Plain-JSON copy of all data, so the dev server can keep it across restarts. */
   snapshot(): MemorySnapshot {
-    return [...this.sessions.values()].map((session) => ({
-      session,
-      types: this.types.get(session.id) ?? [],
-      entries: [...(this.entries.get(session.id) ?? [])],
-      notes: [...(this.notes.get(session.id)?.values() ?? [])],
+    return [...this.families.values()].map((family) => ({
+      family,
+      types: this.types.get(family.id) ?? [],
+      entries: [...(this.entries.get(family.id) ?? [])],
+      notes: [...(this.notes.get(family.id)?.values() ?? [])],
+      financeSettings: this.financeSettings.get(family.id) ?? null,
+      categories: this.categories.get(family.id) ?? [],
+      transactions: [...(this.transactions.get(family.id)?.values() ?? [])],
+      aiSettings: this.aiSettings.get(family.id) ?? null,
     }));
   }
 
   restore(snapshot: MemorySnapshot) {
-    for (const { session, types, entries, notes } of snapshot) {
-      this.sessions.set(session.id, { ...session });
-      this.types.set(session.id, types.map((t) => ({ ...t })));
-      this.entries.set(session.id, new Set(entries));
-      this.notes.set(session.id, new Map(notes.map((n) => [n.day, { ...n }])));
+    for (const item of snapshot) {
+      const { types, entries, notes } = item;
+      // Snapshots from before families hold a "session": its view id becomes the legacy id,
+      // like the database migration does it.
+      const old = (item as { session?: FamilyRow }).session;
+      const family = item.family ??
+        { ...old!, legacy_id: old!.read_id, read_id: randomId(), feed_id: randomId() };
+      this.families.set(family.id, { ...family });
+      this.types.set(family.id, types.map((t) => ({ ...t, family_id: family.id })));
+      this.entries.set(family.id, new Set(entries));
+      this.notes.set(family.id, new Map(notes.map((n) => [n.day, { ...n }])));
+      if (item.financeSettings) this.financeSettings.set(family.id, item.financeSettings);
+      this.categories.set(family.id, (item.categories ?? []).map((c) => ({ ...c })));
+      this.transactions.set(
+        family.id,
+        new Map((item.transactions ?? []).map((t) => [t.id, { ...t }])),
+      );
+      if (item.aiSettings) this.aiSettings.set(family.id, item.aiSettings);
     }
   }
 }
 
 export type MemorySnapshot = {
-  session: SessionRow;
+  family: FamilyRow;
   types: TypeRow[];
   entries: string[]; // "day|type"
   notes: NoteRow[];
+  // Snapshots from before finances have none of these.
+  financeSettings?: FinanceSettingsRow | null;
+  categories?: CategoryRow[];
+  transactions?: TransactionRow[];
+  aiSettings?: AiSettingsRow | null;
 }[];
+
+/** A 32-character alphanumeric id, like the database migration makes them. */
+function randomId(): string {
+  return crypto.randomUUID().replaceAll("-", "");
+}

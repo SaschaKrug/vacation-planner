@@ -86,13 +86,15 @@ function workdays(days: string[]): number {
   return days.filter((d) => !isWeekend(d)).length;
 }
 
+// Event UIDs end in "@vacation-planner", the name from before the rename: changing them would
+// make subscribed calendars treat every event as a new one.
 export function buildIcs(input: IcsInput): string {
   const now = input.now ?? new Date();
   const text = TEXT[input.lang ?? "en"];
   const lines = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
-    "PRODID:-//vacation-planner//Year Calendar//EN",
+    "PRODID:-//family-planner//Year Calendar//EN",
     "CALSCALE:GREGORIAN",
     "METHOD:PUBLISH",
     "X-WR-CALNAME:" + escapeText(input.calendarName),

@@ -1,14 +1,18 @@
-// Instructions for AI agents: GET /sessions/{id}/agent returns this Markdown page, so a user
-// can hand an agent one URL and it knows the planner and the API with ready-to-use URLs.
+// Instructions for AI agents: GET /families/{id}/agent returns this Markdown page, so a user
+// can hand an agent one URL and it knows the family's calendar and the API with ready-to-use
+// URLs.
 
-import type { SessionRow, TypeRow } from "./store.ts";
+import type { FamilyRow, TypeRow } from "./store.ts";
 
 export interface AgentDocInput {
   /** Public API base, e.g. https://<project>.supabase.co/functions/v1/api */
   base: string;
-  /** The token in the URL: the edit id (full access) or the read-only id. */
+  /** The token in the URL: the edit id (full access) or a read-only id. */
   token: string;
-  session: SessionRow;
+  readOnly: boolean;
+  /** Whether the link may see the finances (not the legacy calendar-only link). */
+  finance: boolean;
+  family: FamilyRow;
   /** Types of all years. */
   types: TypeRow[];
   /** Today as YYYY-MM-DD. */
@@ -34,13 +38,12 @@ function typesTable(types: TypeRow[]): string {
 }
 
 export function buildAgentDoc(input: AgentDocInput): string {
-  const { base, token, session, types, today, refreshSeconds } = input;
-  const readOnly = session.id !== token;
+  const { base, token, readOnly, finance, family, types, today, refreshSeconds } = input;
   const years = [...new Set(types.map((t) => t.year))].sort((a, b) => a - b);
   // Examples use the current year, or the latest year with types if it has none.
   const thisYear = Number(today.slice(0, 4));
   const year = years.includes(thisYear) ? thisYear : (years.at(-1) ?? thisYear);
-  const s = `${base}/sessions/${token}`;
+  const s = `${base}/families/${token}`;
   const example = types.find((t) => t.year === year && t.role === "covers") ??
     types.find((t) => t.year === year) ?? { id: "vacation", name: "Vacation" };
   const json = (v: unknown) => "`" + JSON.stringify(v) + "`";
@@ -48,7 +51,7 @@ export function buildAgentDoc(input: AgentDocInput): string {
   const typeSections = years.length
     ? years.map((y) => `### ${y}\n\n${typesTable(types.filter((t) => t.year === y))}`)
       .join("\n\n")
-    : "_This planner has no entry types yet._";
+    : "_This calendar has no entry types yet._";
 
   const read = `## Reading
 
@@ -61,11 +64,12 @@ All responses are JSON. Dates are \`YYYY-MM-DD\`.
 - \`?from=YYYY-MM-DD&to=YYYY-MM-DD\` works instead of \`?year=\`.`;
 
   if (readOnly) {
-    return `# Vacation planner “${session.name}” – instructions for AI agents
+    return `# Family Planner “${family.name}” – instructions for AI agents
 
-This URL gives **read-only** access to a shared year calendar for vacation, public holidays,
-sick days and day-care closures. You can read it and answer questions about it, but not change
-it: ask the user for the AI link of the edit link if they want changes. Today is ${today}.
+This URL gives **read-only** access to the family's shared year calendar for vacation, public
+holidays, sick days and day-care closures. You can read it and answer questions about it, but
+not change it: ask the user for the AI link of the edit link if they want changes. Today is
+${today}.
 
 ${concepts()}
 
@@ -74,7 +78,7 @@ ${concepts()}
 ${typeSections}
 
 ${read}
-`;
+${finance ? financeDoc(s, year, false) : ""}`;
   }
 
   const addOp = {
@@ -86,12 +90,12 @@ ${read}
   };
   const noteOp = { action: "set", date: `${year}-12-25`, icon: "🎄", comment: "Christmas" };
 
-  return `# Vacation planner “${session.name}” – instructions for AI agents
+  return `# Family Planner “${family.name}” – instructions for AI agents
 
-The user gave you **full edit access** to their shared year calendar for vacation, public
-holidays, sick days and day-care closures. Help them read and plan it. Today is ${today}.
+The user gave you **full edit access** to their family's shared year calendar for vacation,
+public holidays, sick days and day-care closures. Help them read and plan it. Today is ${today}.
 
-- This URL contains the planner's secret key. Don't repeat it in public places or share it.
+- This URL contains the family's secret key. Don't repeat it in public places or share it.
 - Read the current state before changing anything, and check the result afterwards.
 - For bigger changes (many days, deleting types, renaming) say what you'll do first and ask
   the user to confirm; small, clearly requested changes can be made directly.
@@ -145,7 +149,7 @@ ${json(noteOp)} – \`set\` replaces a day's note (icon max. 16 characters, comm
     json({ from: year, to: year + 1 })
   }
 
-### Planner name: \`PATCH ${s}\` ${json({ name: session.name })}
+### Family name: \`PATCH ${s}\` ${json({ name: family.name })}
 
 ## Request format
 
@@ -156,11 +160,11 @@ asked for):
 curl -X POST "${s}/entries" -H "content-type: application/json" \\
   -d '${JSON.stringify(addOp)}'
 \`\`\`
-`;
+${finance ? "\n" + financeDoc(s, year, true) : ""}`;
 }
 
 function concepts(): string {
-  return `## How the planner works
+  return `## How the calendar works
 
 - A year calendar. Each day can hold **several entries**, each of an **entry type** (name,
   color, role). Every year has its own set of types.
@@ -171,4 +175,31 @@ function concepts(): string {
   \`none\`. Day-off entries don't count as used vacation days.
 - A day can also have one **note**: an icon (emoji) and/or a comment, e.g. 🎄 Christmas.
   Notes are independent of entries.`;
+}
+
+/** The finances: transactions (integer cents, negative = money out), categories, summary. */
+function financeDoc(s: string, year: number, edit: boolean): string {
+  const f = `${s}/finance`;
+  const read = `## Finances
+
+The family also keeps a transactions log. Amounts are integer **cents**, negative for money
+going out (\`-4599\` = −45.99 in the family's currency).
+
+- Currency and categories: ${f}
+- Transactions (newest first): ${f}/transactions?from=${year}-01-01&to=${year}-12-31 –
+  also \`category=<id>\` (or \`none\`), \`kind=income|expense\`, \`q=<text>\`, \`limit\`, \`offset\`.
+  Returns \`{"transactions": [...], "total", "incomeCents", "expenseCents"}\`.
+- Per month and category: ${f}/summary?from=${year}-01-01&to=${year}-12-31
+`;
+  if (!edit) return read;
+  return `${read}
+Changing: \`POST ${f}/transactions\` with \`{"ops": [...]}\` (applied in order):
+
+- \`{"action": "add", "date": "${year}-03-02", "amountCents": -4599, "payee": "Supermarket", "description": "", "categoryId": "groceries", "note": ""}\`
+- \`{"action": "update", "id": "<uuid>", "categoryId": "groceries"}\` (any of the fields above)
+- \`{"action": "delete", "ids": ["<uuid>", ...]}\`
+
+The response has \`inverse\`: ops that undo the request (send them to the same endpoint).
+Categories are referenced by id or name. Ask before deleting or changing many transactions.
+`;
 }

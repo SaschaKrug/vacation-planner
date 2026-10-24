@@ -1,6 +1,6 @@
 # Minimal Supabase CLI config. Only used for `supabase db push` and
 # `supabase functions deploy` from GitHub Actions.
-project_id = "vacation-planner"
+project_id = "family-planner"
 
 [functions.api]
 # The calendar feed and the API are protected by unguessable session ids,
