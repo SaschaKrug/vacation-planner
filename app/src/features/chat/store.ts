@@ -2,15 +2,23 @@
 // open, sending a message and showing the streamed answer, and undoing changes.
 
 import { toast } from "sonner";
+import { type Attachment, keepImages, toParts } from "@/features/chat/attachments";
 import { type AiSettings, api, type ChatEvent, type ChatMessage, type UndoStep } from "@/lib/api";
 import { getLang, t } from "@/lib/i18n";
 import { read, write } from "@/lib/storage";
 
 export type ChangeKind = "entries" | "notes" | "types" | "transactions";
 
+/** An attachment as the chat shows it: images keep their data URL unless storage was full. */
+export interface ItemAttachment {
+  kind: "image" | "file";
+  name: string;
+  url?: string;
+}
+
 /** What the chat shows: messages, tool activity and changes (with undo). */
 export type Item =
-  | { kind: "user"; text: string }
+  | { kind: "user"; text: string; attachments?: ItemAttachment[] }
   | { kind: "assistant"; text: string }
   | {
     kind: "tool";
@@ -40,6 +48,19 @@ export interface Chat {
 }
 
 const MAX_CHATS = 20;
+/** Images sent along with a request (the server keeps no more either). */
+const MAX_IMAGES = 8;
+
+/** A chat without its image data, for when storage is full. */
+const withoutImages = (c: Chat): Chat => ({
+  ...c,
+  history: keepImages(c.history, 0, "(an image that is no longer stored)"),
+  items: c.items.map((it) =>
+    it.kind === "user" && it.attachments
+      ? { ...it, attachments: it.attachments.map((a) => ({ kind: a.kind, name: a.name })) }
+      : it
+  ),
+});
 const today = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${
@@ -85,18 +106,25 @@ export class ChatStore {
   }
 
   private save() {
-    // Newest first; if storage is full, drop the oldest chats until it fits.
+    // Newest first; if storage is full, store the chats without images (this session keeps
+    // them), then drop the oldest chats until it fits.
     this.chats.sort((a, b) => b.updatedAt - a.updatedAt);
     this.chats = this.chats.slice(0, MAX_CHATS);
-    for (let n = this.chats.length; n > 0; n--) {
-      try {
-        localStorage.setItem(this.key, JSON.stringify(this.chats.slice(0, n)));
-        return;
-      } catch {
-        // too big: try with fewer chats
-      }
+    if (this.store(this.chats)) return;
+    const lean = this.chats.map(withoutImages);
+    for (let n = lean.length; n > 0; n--) {
+      if (this.store(lean.slice(0, n))) return;
     }
     write(this.key, []);
+  }
+
+  private store(chats: Chat[]) {
+    try {
+      localStorage.setItem(this.key, JSON.stringify(chats));
+      return true;
+    } catch {
+      return false; // too big (or blocked)
+    }
   }
 
   get current(): Chat | undefined {
@@ -147,14 +175,14 @@ export class ChatStore {
     this.abort = null;
   }
 
-  async send(text: string) {
+  async send(text: string, attachments: Attachment[] = []) {
     const message = text.trim();
-    if (!message || this.busy) return;
+    if ((!message && !attachments.length) || this.busy) return;
     let chat = this.current;
     if (!chat) {
       chat = {
         id: crypto.randomUUID(),
-        title: message.slice(0, 60),
+        title: (message || attachments[0].name).slice(0, 60),
         updatedAt: Date.now(),
         history: [],
         items: [],
@@ -163,8 +191,19 @@ export class ChatStore {
       this.currentId = chat.id;
     }
     const c = chat;
-    c.items = [...c.items, { kind: "user", text: message }];
-    c.history = [...c.history, { role: "user", content: message }];
+    const item: Item = { kind: "user", text: message };
+    if (attachments.length) {
+      item.attachments = attachments.map((a) =>
+        a.kind === "image"
+          ? { kind: a.kind, name: a.name, url: a.url }
+          : { kind: a.kind, name: a.name }
+      );
+    }
+    c.items = [...c.items, item];
+    c.history = [...c.history, {
+      role: "user",
+      content: attachments.length ? toParts(message, attachments) : message,
+    }];
     c.updatedAt = Date.now();
     this.busy = true;
     this.save();
@@ -221,7 +260,12 @@ export class ChatStore {
     try {
       await api.chat(
         this.token,
-        { messages: c.history, lang: getLang(), today: today(), ...this.context() },
+        {
+          messages: keepImages(c.history, MAX_IMAGES, "(an earlier image, no longer sent)"),
+          lang: getLang(),
+          today: today(),
+          ...this.context(),
+        },
         onEvent,
         this.abort.signal,
       );

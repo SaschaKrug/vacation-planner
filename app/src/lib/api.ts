@@ -110,10 +110,15 @@ export interface AiSettingsPatch {
   allowWrites?: boolean;
 }
 
+/** A part of a user message: text, or an image as a data URL. */
+export type ContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
 /** A message in the OpenAI format, as the chat endpoint takes and returns them. */
 export interface ChatMessage {
   role: "user" | "assistant" | "tool";
-  content: string | null;
+  content: string | null | ContentPart[];
   tool_calls?: { id: string; type: "function"; function: { name: string; arguments: string } }[];
   tool_call_id?: string;
 }

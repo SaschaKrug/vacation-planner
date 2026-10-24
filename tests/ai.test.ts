@@ -12,10 +12,15 @@ const KEY = "sk-test-1234567890abcd";
 
 /** The outside world: the mock AI, a web page, a redirect to a private address, Tavily. */
 const requests: string[] = [];
+/** The last request body the mock AI got. */
+let aiBody: any = null;
 const fakeFetch = ((input: string | URL | Request, init?: RequestInit) => {
   const url = new URL(input instanceof Request ? input.url : String(input));
   requests.push(url.href);
-  if (url.href.startsWith(AI)) return mockAi(new Request(url, init));
+  if (url.href.startsWith(AI)) {
+    aiBody = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+    return mockAi(new Request(url, init));
+  }
   if (url.hostname === "pages.test") {
     return Promise.resolve(
       new Response(
@@ -317,6 +322,65 @@ Deno.test("chat needs settings, the edit link and a clean history", async () => 
     })).status,
     400,
   );
+});
+
+Deno.test("user messages can carry attached files and images", async () => {
+  const t = await configured();
+  // A 1×1 PNG.
+  const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk" +
+    "+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+  const image = { type: "image_url", image_url: { url: png, detail: "low" } };
+  const ev = await chat(t, "", {
+    messages: [{ role: "user", content: [{ type: "text", text: "what is this?" }, image] }],
+  });
+  const text = ev.filter((e) => e.event === "text").map((e) => e.data.delta).join("");
+  assertMatch(text, /I see 1 image\. Mock reply: what is this\?/);
+  // Only url is passed on.
+  assertEquals(aiBody.messages[1].content[1], { type: "image_url", image_url: { url: png } });
+
+  const bad = [
+    [{
+      role: "user",
+      content: [{ type: "image_url", image_url: { url: "https://x.test/a.png" } }],
+    }],
+    [{
+      role: "user",
+      content: [{ type: "image_url", image_url: { url: "data:image/svg+xml;base64,AA==" } }],
+    }],
+    [{ role: "user", content: [{ type: "audio", audio: "x" }] }],
+    [{ role: "user", content: [] }],
+    [{ role: "user", content: [{ type: "text", text: 5 }] }],
+    [{ role: "user", content: [{ type: "text", text: "x".repeat(60_001) }] }],
+    [{ role: "user", content: Array(5).fill(image) }],
+    [{ role: "user", content: "hi" }, { role: "assistant", content: [image] }, {
+      role: "user",
+      content: "and?",
+    }],
+  ];
+  for (const messages of bad) {
+    assertEquals(
+      (await t.call("POST", `${t.ai}/chat`, { messages })).status,
+      400,
+      JSON.stringify(messages).slice(0, 120),
+    );
+  }
+
+  // Of 10 images in the history only the newest 8 reach the model.
+  const messages = [
+    { role: "user", content: [image, image, { type: "text", text: "first" }] },
+    { role: "assistant", content: "ok" },
+    { role: "user", content: [image, image, image, image] },
+    { role: "assistant", content: "ok" },
+    { role: "user", content: [{ type: "text", text: "last" }, image, image, image, image] },
+  ];
+  const res = await t.call("POST", `${t.ai}/chat`, { messages });
+  assertMatch(res.data, /I see 4 images\. Mock reply: last/);
+  const sent = aiBody.messages.flatMap((m: any) => Array.isArray(m.content) ? m.content : []);
+  assertEquals(sent.filter((p: any) => p.type === "image_url").length, 8);
+  assertEquals(aiBody.messages[1].content.slice(0, 2), [
+    { type: "text", text: "(an earlier image, no longer sent)" },
+    { type: "text", text: "(an earlier image, no longer sent)" },
+  ]);
 });
 
 Deno.test("limits AI requests per client", async () => {

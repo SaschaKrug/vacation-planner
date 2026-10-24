@@ -6,9 +6,17 @@
 //   "spend" / "finance"                   -> finance_summary for this year
 //   "search <words>"                      -> web_search
 //   a URL                                 -> fetch_page
-// After a tool result it says what happened; anything else is echoed.
+// After a tool result it says what happened; anything else is echoed. A message with images
+// (content parts) gets "I see 2 images." before the echo.
 
-type Msg = { role: string; content: string | null; tool_calls?: unknown[] };
+type Part = { type: string; text?: string };
+type Msg = { role: string; content: string | null | Part[]; tool_calls?: unknown[] };
+
+/** A message's text: the string, or its text parts joined. */
+function textOf(content: Msg["content"]) {
+  if (!Array.isArray(content)) return String(content ?? "");
+  return content.filter((p) => p.type === "text").map((p) => p.text ?? "").join("\n");
+}
 
 function chunk(delta: Record<string, unknown>, finish: string | null = null) {
   return `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
@@ -67,7 +75,7 @@ export async function mockAi(req: Request): Promise<Response> {
   );
 
   if (last.role === "tool") {
-    const result = JSON.parse(last.content ?? "{}");
+    const result = JSON.parse(textOf(last.content) || "{}");
     if (result.error) return reply(stream, `That didn't work: ${result.error}`);
     const text = result.changed !== undefined
       ? `Done: ${result.changed} days changed.`
@@ -81,9 +89,12 @@ export async function mockAi(req: Request): Promise<Response> {
     return reply(stream, text);
   }
 
-  const text = String(last.content ?? "");
+  const text = textOf(last.content);
+  const images = Array.isArray(last.content)
+    ? last.content.filter((p) => p.type === "image_url").length
+    : 0;
   const lower = text.toLowerCase();
-  const system = String(messages[0]?.content ?? "");
+  const system = textOf(messages[0]?.content);
   const today = /Today is (\d{4}-\d{2}-\d{2})/.exec(system)?.[1] ??
     new Date().toISOString().slice(0, 10);
   const dates = text.match(/\d{4}-\d{2}-\d{2}/g) ?? [];
@@ -122,5 +133,6 @@ export async function mockAi(req: Request): Promise<Response> {
   if (/^(search|suche)\b/.test(lower) && tools.has("web_search")) {
     return reply(stream, "", { name: "web_search", args: { query: text.replace(/^\S+\s*/, "") } });
   }
-  return reply(stream, `Mock reply: ${text}`);
+  const seen = images ? `I see ${images} image${images > 1 ? "s" : ""}. ` : "";
+  return reply(stream, `${seen}Mock reply: ${text}`);
 }

@@ -3,12 +3,26 @@
 
 import { HttpError, objectOf } from "../http.ts";
 import type { CategoryRow, FamilyRow, TypeRow } from "../store.ts";
-import { type ChatMessage, type Provider, streamChat, type ToolCall } from "./provider.ts";
+import {
+  type ChatMessage,
+  type ContentPart,
+  type Provider,
+  streamChat,
+  type ToolCall,
+} from "./provider.ts";
 import { runTool, type ToolContext, toolsFor } from "./tools.ts";
 
 const MAX_STEPS = 10;
 const MAX_MESSAGES = 80;
 const MAX_CONTENT = 20_000;
+/** Attachments: parts per message, an attached file's text, images per message and per chat. */
+const MAX_PARTS = 10;
+const MAX_FILE_TEXT = 60_000;
+const MAX_IMAGE_URL = 2_000_000;
+const IMAGES_PER_MESSAGE = 4;
+const MAX_IMAGES = 8;
+const IMAGE_URL = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/;
+const OLD_IMAGE = "(an earlier image, no longer sent)";
 const MAX_TOOL_RESULT = 16_000;
 /** What the app keeps of a tool result in its history (the model saw it in full). */
 const STORED_TOOL_RESULT = 2_000;
@@ -94,8 +108,16 @@ export function cleanHistory(raw: unknown): ChatMessage[] {
     if (!["user", "assistant", "tool"].includes(o.role as string)) {
       throw new HttpError(400, "role must be user, assistant or tool");
     }
-    const content = o.content === null || o.content === undefined ? null : String(o.content);
-    if (content && content.length > MAX_CONTENT) throw new HttpError(400, "A message is too long");
+    let content: ChatMessage["content"];
+    if (Array.isArray(o.content)) {
+      if (o.role !== "user") throw new HttpError(400, "Only user messages can have parts");
+      content = cleanParts(o.content);
+    } else {
+      content = o.content === null || o.content === undefined ? null : String(o.content);
+      if (content && content.length > MAX_CONTENT) {
+        throw new HttpError(400, "A message is too long");
+      }
+    }
     const msg: ChatMessage = { role: o.role as ChatMessage["role"], content };
     if (o.role === "assistant" && Array.isArray(o.tool_calls) && o.tool_calls.length) {
       msg.tool_calls = o.tool_calls.slice(0, 20).map((c) => {
@@ -116,7 +138,43 @@ export function cleanHistory(raw: unknown): ChatMessage[] {
   if (!out.length || out.at(-1)!.role !== "user") {
     throw new HttpError(400, "The last message must be the user's");
   }
+  // Only the newest images go to the model, so the request stays bounded.
+  let images = 0;
+  for (let i = out.length - 1; i >= 0; i--) {
+    const m = out[i];
+    if (!Array.isArray(m.content)) continue;
+    m.content = m.content.map((p): ContentPart =>
+      p.type === "image_url" && ++images > MAX_IMAGES ? { type: "text", text: OLD_IMAGE } : p
+    );
+  }
   return out;
+}
+
+/** A user message's parts: text (typed or an attached file) and images as data URLs. */
+function cleanParts(raw: unknown[]): ContentPart[] {
+  if (!raw.length || raw.length > MAX_PARTS) {
+    throw new HttpError(400, `A message needs 1 to ${MAX_PARTS} parts`);
+  }
+  const parts = raw.map((r): ContentPart => {
+    const p = objectOf(r, "Each part");
+    if (p.type === "text") {
+      if (typeof p.text !== "string") throw new HttpError(400, "A text part needs text");
+      if (p.text.length > MAX_FILE_TEXT) throw new HttpError(400, "An attached text is too long");
+      return { type: "text", text: p.text };
+    }
+    if (p.type === "image_url") {
+      const url = (p.image_url as { url?: unknown } | null)?.url;
+      if (typeof url !== "string" || url.length > MAX_IMAGE_URL || !IMAGE_URL.test(url)) {
+        throw new HttpError(400, "An image must be a PNG, JPEG, WebP or GIF data URL (max. 2 MB)");
+      }
+      return { type: "image_url", image_url: { url } };
+    }
+    throw new HttpError(400, "A part must be text or image_url");
+  });
+  if (parts.filter((p) => p.type === "image_url").length > IMAGES_PER_MESSAGE) {
+    throw new HttpError(400, `At most ${IMAGES_PER_MESSAGE} images per message`);
+  }
+  return parts;
 }
 
 /**
