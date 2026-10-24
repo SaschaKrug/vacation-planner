@@ -224,9 +224,10 @@ async function chat({ store, req, load }: Ctx, env: AiEnv) {
   if (!row.base_url || !row.model) throw new HttpError(400, "The AI assistant isn't set up yet");
   const p: Provider = await provider(row, env);
   const search = await searchOf(row, env);
-  const [types, categories, settings] = await Promise.all([
+  const [types, categories, accounts, settings] = await Promise.all([
     store.listTypes(family.id),
     store.listCategories(family.id),
+    store.listAccounts(family.id),
     store.getFinanceSettings(family.id),
   ]);
   // The app's local date, so "today" matches the user's day; the server's as a fallback.
@@ -236,6 +237,7 @@ async function chat({ store, req, load }: Ctx, env: AiEnv) {
     family,
     types,
     categories,
+    accounts,
     currency: settings?.currency ?? "EUR",
     today,
     year,

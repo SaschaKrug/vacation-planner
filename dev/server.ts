@@ -132,8 +132,22 @@ async function seed() {
       { icon: "🎆", comment: "New Year's Eve", date: `${y}-12-31` },
     ],
   });
-  // Six months of household money, so the finance page has something to show.
-  const ops = [];
+  // Six months of household money, so the finance page has something to show: a checking
+  // account, and savings that get a monthly transfer (the latest one isn't combined yet, so
+  // "Find transfers" has something to suggest).
+  await call("POST", `${s}/finance/accounts`, {
+    name: "Checking",
+    color: "#3b82f6",
+    icon: "🏦",
+    openingCents: 250000,
+  });
+  await call("POST", `${s}/finance/accounts`, {
+    name: "Savings",
+    color: "#22c55e",
+    icon: "🐷",
+    openingCents: 1000000,
+  });
+  const ops: Record<string, unknown>[] = [];
   const now = new Date();
   for (let k = 5; k >= 0; k--) {
     const d = new Date(now.getFullYear(), now.getMonth() - k, 1);
@@ -161,6 +175,17 @@ async function seed() {
     if (k % 2 === 0) {
       ops.push({ date: `${m}-22`, amountCents: -6990, payee: "Toy store", categoryId: "kids" });
     }
+    const transferId = k ? crypto.randomUUID() : null;
+    ops.push(
+      { date: `${m}-02`, amountCents: -50000, payee: "Savings", transferId },
+      {
+        date: `${m}-03`,
+        amountCents: 50000,
+        payee: "From checking",
+        accountId: "savings",
+        transferId,
+      },
+    );
   }
   ops.push({
     date: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-02`,
@@ -168,7 +193,8 @@ async function seed() {
     payee: "Bakery",
   });
   await call("POST", `${s}/finance/transactions`, {
-    ops: ops.filter((o) => o.date <= new Date().toISOString().slice(0, 10)),
+    ops: ops.filter((o) => (o.date as string) <= new Date().toISOString().slice(0, 10))
+      .map((o) => ({ accountId: "checking", ...o })),
   });
 }
 
