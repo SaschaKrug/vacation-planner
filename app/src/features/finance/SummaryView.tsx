@@ -1,0 +1,310 @@
+import { useState } from "react";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useFinance } from "@/features/family/context";
+import type { FinanceSummary } from "@/lib/api";
+import { getLang, t } from "@/lib/i18n";
+import { formatMoney } from "@/lib/money";
+import { StatTiles } from "./FinancePage";
+
+/** Income and expenses per month, and where the money went, for the summary range. */
+export function SummaryView() {
+  const finance = useFinance();
+  const summary = finance.summary;
+  if (!summary) return <div className="h-64 animate-pulse rounded-xl bg-muted" />;
+  if (!summary.count) {
+    return (
+      <p className="rounded-xl border bg-card p-8 text-center text-sm text-muted-foreground">
+        {t("finance.no_data")}
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-4">
+      <StatTiles
+        income={summary.incomeCents}
+        expense={summary.expenseCents}
+        currency={summary.currency}
+      />
+      <MonthlyChart summary={summary} />
+      <CategoryBreakdown summary={summary} />
+    </div>
+  );
+}
+
+/** Every month of the range: a whole year, or all months with transactions. */
+function monthsOf(summary: FinanceSummary, year: number | null) {
+  if (year === null) return summary.months;
+  const byMonth = new Map(summary.months.map((m) => [m.month, m]));
+  return Array.from({ length: 12 }, (_, i) => {
+    const month = `${year}-${String(i + 1).padStart(2, "0")}`;
+    return byMonth.get(month) ?? { month, incomeCents: 0, expenseCents: 0 };
+  });
+}
+
+/** A round axis maximum and its ticks (1, 2, 2.5 or 5 × 10^n steps). */
+function niceTicks(max: number, count = 4) {
+  if (max <= 0) return { top: 1, ticks: [0] };
+  const raw = max / count;
+  const pow = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((f) => f * pow).find((s) => s >= raw)!;
+  const top = Math.ceil(max / step) * step;
+  return { top, ticks: Array.from({ length: Math.round(top / step) + 1 }, (_, i) => i * step) };
+}
+
+/** A bar with 4px rounded ends away from the baseline. */
+function barPath(x: number, y: number, w: number, h: number) {
+  if (h <= 0) return "";
+  const r = Math.min(4, w / 2, h);
+  return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${
+    y + r
+  }V${y + h}Z`;
+}
+
+function MonthlyChart({ summary }: { summary: FinanceSummary }) {
+  const finance = useFinance();
+  const lang = getLang();
+  const [hover, setHover] = useState<number | null>(null);
+  const year = finance.period.mode === "all" ? null : finance.period.year;
+  const months = monthsOf(summary, year);
+  const money = (c: number, compact = false) => formatMoney(c, summary.currency, lang, { compact });
+  const monthName = (m: string, style: "short" | "long" = "short") =>
+    new Intl.DateTimeFormat(lang, {
+      month: style,
+      ...(year === null || style === "long" ? { year: "numeric" } : {}),
+    })
+      .format(new Date(`${m}-01T00:00:00`));
+
+  const { top, ticks } = niceTicks(
+    Math.max(...months.map((m) => Math.max(m.incomeCents, m.expenseCents))),
+  );
+  const W = 720, H = 240, left = 64, right = 8, topPad = 8, bottom = 28;
+  const plotW = W - left - right, plotH = H - topPad - bottom;
+  const band = plotW / months.length;
+  const barW = Math.max(3, Math.min(18, (band - 10) / 2));
+  const y = (v: number) => topPad + plotH - (v / top) * plotH;
+  const labelEvery = Math.ceil(months.length / 12);
+  const hovered = hover !== null ? months[hover] : null;
+
+  return (
+    <section className="rounded-xl border bg-card p-4">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="font-semibold">{t("finance.per_month")}</h2>
+        <div className="flex gap-4 text-xs text-muted-foreground" aria-hidden>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="size-2.5 rounded-sm bg-(--series-1)" /> {t("finance.income")}
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="size-2.5 rounded-sm bg-(--series-2)" /> {t("finance.expenses")}
+          </span>
+        </div>
+      </div>
+      <div className="relative">
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          className="h-auto w-full overflow-visible"
+          role="img"
+          aria-label={t("finance.per_month")}
+          onPointerLeave={() => setHover(null)}
+        >
+          {ticks.map((v) => (
+            <g key={v}>
+              <line
+                x1={left}
+                x2={W - right}
+                y1={y(v)}
+                y2={y(v)}
+                className="stroke-border"
+                strokeWidth={v ? 1 : 1.5}
+              />
+              <text
+                x={left - 8}
+                y={y(v)}
+                dy="0.32em"
+                textAnchor="end"
+                className="fill-muted-foreground text-[11px] tabular-nums"
+              >
+                {money(v, true)}
+              </text>
+            </g>
+          ))}
+          {months.map((m, i) => {
+            const cx = left + band * i + band / 2;
+            return (
+              <g key={m.month}>
+                {hover === i && (
+                  <rect
+                    x={left + band * i}
+                    y={topPad}
+                    width={band}
+                    height={plotH}
+                    className="fill-muted"
+                  />
+                )}
+                {/* 2px surface gap between the two bars of a month */}
+                <path
+                  d={barPath(cx - barW - 1, y(m.incomeCents), barW, y(0) - y(m.incomeCents))}
+                  fill="var(--series-1)"
+                />
+                <path
+                  d={barPath(cx + 1, y(m.expenseCents), barW, y(0) - y(m.expenseCents))}
+                  fill="var(--series-2)"
+                />
+                {i % labelEvery === 0 && (
+                  <text
+                    x={cx}
+                    y={H - 8}
+                    textAnchor="middle"
+                    className="fill-muted-foreground text-[11px]"
+                  >
+                    {monthName(m.month)}
+                  </text>
+                )}
+                {/* the hit target is the whole month, bigger than its bars */}
+                <rect
+                  x={left + band * i}
+                  y={topPad}
+                  width={band}
+                  height={plotH + bottom}
+                  fill="transparent"
+                  onPointerEnter={() => setHover(i)}
+                  onPointerDown={() => setHover(i)}
+                >
+                  <title>
+                    {`${monthName(m.month, "long")}: +${money(m.incomeCents)} / −${
+                      money(m.expenseCents)
+                    }`}
+                  </title>
+                </rect>
+              </g>
+            );
+          })}
+        </svg>
+        {hovered && (
+          <div
+            className="pointer-events-none absolute top-2 z-10 min-w-44 rounded-lg border bg-popover px-3 py-2 text-xs shadow-md"
+            style={{
+              left: `${((left + band * hover! + band / 2) / W) * 100}%`,
+              transform: hover! > months.length / 2
+                ? "translateX(calc(-100% - 12px))"
+                : "translateX(12px)",
+            }}
+          >
+            <div className="mb-1 font-semibold">{monthName(hovered.month, "long")}</div>
+            <Row
+              color="var(--series-1)"
+              label={t("finance.income")}
+              value={money(hovered.incomeCents)}
+            />
+            <Row
+              color="var(--series-2)"
+              label={t("finance.expenses")}
+              value={money(hovered.expenseCents)}
+            />
+            <div className="mt-1 flex justify-between gap-4 border-t pt-1">
+              <span className="text-muted-foreground">{t("finance.net")}</span>
+              <span className="font-medium tabular-nums">
+                {formatMoney(hovered.incomeCents - hovered.expenseCents, summary.currency, lang, {
+                  sign: true,
+                })}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+      <details className="mt-2 text-sm">
+        <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
+          {t("finance.as_table")}
+        </summary>
+        <table className="mt-2 w-full text-sm">
+          <thead className="text-left text-xs text-muted-foreground">
+            <tr>
+              <th className="py-1 font-medium">{t("finance.month")}</th>
+              <th className="py-1 text-right font-medium">{t("finance.income")}</th>
+              <th className="py-1 text-right font-medium">{t("finance.expenses")}</th>
+              <th className="py-1 text-right font-medium">{t("finance.net")}</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y tabular-nums">
+            {months.map((m) => (
+              <tr key={m.month}>
+                <td className="py-1">{monthName(m.month, "long")}</td>
+                <td className="py-1 text-right">{money(m.incomeCents)}</td>
+                <td className="py-1 text-right">{money(m.expenseCents)}</td>
+                <td className="py-1 text-right">
+                  {formatMoney(m.incomeCents - m.expenseCents, summary.currency, lang, {
+                    sign: true,
+                  })}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </details>
+    </section>
+  );
+}
+
+function Row({ color, label, value }: { color: string; label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+        <span className="size-2 rounded-sm" style={{ backgroundColor: color }} /> {label}
+      </span>
+      <span className="font-medium tabular-nums">{value}</span>
+    </div>
+  );
+}
+
+/** Where the money went (or came from): one bar per category, largest first. */
+function CategoryBreakdown({ summary }: { summary: FinanceSummary }) {
+  const finance = useFinance();
+  const lang = getLang();
+  const [kind, setKind] = useState<"expense" | "income">("expense");
+  const key = kind === "expense" ? "expenseCents" : "incomeCents";
+  const rows = summary.categories.filter((c) => c[key] > 0).sort((a, b) => b[key] - a[key]);
+  const total = rows.reduce((n, c) => n + c[key], 0);
+  const max = rows[0]?.[key] ?? 1;
+
+  return (
+    <section className="rounded-xl border bg-card p-4">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="font-semibold">{t("finance.by_category")}</h2>
+        <Tabs value={kind} onValueChange={(v) => setKind(v as "expense" | "income")}>
+          <TabsList className="h-8">
+            <TabsTrigger value="expense" className="text-xs">{t("finance.expenses")}</TabsTrigger>
+            <TabsTrigger value="income" className="text-xs">{t("finance.income")}</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </div>
+      {!rows.length && <p className="text-sm text-muted-foreground">{t("finance.no_data")}</p>}
+      <ul className="space-y-2.5">
+        {rows.map((c) => {
+          const cat = finance.categoryById(c.categoryId);
+          const share = Math.round((c[key] / total) * 100);
+          return (
+            <li
+              key={c.categoryId ?? "none"}
+              className="grid grid-cols-[minmax(7rem,12rem)_1fr_auto] items-center gap-3 text-sm"
+            >
+              <span className="truncate">
+                {cat ? `${cat.icon ? cat.icon + " " : ""}${cat.name}` : t("finance.uncategorized")}
+              </span>
+              <span className="h-3 overflow-hidden rounded-r-[4px]" title={`${share}%`}>
+                <span
+                  className="block h-full rounded-r-[4px] bg-(--series-1)"
+                  style={{ width: `${Math.max(1, (c[key] / max) * 100)}%` }}
+                />
+              </span>
+              <span className="text-right whitespace-nowrap tabular-nums">
+                {formatMoney(c[key], summary.currency, lang)}
+                <span className="ml-2 inline-block w-9 text-xs text-muted-foreground">
+                  {share}%
+                </span>
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}

@@ -46,14 +46,14 @@ const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 // Type ids come from slug() and uniqueId(); imports must look the same.
 const TYPE_ID_RE = /^[a-z0-9][a-z0-9-]{0,47}$/;
 
-function cleanColor(v: unknown): string {
+export function cleanColor(v: unknown): string {
   if (typeof v !== "string" || !COLOR_RE.test(v)) {
     throw new HttpError(400, "color must look like #22c55e");
   }
   return v.toLowerCase();
 }
 
-function cleanRole(v: unknown): Role {
+export function cleanRole(v: unknown): Role {
   if (v === undefined) return "none";
   if (!ROLES.includes(v as Role)) {
     throw new HttpError(400, `role must be one of ${ROLES.join(", ")}`);
@@ -67,7 +67,7 @@ function typesYear(url: URL, body: Record<string, unknown> = {}): number {
   return v === undefined ? currentYear() : cleanYear(v);
 }
 
-function uniqueId(base: string, taken: Set<string>): string {
+export function uniqueId(base: string, taken: Set<string>): string {
   let id = base;
   for (let i = 2; taken.has(id); i++) id = `${base}-${i}`;
   return id;
@@ -87,7 +87,7 @@ export function newFamilyTypes(raw: unknown, lang: Lang) {
 }
 
 /** Resolves a type reference given by id or (case-insensitive) name among a year's types. */
-function resolveType(types: TypeRow[], ref: unknown, year: number): TypeRow {
+export function resolveType(types: TypeRow[], ref: unknown, year: number): TypeRow {
   if (typeof ref !== "string") throw new HttpError(400, "type must be a string");
   const t = types.find((t) => t.year === year && t.id === ref) ??
     types.find((t) => t.year === year && t.name.toLowerCase() === ref.trim().toLowerCase());
@@ -464,24 +464,53 @@ async function entries({ store, req, url, method, loadWith }: Ctx): Promise<Resp
   }
   if (method !== "POST") throw new HttpError(405, "Method not allowed");
   const [{ family }, types] = await loadWith("edit", (id) => store.listTypes(id));
-  const { ops, total } = parseOps(await readBody(req), (o) => parseOp(o, types));
+  const { ops, total } = parseEntryOps(await readBody(req), types);
+  await applyEntryOps(store, family.id, ops);
+  return json({ ok: true, ops: ops.length, days: total });
+}
 
+export type EntryOps = ReturnType<typeof parseEntryOps>;
+
+/** Parses `{ops: [...]}` or one entry op against all types of the family. */
+export function parseEntryOps(body: Record<string, unknown>, types: TypeRow[]) {
+  return parseOps(body, (o) => parseOp(o, types));
+}
+
+export async function applyEntryOps(store: Store, familyId: string, ops: EntryOps["ops"]) {
   for (const { action, byYear } of ops) {
     for (const { types, days } of byYear) {
       if (action === "clear" || action === "set") {
-        await store.removeEntries(family.id, days);
+        await store.removeEntries(familyId, days);
       } else if (action === "remove") {
-        await store.removeEntries(family.id, days, types);
+        await store.removeEntries(familyId, days, types);
       }
       if ((action === "add" || action === "set") && types.length) {
         await store.addEntries(
-          family.id,
+          familyId,
           days.flatMap((day) => types.map((type_id) => ({ day, type_id }))),
         );
       }
     }
   }
-  return json({ ok: true, ops: ops.length, days: total });
+}
+
+/** Parses `{ops: [...]}` or one note op. */
+export function parseNoteOps(body: Record<string, unknown>) {
+  return parseOps(body, parseNoteOp);
+}
+
+export async function applyNoteOps(
+  store: Store,
+  familyId: string,
+  ops: ReturnType<typeof parseNoteOps>["ops"],
+) {
+  for (const { icon, comment, days } of ops) {
+    if (icon || comment) {
+      await store.upsertNotes(familyId, days.map((day) => ({ day, icon, comment })));
+    } else {
+      await store.removeNotes(familyId, days);
+    }
+  }
 }
 
 async function notes({ store, req, url, method, load, loadWith }: Ctx): Promise<Response> {
@@ -492,13 +521,7 @@ async function notes({ store, req, url, method, load, loadWith }: Ctx): Promise<
   }
   if (method !== "POST") throw new HttpError(405, "Method not allowed");
   const { family } = await load("edit");
-  const { ops, total } = parseOps(await readBody(req), parseNoteOp);
-  for (const { icon, comment, days } of ops) {
-    if (icon || comment) {
-      await store.upsertNotes(family.id, days.map((day) => ({ day, icon, comment })));
-    } else {
-      await store.removeNotes(family.id, days);
-    }
-  }
+  const { ops, total } = parseNoteOps(await readBody(req));
+  await applyNoteOps(store, family.id, ops);
   return json({ ok: true, ops: ops.length, days: total });
 }

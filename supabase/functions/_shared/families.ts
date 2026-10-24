@@ -2,7 +2,7 @@
 // agents. The calendar itself is in vacation.ts.
 
 import { buildAgentDoc } from "./agent.ts";
-import type { Ctx, Loaded } from "./context.ts";
+import { ACCESS_RANK, type Ctx, type Loaded } from "./context.ts";
 import { formatDate } from "./dates.ts";
 import {
   cleanLang,
@@ -18,6 +18,7 @@ import {
   slug,
 } from "./http.ts";
 import type { Lang } from "./ics.ts";
+import { copyFinance, defaultCategories, exportFinance, parseFinanceImport } from "./finance.ts";
 import type { FamilyPatch, FamilyRow, Store } from "./store.ts";
 import {
   groupEntries,
@@ -38,9 +39,11 @@ const DEFAULT_NAME: Record<Lang, string> = { en: "Family", de: "Familie" };
 const EXPORT_FORMAT = "family-planner";
 /** Files exported before the rename; same content. */
 const OLD_EXPORT_FORMAT = "vacation-planner";
-const EXPORT_VERSION = 1;
+/** 2 adds the finances; files of version 1 only have the calendar. */
+const EXPORT_VERSION = 2;
 
-/** How often the web app refreshes an open family (web/js/app.js POLL_MS), for the AI page. */
+/** How often the app refreshes an open family (POLL_MS in app/src/features/vacation/store.ts),
+ *  for the AI page. */
 const APP_REFRESH_SECONDS = 15;
 
 /** Links that rotate: the view link, the feed link, and the legacy link (only removed). */
@@ -85,8 +88,18 @@ function familyState(loaded: Loaded, range: Range, data: VacationData) {
   return { family, session: family, ...vacationState(range, data) };
 }
 
-/** The whole family as a file: all years, types, entries and notes, but never its ids. */
-function exportData(family: FamilyRow, [types, rows, notes]: VacationData) {
+/** Whether the link may see the finances (the legacy link only opens the calendar). */
+function seesFinance({ access }: Loaded) {
+  return ACCESS_RANK[access] >= ACCESS_RANK.view;
+}
+
+/** The whole family as a file: all years, types, entries and notes, and the finances if the
+ *  link may see them, but never its ids. */
+function exportData(
+  family: FamilyRow,
+  [types, rows, notes]: VacationData,
+  finance?: Awaited<ReturnType<typeof exportFinance>>,
+) {
   return {
     format: EXPORT_FORMAT,
     version: EXPORT_VERSION,
@@ -95,17 +108,23 @@ function exportData(family: FamilyRow, [types, rows, notes]: VacationData) {
     types: types.map(publicType),
     entries: groupEntries(rows),
     notes: notesMap(notes),
+    ...(finance ? { finance } : {}),
   };
 }
 
-function parseImport(body: Record<string, unknown>) {
+/** A file without finances (version 1, or exported with the legacy link) leaves them as
+ *  they are. */
+function parseImport(body: Record<string, unknown>, familyId: string) {
   if (body.format !== EXPORT_FORMAT && body.format !== OLD_EXPORT_FORMAT) {
     throw new HttpError(400, "Not a Family Planner export");
   }
-  if (body.version !== EXPORT_VERSION) {
+  if (body.version !== 1 && body.version !== EXPORT_VERSION) {
     throw new HttpError(400, `Unsupported export version ${body.version}`);
   }
-  return parseVacationImport(body);
+  return {
+    ...parseVacationImport(body),
+    finance: body.finance === undefined ? undefined : parseFinanceImport(body.finance, familyId),
+  };
 }
 
 /** POST /families: a new family with the presets (or the body's types) in one year. */
@@ -119,6 +138,7 @@ export async function createFamily(store: Store, req: Request, url: URL): Promis
   const types = newFamilyTypes(body.types, lang)
     .map((t, i) => ({ ...t, family_id: family.id, year, position: i }));
   await store.createFamily(family, types);
+  await store.upsertCategories(defaultCategories(family.id, lang));
   return json(familyState({ family, access: "edit" }, {}, [types, [], []]), 201);
 }
 
@@ -178,11 +198,13 @@ async function rotateLink({ store, req, url, loadWith }: Ctx): Promise<Response>
 }
 
 async function agent({ store, token, publicBase, loadWith }: Ctx): Promise<Response> {
-  const [{ family, access }, types] = await loadWith("calendar", (id) => store.listTypes(id));
+  const [loaded, types] = await loadWith("calendar", (id) => store.listTypes(id));
+  const { family, access } = loaded;
   const doc = buildAgentDoc({
     base: publicBase,
     token,
     readOnly: access !== "edit",
+    finance: seesFinance(loaded),
     family,
     types,
     today: formatDate(new Date()),
@@ -197,10 +219,11 @@ async function agent({ store, token, publicBase, loadWith }: Ctx): Promise<Respo
  *  may clone too: they can read all of that anyway. */
 async function clone({ store, req, loadWith }: Ctx): Promise<Response> {
   const body = await readBody(req);
-  const [{ family: source }, [types, rows, notes]] = await loadWith(
+  const [loaded, [types, rows, notes]] = await loadWith(
     "calendar",
     (id) => listVacation(store, id, {}),
   );
+  const source = loaded.family;
   const family = newFamilyRow(
     body.name === undefined ? copyName(source.name) : cleanName(body.name),
   );
@@ -208,13 +231,16 @@ async function clone({ store, req, loadWith }: Ctx): Promise<Response> {
   await store.createFamily(family, copies);
   await store.addEntries(family.id, rows);
   await store.upsertNotes(family.id, notes);
+  if (seesFinance(loaded)) await copyFinance(store, source.id, family.id);
   return json(familyState({ family, access: "edit" }, {}, [copies, rows, notes]), 201);
 }
 
 /** Read-only links may export too: they can read all of that anyway. */
 async function exportFamily({ store, loadWith }: Ctx): Promise<Response> {
-  const [{ family }, data] = await loadWith("calendar", (id) => listVacation(store, id, {}));
-  return json(exportData(family, data), 200, {
+  const [loaded, data] = await loadWith("calendar", (id) => listVacation(store, id, {}));
+  const { family } = loaded;
+  const finance = seesFinance(loaded) ? await exportFinance(store, family.id) : undefined;
+  return json(exportData(family, data, finance), 200, {
     ...NO_STORE,
     "content-disposition": `attachment; filename="${slug(family.name)}.json"`,
   });
@@ -226,9 +252,9 @@ async function importFamily({ store, req, url, load }: Ctx): Promise<Response> {
   const range = rangeFromQuery(url);
   const loaded = await load("edit");
   const { family } = loaded;
-  const data = parseImport(await readBody(req));
+  const data = parseImport(await readBody(req), family.id);
   const types = data.types.map((t) => ({ ...t, family_id: family.id }));
-  await store.replaceContents(family.id, types, data.entries, data.notes);
+  await store.replaceContents(family.id, types, data.entries, data.notes, data.finance);
   const updated = { ...family, updated_at: new Date().toISOString() };
   return json(
     familyState({ ...loaded, family: updated }, range, await listVacation(store, family.id, range)),

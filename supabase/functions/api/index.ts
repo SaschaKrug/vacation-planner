@@ -20,6 +20,8 @@ const hashAddress = addressHasher(key);
 
 Deno.serve(createHandler(new SupabaseStore(db), {
   publicBase,
+  // Encrypts the families' AI keys; set with `supabase secrets set AI_CONFIG_KEY=...`.
+  aiSecret: Deno.env.get("AI_CONFIG_KEY") || undefined,
   rateLimiter: new SupabaseRateLimiter(db),
   clientKey: (req) => hashAddress(clientAddress(req)),
 }));

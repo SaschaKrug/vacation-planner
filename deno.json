@@ -9,13 +9,25 @@
     "exclude": [
       "README.md",
       "supabase/migrations/",
-      "web/index.html",
-      "web/styles.css"
+      "app/node_modules/",
+      "app/dist/",
+      "app/src/components/ui/",
+      "app/src/hooks/",
+      "app/src/index.css",
+      "app/index.html",
+      "app/package.json",
+      "app/package-lock.json",
+      "app/components.json",
+      "app/tsconfig*.json"
     ]
   },
   "lint": {
     "exclude": [
-      "web/config.js"
+      "app/node_modules/",
+      "app/dist/",
+      "app/src/components/ui/",
+      "app/src/hooks/",
+      "app/public/config.js"
     ],
     "rules": {
       "exclude": [

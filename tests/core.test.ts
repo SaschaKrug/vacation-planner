@@ -2,6 +2,7 @@ import { assertEquals } from "jsr:@std/assert@1";
 import {
   applyNotes,
   changedNotesOnly,
+  type EntryType,
   fillWith,
   gapDays,
   parseClipboardText,
@@ -14,9 +15,9 @@ import {
   toNoteOps,
   toOps,
   yearDays,
-} from "../web/js/core.js";
+} from "../app/src/lib/core.ts";
 
-const types = [
+const types: EntryType[] = [
   { id: "holiday", name: "Holiday", color: "#f59e0b", role: "day_off" },
   { id: "vac-a", name: "Vacation A", color: "#22c55e", role: "covers" },
   { id: "vac-b", name: "Vacation B", color: "#3b82f6", role: "covers" },
