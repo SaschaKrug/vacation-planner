@@ -231,39 +231,6 @@ const STRINGS: Record<Lang, Dict> = {
     "copy": "Copy",
     "close": "Close",
 
-    // AI dialog
-    "ai.title": "Let an AI manage this family's calendar",
-    "ai.intro":
-      "Point an AI agent at one link: it explains the calendar and the API, so the agent can read and change entries, types and notes for you. Changes show up here within seconds.",
-    "ai.readonly": "This is a view-only link, so the AI can only read the calendar.",
-    "ai.quickstart": "Quickstart",
-    "ai.quickstart_help":
-      "Copy this prompt into an AI agent that can send HTTP requests, e.g. Claude Code, Codex or ChatGPT agent mode.",
-    "ai.prompt_text":
-      "Read {url} – it explains how to view and change my family's vacation calendar. Then help me plan with it.",
-    "ai.prompt_text_readonly":
-      "Read {url} – it explains how to view my family's vacation calendar. Then answer my questions about it.",
-    "ai.prompt": "Prompt",
-    "ai.copy": "Copy prompt",
-    "ai.warning":
-      "Like the edit link, this link is the key: anyone who has it – including the AI service – can change the calendar.",
-
-    // API dialog
-    "api.intro":
-      "Fill entries from scripts, shortcuts or other tools. Types can be referenced by id or name and belong to a year: a day uses the types of its year. The session id in the URL is the access key.",
-    "api.read": "Read the calendar (types, entries and notes of a year)",
-    "api.add": "Add “{name}” from Aug 3 to Aug 14, skipping weekends",
-    "api.ops": "Several operations at once (actions: add | remove | set | clear)",
-    "api.notes": "Icon and comment on days (set replaces a day's note, clear removes it)",
-    "api.types": "Entry types of a year (every year has its own; copy them into another year)",
-    "api.feed": "Calendar feed (read-only id works too). Optional: ?types=a,b&gaps=1&notes=1",
-    "api.new": "New family",
-    "api.ex_vacation": "Vacation",
-    "api.ex_needs": "Day care closed",
-    "api.ex_rename": "Vacation Dad",
-    "api.ex_planner": "Family {year}",
-    "api.ex_note": "Christmas",
-
     // help dialog
     "help.title": "How it works",
     "help.tap": "Tap",
@@ -329,7 +296,6 @@ const STRINGS: Record<Lang, Dict> = {
     "settings.general": "General",
     "settings.sharing": "Sharing",
     "settings.vacation": "Vacation",
-    "settings.integrations": "Integrations",
     "settings.data": "Data",
     "settings.family_scope": "For the whole family",
     "settings.device_scope": "Only on this device",
@@ -369,8 +335,6 @@ const STRINGS: Record<Lang, Dict> = {
       "Replaces all years, types, entries and notes of this family with an exported file; the name and the links stay. Can't be undone.",
     "data.clone_help": "A copy of this family with all its data and its own new links.",
     "data.imported": "Imported",
-    "integrations.ai": "AI agents",
-    "integrations.api": "API for scripts",
     // ---- Finance
     "settings.finance": "Finance",
     "finance.calendar_only":
@@ -759,40 +723,6 @@ const STRINGS: Record<Lang, Dict> = {
     "copy": "Kopieren",
     "close": "Schließen",
 
-    "ai.title": "Den Kalender der Familie von einer KI verwalten lassen",
-    "ai.intro":
-      "Gib einem KI-Agenten einen einzigen Link: Er erklärt den Kalender und die API, damit der Agent Einträge, Arten und Notizen für dich lesen und ändern kann. Änderungen erscheinen hier nach wenigen Sekunden.",
-    "ai.readonly": "Das ist ein Nur-Lese-Link, die KI kann den Kalender also nur lesen.",
-    "ai.quickstart": "Schnellstart",
-    "ai.quickstart_help":
-      "Kopiere diesen Prompt in einen KI-Agenten, der HTTP-Anfragen senden kann, z. B. Claude Code, Codex oder den ChatGPT-Agentenmodus.",
-    "ai.prompt_text":
-      "Lies {url} – dort steht, wie du den Urlaubskalender meiner Familie ansehen und ändern kannst. Hilf mir dann bei der Planung.",
-    "ai.prompt_text_readonly":
-      "Lies {url} – dort steht, wie du den Urlaubskalender meiner Familie ansehen kannst. Beantworte mir dann Fragen dazu.",
-    "ai.prompt": "Prompt",
-    "ai.copy": "Prompt kopieren",
-    "ai.warning":
-      "Wie der Bearbeitungslink ist dieser Link der Schlüssel: Wer ihn hat – auch der KI-Dienst –, kann den Kalender ändern.",
-
-    "api.intro":
-      "Einträge aus Skripten, Kurzbefehlen oder anderen Tools füllen. Arten können über ID oder Namen angegeben werden und gehören zu einem Jahr: Ein Tag nutzt die Arten seines Jahres. Die Session-ID in der URL ist der Zugangsschlüssel.",
-    "api.read": "Kalender lesen (Arten, Einträge und Notizen eines Jahres)",
-    "api.add": "„{name}“ vom 3. bis 14. Aug. eintragen, ohne Wochenenden",
-    "api.ops": "Mehrere Operationen auf einmal (Aktionen: add | remove | set | clear)",
-    "api.notes":
-      "Symbol und Kommentar an Tagen (set ersetzt die Notiz eines Tages, clear entfernt sie)",
-    "api.types":
-      "Eintragsarten eines Jahres (jedes Jahr hat eigene; in ein anderes Jahr übernehmen)",
-    "api.feed":
-      "Kalender-Feed (Nur-Lese-ID geht auch). Optional: ?types=a,b&gaps=1&notes=1&lang=de",
-    "api.new": "Neue Familie",
-    "api.ex_vacation": "Urlaub",
-    "api.ex_needs": "Kita geschlossen",
-    "api.ex_rename": "Urlaub Papa",
-    "api.ex_planner": "Familie {year}",
-    "api.ex_note": "Weihnachten",
-
     "help.title": "So funktioniert's",
     "help.tap": "Tippen",
     "help.tap_do": "Tag auswählen; ein anderer Tag verschiebt die Auswahl",
@@ -859,7 +789,6 @@ const STRINGS: Record<Lang, Dict> = {
     "settings.general": "Allgemein",
     "settings.sharing": "Teilen",
     "settings.vacation": "Urlaub",
-    "settings.integrations": "Integrationen",
     "settings.data": "Daten",
     "settings.family_scope": "Für die ganze Familie",
     "settings.device_scope": "Nur auf diesem Gerät",
@@ -899,8 +828,6 @@ const STRINGS: Record<Lang, Dict> = {
       "Ersetzt alle Jahre, Arten, Einträge und Notizen dieser Familie durch eine exportierte Datei; Name und Links bleiben. Lässt sich nicht rückgängig machen.",
     "data.clone_help": "Eine Kopie dieser Familie mit allen Daten und eigenen, neuen Links.",
     "data.imported": "Importiert",
-    "integrations.ai": "KI-Agenten",
-    "integrations.api": "API für Skripte",
     // ---- Finance
     "settings.finance": "Finanzen",
     "finance.calendar_only":
