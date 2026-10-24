@@ -78,5 +78,5 @@ jobs:
           publish_dir: ./web
           force_orphan: true
           # Keeps the custom domain (force_orphan would otherwise drop the CNAME file).
-          cname: vacation-planner.fa-krug.de
+          cname: family-planner.fa-krug.de
           commit_message: "Deploy ${{ github.sha }}"

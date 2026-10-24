@@ -9,9 +9,9 @@ const s = (n, one, other) => (n === 1 ? one : other);
 
 const STRINGS = {
   en: {
-    "app.title": "Vacation Planner",
+    "app.title": "Family Planner",
     "app.description":
-      "Year calendar for planning vacation, holidays and day-care closures. Share it with a link and subscribe in iCloud.",
+      "Plan your family's year: vacation, holidays and day-care closures in one shared calendar. Share it with a link and subscribe in iCloud.",
     "lang.label": "Language",
     "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
     "weekdays": ["S", "M", "T", "W", "T", "F", "S"],
@@ -214,9 +214,9 @@ const STRINGS = {
     "ai.quickstart_help":
       "Copy this prompt into an AI agent that can send HTTP requests, e.g. Claude Code, Codex or ChatGPT agent mode.",
     "ai.prompt_text":
-      "Read {url} – it explains how to view and change my vacation planner. Then help me plan with it.",
+      "Read {url} – it explains how to view and change my family's vacation calendar. Then help me plan with it.",
     "ai.prompt_text_readonly":
-      "Read {url} – it explains how to view my vacation planner. Then answer my questions about it.",
+      "Read {url} – it explains how to view my family's vacation calendar. Then answer my questions about it.",
     "ai.prompt": "Prompt",
     "ai.copy": "Copy prompt",
     "ai.warning":
@@ -280,9 +280,9 @@ const STRINGS = {
   },
 
   de: {
-    "app.title": "Urlaubsplaner",
+    "app.title": "Familienplaner",
     "app.description":
-      "Jahreskalender zum Planen von Urlaub, Feiertagen und Kita-Schließtagen. Per Link teilen und in iCloud abonnieren.",
+      "Plane das Jahr deiner Familie: Urlaub, Feiertage und Kita-Schließtage in einem gemeinsamen Kalender. Per Link teilen und in iCloud abonnieren.",
     "lang.label": "Sprache",
     "months": ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"],
     "weekdays": ["S", "M", "D", "M", "D", "F", "S"],
@@ -485,9 +485,9 @@ const STRINGS = {
     "ai.quickstart_help":
       "Kopiere diesen Prompt in einen KI-Agenten, der HTTP-Anfragen senden kann, z. B. Claude Code, Codex oder den ChatGPT-Agentenmodus.",
     "ai.prompt_text":
-      "Lies {url} – dort steht, wie du meinen Urlaubsplaner ansehen und ändern kannst. Hilf mir dann bei der Planung.",
+      "Lies {url} – dort steht, wie du den Urlaubskalender meiner Familie ansehen und ändern kannst. Hilf mir dann bei der Planung.",
     "ai.prompt_text_readonly":
-      "Lies {url} – dort steht, wie du meinen Urlaubsplaner ansehen kannst. Beantworte mir dann Fragen dazu.",
+      "Lies {url} – dort steht, wie du den Urlaubskalender meiner Familie ansehen kannst. Beantworte mir dann Fragen dazu.",
     "ai.prompt": "Prompt",
     "ai.copy": "Prompt kopieren",
     "ai.warning":

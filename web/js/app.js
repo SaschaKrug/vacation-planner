@@ -156,7 +156,7 @@ function rememberSession() {
 function readCache() {
   const list = storage(() => JSON.parse(localStorage.getItem(CACHE_KEY)), null);
   return Array.isArray(list)
-    ? list.filter((e) => Array.isArray(e) && e[1]?.session && e[1].types && e[1].entries)
+    ? list.filter((e) => Array.isArray(e) && e[1]?.family && e[1].types && e[1].entries)
     : [];
 }
 
@@ -257,8 +257,8 @@ async function flush() {
 }
 
 function applyResponse(data, json = JSON.stringify(data)) {
-  state.session = data.session;
-  state.readOnly = data.session.readOnly;
+  state.session = data.family;
+  state.readOnly = data.family.readOnly;
   state.types = data.types;
   state.typeYears = data.typeYears ?? null;
   state.entries = new Map(Object.entries(data.entries));
@@ -1495,7 +1495,7 @@ function feedUrl() {
   if ($("feed-gaps").checked) params.gaps = "1";
   if ($("feed-notes").checked) params.notes = "1";
   if (lang !== "en") params.lang = lang;
-  return api.calendarUrl(state.session.readId, params);
+  return api.calendarUrl(state.session.feedId, params);
 }
 
 function updateFeedLinks() {
@@ -1508,7 +1508,9 @@ function openShareDialog() {
   const s = state.session;
   $("share-edit").hidden = state.readOnly;
   if (!state.readOnly) $("link-edit").value = pageUrl({ s: s.id });
-  $("link-view").value = pageUrl({ s: s.readId });
+  // The view id of a planner from before families only opens the calendar, so it doesn't get
+  // to see the new view id: it shares itself.
+  $("link-view").value = pageUrl({ s: s.readId ?? state.token });
   const box = $("feed-types");
   box.textContent = "";
   for (const type of state.types) {
@@ -1556,24 +1558,24 @@ function openAiDialog() {
 }
 
 function openApiDialog() {
-  const base = api.calendarUrl("x").replace(/\/sessions\/x\/calendar\.ics$/, "");
+  const base = api.calendarUrl("x").replace(/\/families\/x\/calendar\.ics$/, "");
   const id = state.readOnly ? "<edit-id>" : state.session.id;
   const type = state.types.find((x) => x.role === "covers") ?? state.types[0];
   const typeRef = type?.id ?? "vacation";
   const y = state.year;
   $("api-docs").textContent = `BASE=${base}
-SESSION=${id}
+FAMILY=${id}
 
 # ${t("api.read")}
-curl "$BASE/sessions/$SESSION?year=${y}"
+curl "$BASE/families/$FAMILY?year=${y}"
 
 # ${t("api.add", { name: type?.name ?? t("api.ex_vacation") })}
-curl -X POST "$BASE/sessions/$SESSION/entries" \\
+curl -X POST "$BASE/families/$FAMILY/entries" \\
   -H "content-type: application/json" \\
   -d '{"action":"add","type":"${typeRef}","from":"${y}-08-03","to":"${y}-08-14","skipWeekends":true}'
 
 # ${t("api.ops")}
-curl -X POST "$BASE/sessions/$SESSION/entries" \\
+curl -X POST "$BASE/families/$FAMILY/entries" \\
   -H "content-type: application/json" \\
   -d '{"ops":[
         {"action":"remove","type":"${typeRef}","dates":["${y}-08-07"]},
@@ -1582,7 +1584,7 @@ curl -X POST "$BASE/sessions/$SESSION/entries" \\
       ]}'
 
 # ${t("api.notes")}
-curl -X POST "$BASE/sessions/$SESSION/notes" \\
+curl -X POST "$BASE/families/$FAMILY/notes" \\
   -H "content-type: application/json" \\
   -d '{"ops":[
         {"action":"set","dates":["${y}-12-25"],"icon":"🎄","comment":"${t("api.ex_note")}"},
@@ -1590,20 +1592,20 @@ curl -X POST "$BASE/sessions/$SESSION/notes" \\
       ]}'
 
 # ${t("api.types")}
-curl "$BASE/sessions/$SESSION/types?year=${y}"
-curl -X POST "$BASE/sessions/$SESSION/types?year=${y}" -H "content-type: application/json" \\
+curl "$BASE/families/$FAMILY/types?year=${y}"
+curl -X POST "$BASE/families/$FAMILY/types?year=${y}" -H "content-type: application/json" \\
   -d '{"name":"${t("api.ex_needs")}","color":"#8b5cf6","role":"needs_cover"}'
-curl -X PATCH "$BASE/sessions/$SESSION/types/${typeRef}?year=${y}" \\
+curl -X PATCH "$BASE/families/$FAMILY/types/${typeRef}?year=${y}" \\
   -H "content-type: application/json" -d '{"name":"${t("api.ex_rename")}","color":"#22c55e"}'
-curl -X DELETE "$BASE/sessions/$SESSION/types/<type-id>?year=${y}"
-curl -X POST "$BASE/sessions/$SESSION/types/copy" -H "content-type: application/json" \\
+curl -X DELETE "$BASE/families/$FAMILY/types/<type-id>?year=${y}"
+curl -X POST "$BASE/families/$FAMILY/types/copy" -H "content-type: application/json" \\
   -d '{"from":${y},"to":${y + 1}}'
 
 # ${t("api.feed")}
-curl "$BASE/sessions/${state.session.readId}/calendar.ics"
+curl "$BASE/families/${state.session.feedId}/calendar.ics"
 
 # ${t("api.new")}
-curl -X POST "$BASE/sessions" -H "content-type: application/json" \\
+curl -X POST "$BASE/families" -H "content-type: application/json" \\
   -d '{"name":"${t("api.ex_planner", { year: y })}"${lang === "en" ? "" : `,"lang":"${lang}"`}}'`;
   $("dlg-api").showModal();
 }
@@ -1702,7 +1704,7 @@ async function createPlanner() {
   btn.disabled = true;
   try {
     const data = await api.createSession({ lang, year: state.year });
-    location.href = pageUrl({ s: data.session.id });
+    location.href = pageUrl({ s: data.family.id });
   } catch (err) {
     toast(rateLimited(err) ?? t("toast.create_failed", { msg: err.message }), 5000);
     btn.disabled = false;
@@ -1724,7 +1726,7 @@ async function clonePlanner() {
     // Names are limited to 80 characters; leave room for the " (copy)" suffix.
     const copy = t("clone.name", { name: name.slice(0, 70) });
     const data = await api.cloneSession(state.token, copy);
-    location.href = pageUrl({ s: data.session.id, y: state.year });
+    location.href = pageUrl({ s: data.family.id, y: state.year });
   } catch (err) {
     toast(rateLimited(err) ?? t("toast.clone_failed", { msg: err.message }), 5000);
   }
@@ -1758,7 +1760,10 @@ async function importPlanner(file) {
   } catch {
     // handled below
   }
-  if (data?.format !== "vacation-planner") return toast(t("toast.import_invalid"), 5000);
+  // "vacation-planner": files exported before the rename.
+  if (!["family-planner", "vacation-planner"].includes(data?.format)) {
+    return toast(t("toast.import_invalid"), 5000);
+  }
   if (!confirm(t("import.confirm", { name: state.session.name, file: file.name }))) return;
   setSync("sync.saving");
   try {

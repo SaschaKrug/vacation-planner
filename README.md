@@ -1,9 +1,11 @@
-# Vacation Planner
+# Family Planner
 
-A shared year calendar for planning vacation, public holidays, sick days and day-care
-closures, with a coverage check, a REST API and an iCloud / Apple Calendar feed.
+One place per family to plan the year. Today that's a shared year calendar for vacation, public
+holidays, sick days and day-care closures, with a coverage check, a REST API and an iCloud /
+Apple Calendar feed. Finances and an AI assistant are next (see
+[the plan](docs/family-planner-plan.md)).
 
-**Live:** https://vacation-planner.fa-krug.de/
+**Live:** https://family-planner.fa-krug.de/
 
 - All days of a year as 12 rows × 31 days; pick the year at the top. Phones show one calendar
   per month instead (Monday to Sunday), with the type chips and the actions for the selected
@@ -28,11 +30,12 @@ closures, with a coverage check, a REST API and an iCloud / Apple Calendar feed.
   range; *Multi-select* lets taps add or remove single days (and long-press ranges add to the
   selection).
 - **Undo / redo:** “Undo” / “Redo” in the ⋯ menu, or `Ctrl/⌘+Z` / `Ctrl/⌘+Y`.
-- No login: every planner has a secret **edit link** (`?s=<id>`) and a separate **view-only link**.
-  Anyone with the edit link can change it, so only share it with people who should.
+- No login: every family has a secret **edit link** (`?s=<id>`) and a separate **view-only link**.
+  Anyone with the edit link can change it, so only share it with people who should. The
+  calendar feed has an id of its own (see [Links](#links)).
 - **iCloud:** *Share* → *Calendar & iCloud* → *Subscribe on this device*, or on a Mac: Calendar → File →
-  New Calendar Subscription → paste the feed URL → Location **iCloud**. The feed uses the
-  view-only id, so it never exposes the edit link.
+  New Calendar Subscription → paste the feed URL → Location **iCloud**. The feed URL opens
+  nothing but the feed, so it never exposes the edit or view link.
 - **Let an AI agent manage it:** *✨ AI* gives a ready-to-paste prompt with one link for an AI
   agent that can send HTTP requests (Claude Code, Codex, ChatGPT agent mode …). The link returns
   instructions with the planner's types and ready-to-use API URLs; the agent then reads and
@@ -81,6 +84,8 @@ migrations → Edge Function → frontend to the `gh-pages` branch.
 
 2. **GitHub Pages** – *Settings → Pages → Build and deployment*: Source **Deploy from a branch**,
    Branch **gh-pages** / **(root)**. (Only needed once, after the first deploy created the branch.)
+   The custom domain `family-planner.fa-krug.de` comes from the workflow (`cname:`); its DNS
+   needs a `CNAME` record pointing to `saschakrug.github.io`.
 
 3. Run the workflow: *Actions → Deploy → Run workflow* (or push to `main`).
 
@@ -95,8 +100,8 @@ deleted. Over the limit, it answers `429` with a `Retry-After` header.
 
 | What | Limit |
 | --- | --- |
-| New planners (`POST /sessions`, `…/clone`) per client | 20 per hour |
-| New planners of all clients together | 500 per hour |
+| New families (`POST /families`, `…/clone`) per client | 20 per hour |
+| New families of all clients together | 500 per hour |
 | Changes (`POST`, `PATCH`, `DELETE`) per client | 300 per 5 minutes |
 
 Reads, including the calendar feed, are not limited: iCloud fetches every subscription from a
@@ -117,17 +122,20 @@ No database needed: the dev server runs the real API handler on an in-memory sto
 | Option | Effect |
 | --- | --- |
 | `--persist` | Keeps the data in `.dev/data.json` across restarts (delete the file to start over) |
-| `--seed` | Adds a *Demo family* planner with types, entries, notes and uncovered days in this and next year, if there are no planners yet |
-| `--rate-limit` | Low rate limits (3 new planners, 30 changes per minute) to try the app's 429 handling |
+| `--seed` | Adds a *Demo family* with types, entries, notes and uncovered days in this and next year, if there are no families yet |
+| `--rate-limit` | Low rate limits (3 new families, 30 changes per minute) to try the app's 429 handling |
 
-On start, the server prints the edit and view links of all planners it holds.
+On start, the server prints the edit and view links of all families it holds.
 
 ## API
 
 Base URL: `https://<project-ref>.supabase.co/functions/v1/api` (*⋯* → *API for scripts* in the app
-shows ready-to-run examples for your planner). The session id from the edit link is the access
-key; the view-only id can only read. Types can be referenced by id or by name
-(case-insensitive). Dates are `YYYY-MM-DD`.
+shows ready-to-run examples for your family). The family id from the edit link is the access
+key; the other links can only read (see [Links](#links)). Types can be referenced by id or by
+name (case-insensitive). Dates are `YYYY-MM-DD`.
+
+`/sessions/...` is the name from before families and works as an alias of `/families/...`
+everywhere, so existing calendar subscriptions and scripts keep working.
 
 Every year has its own entry types, and a day can only use the types of its year: a reference
 like `"type": "vacation"` is resolved in the year of each day. The types endpoints work on one
@@ -136,36 +144,51 @@ working across years.
 
 | Method & path | Description |
 | --- | --- |
-| `POST /sessions` | Create a planner. Body (optional): `{"name": "...", "year": 2026, "types": [{"name","color","role"}]}`; the types go into `year` (default: current year); `"lang": "de"` gives German default types and name |
-| `GET /sessions/{id}?year=2026` | Planner, the year's types, entries and notes, and `typeYears` (all years with types). `?from=&to=` also works; no filter = all |
-| `PATCH /sessions/{id}` | Rename: `{"name": "..."}` |
-| `POST /sessions/{id}/clone` | Copy the planner (all years, types, entries, notes) into a new one with new ids. Body (optional): `{"name": "..."}`, default *“… (copy)”*. The view-only id works too |
-| `GET /sessions/{id}/export` | The whole planner as a file: `{"format": "vacation-planner", "version": 1, "name", "types": [...], "entries": {...}, "notes": {...}}`, all years, without the planner's ids. The view-only id works too |
-| `POST /sessions/{id}/import?year=2026` | Replace all years, types, entries and notes with those of an export file (the body), in one transaction; name and ids stay. Returns the planner like `GET /sessions/{id}` |
-| `GET /sessions/{id}/entries?year=2026` | `{"2026-08-03": ["vacation", "day-care-closed"], ...}` |
-| `POST /sessions/{id}/entries` | Change entries (see below) |
-| `GET /sessions/{id}/notes?year=2026` | `{"2026-12-25": {"icon": "🎄", "comment": "Christmas"}, ...}` |
-| `POST /sessions/{id}/notes` | Set or clear day notes (see below) |
-| `GET /sessions/{id}/types?year=2026` | List the year's entry types |
-| `POST /sessions/{id}/types?year=2026` | Add a type to the year: `{"name", "color": "#rrggbb", "role"}` (`"year"` in the body works too) |
-| `PATCH /sessions/{id}/types/{type}?year=2026` | Change `name`, `color`, `role`, `position` |
-| `DELETE /sessions/{id}/types/{type}?year=2026` | Delete a type and all its entries in that year |
-| `POST /sessions/{id}/types/copy` | Copy a year's types into another year: `{"from": 2026, "to": 2027}`; types the target year already has (same id) are kept |
-| `GET /sessions/{id}/calendar.ics` | iCalendar feed. `?types=a,b` filters (by id or name, in every year), `?gaps=1` adds “⚠ Not covered” events, `?notes=1` adds day notes as events, `?name=` overrides the calendar name, `?lang=de` German event texts |
+| `POST /families` | Create a family. Body (optional): `{"name": "...", "year": 2026, "types": [{"name","color","role"}]}`; the types go into `year` (default: current year); `"lang": "de"` gives German default types and name |
+| `GET /families/{id}?year=2026` | `family` (the links this id may know, `name`, `access`), the year's types, entries and notes, and `typeYears` (all years with types). `?from=&to=` also works; no filter = all. The same object is also in `session`, for scripts from before families |
+| `PATCH /families/{id}` | Rename: `{"name": "..."}` |
+| `POST /families/{id}/links` | New link: `{"link": "view"}` or `{"link": "feed"}` makes a new view or feed id (the old one stops working); `{"link": "legacy"}` removes the legacy view link. Returns the family like `GET /families/{id}` |
+| `POST /families/{id}/clone` | Copy the family (all years, types, entries, notes) into a new one with new ids. Body (optional): `{"name": "..."}`, default *“… (copy)”*. The view-only id works too |
+| `GET /families/{id}/export` | The whole family as a file: `{"format": "family-planner", "version": 1, "name", "types": [...], "entries": {...}, "notes": {...}}`, all years, without the family's ids. The view-only id works too |
+| `POST /families/{id}/import?year=2026` | Replace all years, types, entries and notes with those of an export file (the body), in one transaction; name and ids stay. Files with `"format": "vacation-planner"` (exported before the rename) work too. Returns the family like `GET /families/{id}` |
+| `GET /families/{id}/entries?year=2026` | `{"2026-08-03": ["vacation", "day-care-closed"], ...}` |
+| `POST /families/{id}/entries` | Change entries (see below) |
+| `GET /families/{id}/notes?year=2026` | `{"2026-12-25": {"icon": "🎄", "comment": "Christmas"}, ...}` |
+| `POST /families/{id}/notes` | Set or clear day notes (see below) |
+| `GET /families/{id}/types?year=2026` | List the year's entry types |
+| `POST /families/{id}/types?year=2026` | Add a type to the year: `{"name", "color": "#rrggbb", "role"}` (`"year"` in the body works too) |
+| `PATCH /families/{id}/types/{type}?year=2026` | Change `name`, `color`, `role`, `position` |
+| `DELETE /families/{id}/types/{type}?year=2026` | Delete a type and all its entries in that year |
+| `POST /families/{id}/types/copy` | Copy a year's types into another year: `{"from": 2026, "to": 2027}`; types the target year already has (same id) are kept |
+| `GET /families/{id}/calendar.ics` | iCalendar feed. `?types=a,b` filters (by id or name, in every year), `?gaps=1` adds “⚠ Not covered” events, `?notes=1` adds day notes as events, `?name=` overrides the calendar name, `?lang=de` German event texts |
 
-| `GET /sessions/{id}/agent` | Instructions for AI agents (Markdown) with this planner's types and API URLs |
+| `GET /families/{id}/agent` | Instructions for AI agents (Markdown) with this family's types and API URLs |
 
 Roles: `none`, `needs_cover`, `covers`, `day_off`.
+
+### Links
+
+Every family has several ids; each one is a link with its own access:
+
+| Id | In `family` | Can |
+| --- | --- | --- |
+| Edit id | `id` | Everything |
+| View id | `readId` | Read everything, export, clone |
+| Feed id | `feedId` | Only `calendar.ics` |
+| Legacy id | `legacyId` | Read the calendar, its feed, export, clone. Only planners from before families have one: their old view id, so links and calendar subscriptions shared back then keep working without ever seeing anything that's new in families (like finances) |
+
+`family.access` says which one opened the family (`edit`, `view` or `calendar` for the legacy
+id); a response only names the ids that link may know.
 
 ### Changing entries
 
 ```sh
 # Vacation from Aug 3 to Aug 14, weekdays only
-curl -X POST "$BASE/sessions/$SESSION/entries" -H "content-type: application/json" \
+curl -X POST "$BASE/families/$FAMILY/entries" -H "content-type: application/json" \
   -d '{"action":"add","type":"vacation","from":"2026-08-03","to":"2026-08-14","skipWeekends":true}'
 
 # Several operations, applied in order
-curl -X POST "$BASE/sessions/$SESSION/entries" -H "content-type: application/json" \
+curl -X POST "$BASE/families/$FAMILY/entries" -H "content-type: application/json" \
   -d '{"ops":[
         {"action":"remove","type":"vacation","dates":["2026-08-07"]},
         {"action":"set","types":["holiday"],"dates":["2026-12-24","2026-12-31"]},
@@ -187,7 +210,7 @@ Days are given as `dates` (array), `date`, and/or an inclusive `from`/`to` range
 
 ```sh
 # 🎄 Christmas on Dec 24–26, and clear a note
-curl -X POST "$BASE/sessions/$SESSION/notes" -H "content-type: application/json" \
+curl -X POST "$BASE/families/$FAMILY/notes" -H "content-type: application/json" \
   -d '{"ops":[
         {"action":"set","icon":"🎄","comment":"Christmas","from":"2026-12-24","to":"2026-12-26"},
         {"action":"clear","dates":["2026-12-31"]}

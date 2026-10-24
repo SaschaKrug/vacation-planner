@@ -1,4 +1,4 @@
-// Fixed-window request counters, so the API can limit how fast one client creates planners
+// Fixed-window request counters, so the API can limit how fast one client creates families
 // and writes. Edge Function instances come and go and don't share memory, so production
 // counts in Postgres; tests and the dev server count in memory.
 

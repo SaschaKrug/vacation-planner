@@ -1,4 +1,4 @@
-// Thin client for the planner API (Supabase Edge Function "api").
+// Thin client for the Family Planner API (Supabase Edge Function "api").
 
 const base = (window.VP_CONFIG?.apiBase ?? "/api").replace(/\/+$/, "");
 
@@ -28,26 +28,26 @@ async function request(method, path, body) {
 const enc = encodeURIComponent;
 
 export const api = {
-  createSession: (body = {}) => request("POST", "/sessions", body),
-  getSession: (token, year) => request("GET", `/sessions/${enc(token)}?year=${year}`),
-  renameSession: (token, name) => request("PATCH", `/sessions/${enc(token)}`, { name }),
-  cloneSession: (token, name) => request("POST", `/sessions/${enc(token)}/clone`, { name }),
-  exportSession: (token) => request("GET", `/sessions/${enc(token)}/export`),
+  createSession: (body = {}) => request("POST", "/families", body),
+  getSession: (token, year) => request("GET", `/families/${enc(token)}?year=${year}`),
+  renameSession: (token, name) => request("PATCH", `/families/${enc(token)}`, { name }),
+  cloneSession: (token, name) => request("POST", `/families/${enc(token)}/clone`, { name }),
+  exportSession: (token) => request("GET", `/families/${enc(token)}/export`),
   importSession: (token, year, file) =>
-    request("POST", `/sessions/${enc(token)}/import?year=${year}`, file),
+    request("POST", `/families/${enc(token)}/import?year=${year}`, file),
   addType: (token, year, type) =>
-    request("POST", `/sessions/${enc(token)}/types?year=${year}`, type),
+    request("POST", `/families/${enc(token)}/types?year=${year}`, type),
   updateType: (token, year, id, patch) =>
-    request("PATCH", `/sessions/${enc(token)}/types/${enc(id)}?year=${year}`, patch),
+    request("PATCH", `/families/${enc(token)}/types/${enc(id)}?year=${year}`, patch),
   deleteType: (token, year, id) =>
-    request("DELETE", `/sessions/${enc(token)}/types/${enc(id)}?year=${year}`),
+    request("DELETE", `/families/${enc(token)}/types/${enc(id)}?year=${year}`),
   copyTypes: (token, from, to) =>
-    request("POST", `/sessions/${enc(token)}/types/copy`, { from, to }),
-  applyOps: (token, ops) => request("POST", `/sessions/${enc(token)}/entries`, { ops }),
-  applyNoteOps: (token, ops) => request("POST", `/sessions/${enc(token)}/notes`, { ops }),
-  agentUrl: (token) => `${apiBase()}/sessions/${enc(token)}/agent`,
-  calendarUrl: (readId, params) => {
+    request("POST", `/families/${enc(token)}/types/copy`, { from, to }),
+  applyOps: (token, ops) => request("POST", `/families/${enc(token)}/entries`, { ops }),
+  applyNoteOps: (token, ops) => request("POST", `/families/${enc(token)}/notes`, { ops }),
+  agentUrl: (token) => `${apiBase()}/families/${enc(token)}/agent`,
+  calendarUrl: (feedId, params) => {
     const qs = new URLSearchParams(params).toString();
-    return `${apiBase()}/sessions/${enc(readId)}/calendar.ics${qs ? "?" + qs : ""}`;
+    return `${apiBase()}/families/${enc(feedId)}/calendar.ics${qs ? "?" + qs : ""}`;
   },
 };

@@ -1,7 +1,7 @@
 // Local development server: serves web/ and the API with an in-memory store.
 //   deno task dev                ->  http://localhost:8787
 //   deno task dev --persist      keep the data in .dev/data.json across restarts
-//   deno task dev --seed         add a demo planner if there is none yet
+//   deno task dev --seed         add a demo family if there is none yet
 //   deno task dev --rate-limit   enforce low rate limits, to see the app's 429 handling
 import { parseArgs } from "jsr:@std/cli@1/parse-args";
 import { createHandler, type RateLimits } from "../supabase/functions/_shared/handler.ts";
@@ -21,7 +21,7 @@ const TYPES: Record<string, string> = {
   svg: "image/svg+xml",
 };
 
-// Low enough to hit by hand: a few new planners, or a minute of fast clicking.
+// Low enough to hit by hand: a few new families, or a minute of fast clicking.
 const DEV_LIMITS: RateLimits = {
   create: { max: 3, seconds: 60 },
   createAll: { max: 10, seconds: 60 },
@@ -59,7 +59,7 @@ async function handleApi(req: Request) {
   return res;
 }
 
-/** Fills a demo planner through the API, so it is built exactly like one made in the app. */
+/** Fills a demo family through the API, so it is built exactly like one made in the app. */
 async function seed() {
   const call = async (method: string, path: string, body: unknown) => {
     const res = await handleApi(
@@ -74,7 +74,7 @@ async function seed() {
     return data;
   };
   const y = new Date().getFullYear();
-  const { session } = await call("POST", "/sessions", {
+  const { family } = await call("POST", "/families", {
     name: "Demo family",
     year: y,
     types: [
@@ -85,7 +85,7 @@ async function seed() {
       { name: "Sick", color: "#ef4444", role: "none" },
     ],
   });
-  const s = `/sessions/${session.id}`;
+  const s = `/families/${family.id}`;
   await call("POST", `${s}/types/copy`, { from: y, to: y + 1 });
   // Aug 20/21 and Dec 24 stay uncovered, so the coverage check has something to show.
   await call("POST", `${s}/entries`, {
@@ -110,9 +110,9 @@ async function seed() {
   });
 }
 
-if (args.seed && store.sessions.size === 0) await seed();
+if (args.seed && store.families.size === 0) await seed();
 
-Deno.serve({ port, onListen: () => listPlanners() }, async (req) => {
+Deno.serve({ port, onListen: () => listFamilies() }, async (req) => {
   const { pathname } = new URL(req.url);
   if (pathname === "/api" || pathname.startsWith("/api/")) return handleApi(req);
   const file = pathname === "/" ? "index.html" : pathname.slice(1);
@@ -128,13 +128,13 @@ Deno.serve({ port, onListen: () => listPlanners() }, async (req) => {
   }
 });
 
-function listPlanners() {
+function listFamilies() {
   const flags = [
     args.persist && "data in .dev/data.json",
     args["rate-limit"] && "low rate limits",
   ].filter(Boolean);
-  console.log(`Vacation planner on ${origin}${flags.length ? ` (${flags.join(", ")})` : ""}`);
-  for (const s of store.sessions.values()) {
-    console.log(`  ${s.name}: edit ${origin}/?s=${s.id}  view ${origin}/?s=${s.read_id}`);
+  console.log(`Family Planner on ${origin}${flags.length ? ` (${flags.join(", ")})` : ""}`);
+  for (const f of store.families.values()) {
+    console.log(`  ${f.name}: edit ${origin}/?s=${f.id}  view ${origin}/?s=${f.read_id}`);
   }
 }
