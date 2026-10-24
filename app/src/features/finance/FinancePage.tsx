@@ -102,6 +102,11 @@ export function FinancePage() {
   );
 }
 
+// Account cards and stat tiles share one grid and one tile shape, so the two rows line up.
+const tileGrid = "grid grid-cols-3 gap-2 sm:gap-3";
+const tileBox = "min-w-0 rounded-xl border bg-card p-2.5 text-left sm:px-4 sm:py-3";
+const tileValue = "mt-0.5 truncate text-[13px] font-semibold tabular-nums sm:text-xl";
+
 /** Income, expenses and the difference, as headline numbers. */
 export function StatTiles(
   { income, expense, currency }: { income: number; expense: number; currency: string },
@@ -109,59 +114,88 @@ export function StatTiles(
   const lang = getLang();
   const net = income - expense;
   const tiles = [
-    { label: t("finance.income"), value: formatMoney(income, currency, lang) },
-    { label: t("finance.expenses"), value: formatMoney(expense, currency, lang) },
+    {
+      label: t("finance.income"),
+      dot: "bg-(--series-1)",
+      value: formatMoney(income, currency, lang),
+    },
+    {
+      label: t("finance.expenses"),
+      dot: "bg-(--series-2)",
+      value: formatMoney(expense, currency, lang),
+    },
     {
       label: t("finance.net"),
       value: formatMoney(net, currency, lang, { sign: true }),
+      negative: net < 0,
       hint: income > 0 ? t("finance.savings_rate", { n: Math.round((net / income) * 100) }) : "",
     },
   ];
   return (
-    <div className="grid grid-cols-3 gap-2 sm:gap-3">
+    <div className={tileGrid}>
       {tiles.map((tile) => (
-        <div key={tile.label} className="rounded-xl border bg-card px-3 py-2.5 sm:px-4 sm:py-3">
-          <div className="text-xs text-muted-foreground">{tile.label}</div>
-          <div className="mt-0.5 truncate text-sm font-semibold tabular-nums sm:text-xl">
-            {tile.value}
+        <div key={tile.label} className={tileBox}>
+          <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+            {tile.dot && <span className={cn("size-2.5 shrink-0 rounded-sm", tile.dot)} />}
+            <span className="truncate">{tile.label}</span>
+            {tile.hint && <span className="ml-auto shrink-0 max-sm:hidden">{tile.hint}</span>}
           </div>
-          {tile.hint && <div className="text-xs text-muted-foreground">{tile.hint}</div>}
+          <div className={cn(tileValue, tile.negative && "text-gap")}>{tile.value}</div>
+          {tile.hint && (
+            <div className="truncate text-xs text-muted-foreground sm:hidden">{tile.hint}</div>
+          )}
         </div>
       ))}
     </div>
   );
 }
 
-/** The accounts with their balances; picking one shows only its transactions. */
+/** The accounts with their balances; picking one shows only its transactions. With several
+ *  accounts a total comes first, and picking it shows them all again. */
 function AccountCards() {
   const finance = useFinance();
   const lang = getLang();
   const active = finance.filter.account;
+  const cards = finance.accounts.map((a) => ({
+    id: a.id,
+    label: `${a.icon ? `${a.icon} ` : ""}${a.name}`,
+    color: a.color as string | undefined,
+    cents: a.balanceCents,
+  }));
+  if (cards.length > 1) {
+    cards.unshift({
+      id: "",
+      label: t("finance.all_accounts"),
+      color: undefined,
+      cents: cards.reduce((sum, c) => sum + c.cents, 0),
+    });
+  }
   return (
-    <div className="flex gap-2 overflow-x-auto pb-1 sm:gap-3">
-      {finance.accounts.map((a) => (
+    <div className={tileGrid}>
+      {cards.map((c) => (
         <button
-          key={a.id}
+          key={c.id || "all"}
           type="button"
-          aria-pressed={active === a.id}
+          aria-pressed={active === c.id}
           title={t("finance.balance")}
           className={cn(
-            "w-40 shrink-0 rounded-xl border bg-card px-3 py-2.5 text-left transition-colors hover:bg-accent sm:w-48 sm:px-4 sm:py-3",
-            active === a.id && "border-primary ring-1 ring-primary",
+            tileBox,
+            "transition-colors hover:bg-accent",
+            c.id && active === c.id && "border-primary ring-1 ring-primary",
           )}
-          onClick={() => finance.setFilter({ account: active === a.id ? "" : a.id })}
+          onClick={() => finance.setFilter({ account: active === c.id ? "" : c.id })}
         >
           <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-            <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: a.color }} />
-            <span className="truncate">{a.icon ? `${a.icon} ` : ""}{a.name}</span>
-          </div>
-          <div
-            className={cn(
-              "mt-0.5 truncate text-sm font-semibold tabular-nums sm:text-lg",
-              a.balanceCents < 0 && "text-gap",
+            {c.color && (
+              <span
+                className="size-2.5 shrink-0 rounded-full"
+                style={{ backgroundColor: c.color }}
+              />
             )}
-          >
-            {formatMoney(a.balanceCents, finance.currency, lang)}
+            <span className="truncate">{c.label}</span>
+          </div>
+          <div className={cn(tileValue, c.cents < 0 && "text-gap")}>
+            {formatMoney(c.cents, finance.currency, lang)}
           </div>
         </button>
       ))}
