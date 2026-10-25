@@ -579,6 +579,7 @@ const STRINGS: Record<Lang, Dict> = {
     "chat.detail.until": "until {d}",
     "chat.detail.from_row": "from row {n}",
     "chat.detail.changes": ({ n }) => `${n} ${s(n, "change", "changes")}`,
+    "chat.detail.queries": ({ n }) => `${n} ${s(n, "query", "queries")}`,
     "ai_settings.edit_only": "The AI assistant can only be set up and used with the edit link.",
     "ai_settings.server_not_ready":
       "The server has no AI_CONFIG_KEY yet, so it can't store API keys. Add it as described in the README (a keyless local model still works).",
@@ -1326,6 +1327,7 @@ const STRINGS: Record<Lang, Dict> = {
     "chat.detail.until": "bis {d}",
     "chat.detail.from_row": "ab Zeile {n}",
     "chat.detail.changes": ({ n }) => `${n} ${s(n, "Änderung", "Änderungen")}`,
+    "chat.detail.queries": ({ n }) => `${n} ${s(n, "Abfrage", "Abfragen")}`,
     "ai_settings.edit_only":
       "Der KI-Assistent lässt sich nur mit dem Bearbeitungslink einrichten und nutzen.",
     "ai_settings.server_not_ready":

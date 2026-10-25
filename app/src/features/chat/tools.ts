@@ -104,7 +104,13 @@ export function toolDetail(item: ToolItem): string {
     }
     case "analyze_transactions":
     case "list_transactions": {
-      parts.push(span(date(a.from), date(a.to)));
+      // Several analyses in one call: the days they cover together, and how many.
+      const queries = (Array.isArray(a.queries) ? a.queries : []).filter(
+        (q): q is Args => !!q && typeof q === "object",
+      );
+      if (queries.length) {
+        parts.push(opsSpan(queries.map((q) => ({ from: q.from ?? a.from, to: q.to ?? a.to }))));
+      } else parts.push(span(date(a.from), date(a.to)));
       if (str(a.q)) parts.push(quoted(str(a.q)));
       if (str(a.account) === "none") parts.push(t("finance.no_account"));
       else parts.push(named(a.account));
@@ -115,6 +121,7 @@ export function toolDetail(item: ToolItem): string {
       if (a.kind === "transfer") parts.push(t("finance.transfers"));
       const offset = Math.floor(Number(a.offset)) || 0;
       if (offset > 0) parts.push(t("chat.detail.from_row", { n: offset + 1 }));
+      if (queries.length) parts.push(t("chat.detail.queries", { n: queries.length }));
       break;
     }
     case "change_entries": {
