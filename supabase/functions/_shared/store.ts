@@ -154,9 +154,9 @@ export interface Store {
   /** Deletes the account and its transactions; returns those transactions. Parts of a deleted
    *  booking on other accounts become normal transactions. */
   deleteAccount(familyId: string, id: string): Promise<TransactionRow[]>;
-  /** Sum of all transactions (all time) per account id, for the balances. Parts of split
-   *  bookings don't count: their booking does. */
-  accountTotals(familyId: string): Promise<Map<string, number>>;
+  /** Sum of all transactions (all time, or up to and including the day `until`) per account
+   *  id, for the balances. Parts of split bookings don't count: their booking does. */
+  accountTotals(familyId: string, until?: string): Promise<Map<string, number>>;
   /** Transactions in the range (all without one), newest first. */
   listTransactions(familyId: string, from?: string, to?: string): Promise<TransactionRow[]>;
   getTransactions(familyId: string, ids: string[]): Promise<TransactionRow[]>;
@@ -375,10 +375,10 @@ export class MemoryStore implements Store {
     return Promise.resolve(gone);
   }
 
-  accountTotals(familyId: string) {
+  accountTotals(familyId: string, until?: string) {
     const totals = new Map<string, number>();
     for (const t of this.transactions.get(familyId)?.values() ?? []) {
-      if (t.account_id && !t.split_of) {
+      if (t.account_id && !t.split_of && !(until && t.day > until)) {
         totals.set(t.account_id, (totals.get(t.account_id) ?? 0) + t.amount_cents);
       }
     }

@@ -514,7 +514,7 @@ export const TOOLS: Record<string, Tool> = {
     spec: {
       name: "finance_summary",
       description:
-        "Income and expenses (integer cents) per month and per category between two days (a transfer between the family's accounts counts once by its net), plus the currency, the categories and the accounts with their current balances.",
+        "Income and expenses (integer cents) per month and per category between two days (a transfer between the family's accounts counts once by its net), plus the currency, the categories and the accounts with their current balances (balanceCents) and their balances at the end of `to` (balanceAtToCents).",
       parameters: {
         type: "object",
         properties: { from: { type: "string" }, to: { type: "string" } },
@@ -523,13 +523,18 @@ export const TOOLS: Record<string, Tool> = {
     },
     async run(args, { store, familyId }) {
       const { from, to } = range(args);
-      const [summary, categories, accounts] = await Promise.all([
+      const [summary, categories, accounts, atTo] = await Promise.all([
         financeSummary(store, familyId, from, to),
         store.listCategories(familyId),
         listAccounts(store, familyId),
+        store.accountTotals(familyId, to),
       ]);
+      const withAtTo = accounts.map((a) => ({
+        ...a,
+        balanceAtToCents: a.openingCents + (atTo.get(a.id) ?? 0),
+      }));
       return {
-        result: { ...summary, categoryNames: categories.map(publicCategory), accounts },
+        result: { ...summary, categoryNames: categories.map(publicCategory), accounts: withAtTo },
         summary: `${from} – ${to}`,
       };
     },

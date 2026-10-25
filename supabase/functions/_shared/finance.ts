@@ -294,11 +294,11 @@ export function publicAccount(a: AccountRow, totals: Map<string, number>) {
   };
 }
 
-/** The accounts with their balances. */
-export async function listAccounts(store: Store, familyId: string) {
+/** The accounts with their balances: now, or at the end of the day `at`. */
+export async function listAccounts(store: Store, familyId: string, at?: string) {
   const [accounts, totals] = await Promise.all([
     store.listAccounts(familyId),
-    store.accountTotals(familyId),
+    store.accountTotals(familyId, at),
   ]);
   return accounts.map((a) => publicAccount(a, totals));
 }
@@ -1030,6 +1030,7 @@ async function categoriesRoute(ctx: Ctx, id: string | undefined): Promise<Respon
 
 async function accountsRoute(ctx: Ctx, id: string | undefined): Promise<Response> {
   const { store, req, method, load } = ctx;
+  if (id === undefined && method === "GET") return accountsAtRoute(ctx);
   const { family } = await load("edit");
   const accounts = await store.listAccounts(family.id);
   const body = await readBody(req);
@@ -1080,6 +1081,15 @@ async function accountsRoute(ctx: Ctx, id: string | undefined): Promise<Response
     }
   }
   throw new HttpError(405, "Method not allowed");
+}
+
+/** GET /finance/accounts?at=YYYY-MM-DD: the accounts with their balances at the end of that
+ *  day (opening balance plus the transactions up to it); without `at`, now. */
+async function accountsAtRoute({ store, url, load }: Ctx): Promise<Response> {
+  const { family } = await load("view");
+  const at = url.searchParams.get("at") ?? undefined;
+  if (at !== undefined && !isValidDate(at)) throw new HttpError(400, "at must be YYYY-MM-DD");
+  return json({ at: at ?? null, accounts: await listAccounts(store, family.id, at) });
 }
 
 /** A validated range; without from or to it is open on that side. */

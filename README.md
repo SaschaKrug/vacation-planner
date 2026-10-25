@@ -51,7 +51,9 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   by category (or *Uncategorized*) and by in / out; change a category right in the list. Every
   change can be undone from its message.
 - **Accounts:** bank accounts, cash or cards, each with an opening balance; a transaction can
-  belong to one. The balances show above the list (click one to see only its transactions).
+  belong to one. The balances show above the list (click one to see only its transactions):
+  for a past month or year the balances at its end, with today's below them; for the running
+  one today's.
 - **Transfers between your own accounts count as 0:** combine related transactions (tick them,
   *Combine as transfer*) and they count once, by their sum: 500 out of one account and 500 into
   another is nothing, 500 out and 480 in is a 20 expense. *Find transfers* suggests pairs (the
@@ -261,6 +263,7 @@ changing the edit id.
 | `GET /families/{id}/finance` | `{"currency", "csvMappings", "accounts": [{"id", "name", "color", "icon", "openingCents", "position", "balanceCents"}], "categories": [{"id", "name", "color", "icon", "kind", "position"}]}` |
 | `DELETE /families/{id}/finance` | Delete all transactions, accounts, categories, saved CSV mappings and the currency; returns the (empty) overview |
 | `PATCH /families/{id}/finance/settings` | `{"currency": "EUR"}` (ISO 4217) and/or `{"csvMappings": [...]}` |
+| `GET /families/{id}/finance/accounts?at=YYYY-MM-DD` | `{"at", "accounts": [...]}`: the accounts with their balances at the end of that day (opening balance plus the transactions up to it); without `at`, now |
 | `POST /families/{id}/finance/accounts` | Add `{"name", "color", "icon", "openingCents"}` |
 | `PATCH` / `DELETE /families/{id}/finance/accounts/{account}` | Change or delete (deletes its transactions too; the response has their count); by id or name |
 | `POST /families/{id}/finance/categories` | Add `{"name", "color", "icon", "kind": "income" \| "expense" \| "both"}` |
