@@ -71,8 +71,8 @@ export function DataSection() {
     }
   }
 
-  /** Copies the family (all years) into a new one with its own links and opens it. Works
-   *  from a view-only link too, which gives the viewer an editable copy. */
+  /** Copies the family (all years) into a new one, with the user as its editor, and opens it.
+   *  Viewers can clone too, which gives them an editable copy. */
   async function clone() {
     if (store.pending) return toast(t("toast.wait_saving"));
     if (

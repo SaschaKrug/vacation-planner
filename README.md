@@ -71,7 +71,9 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   by category (or *Uncategorized*) and by in / out; change a category right in the list. Every
   change can be undone from its message.
 - **Accounts:** bank accounts, cash or cards, each with an opening balance; a transaction can
-  belong to one. The balances show above the list (click one to see only its transactions).
+  belong to one. The balances show above the list (click one to see only its transactions):
+  for a past month or year the balances at its end, with today's below them; for the running
+  one today's.
 - **Transfers between your own accounts count as 0:** combine related transactions (tick them,
   *Combine as transfer*) and they count once, by their sum: 500 out of one account and 500 into
   another is nothing, 500 out and 480 in is a 20 expense. *Find transfers* suggests pairs (the
@@ -82,8 +84,9 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   parts count with their own categories, the booking only with what they leave over (shipping),
   so nothing counts twice and the totals match the statement; balances count the booking.
   *Auto-combine* (and the import) first finds them: order lines without a payee that name an
-  order (“Bestellnr. 306-…”) become parts of the booking of the same day and account that names
-  that order too, and a booking marked “Splitbuchung” takes the transactions of the same day,
+  order (“Bestellnr. 306-…”) all become parts of the booking on the same account that names that
+  order too (of the same day, or else the closest day at most 4 days away; a booking already
+  split takes the lines it is still missing), and a booking marked “Splitbuchung” takes the transactions of the same day,
   account and merchant as its parts.
 - **Import bank statements (CSV):** the import guesses the format (UTF-8 or Windows-1252,
   separator, lines before the table, which column is the date, amount or debit / credit,
@@ -92,8 +95,9 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   again; identical rows on one day (two coffees) stay apart. Pick the account the statement
   belongs to; transfers to and from the family's other accounts can be combined right away.
   The format, account and that choice are remembered per bank.
-- **Overview:** income, expenses and the balance, a chart per month and the spending (or
-  income) per category, also as a table.
+- **Overview:** for the chosen month, year or all time: income, expenses and the balance, the
+  spending (or income) per category and, for a year or all time, a chart per month, also as a
+  table.
 - Viewers see the finances read-only; the calendar feed never shows them.
 
 ### AI assistant
@@ -107,6 +111,17 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   and **reads pages**. Every change shows up in the chat with **Undo**; bigger changes (more than
   31 days, deleting types, categories or transactions) need the user's OK first. *Allow changes*
   off makes it read-only.
+- **Calculations and analytics:** the assistant doesn't add up numbers itself. *Analyze
+  transactions* gives exact totals and statistics (count, income, expenses, net, average,
+  median, min, max, standard deviation) per month, quarter, year, week, weekday, day, category,
+  account, payee (similar spellings together) or income / expense, up to two at once (e.g. per
+  month and category), counted like all totals (transfers by their net, split bookings by
+  their parts); grouped by one, also the average and median group (e.g. the average month,
+  empty months counting as 0). *Count calendar
+  days* gives days per entry type, year, month or weekday, optionally only weekdays and without
+  vacation days on public holidays. *Calculate* evaluates expressions (no code is run):
+  arithmetic, lists, percentiles, trends and forecasts, and loans and savings like a
+  spreadsheet (`pmt`, `fv`, `pv`, `nper`, `npv`, `irr`, `cagr`).
 - **Attach** images (screenshots, photos) and text files (e.g. CSV) to a message; images need a
   model with vision support.
 - **Auto-categorize** on the finance page sorts the period's uncategorized transactions into
@@ -297,6 +312,7 @@ change.
 | `GET /families/{id}/finance` | `{"currency", "csvMappings", "accounts": [{"id", "name", "color", "icon", "openingCents", "position", "balanceCents"}], "categories": [{"id", "name", "color", "icon", "kind", "position"}]}` |
 | `DELETE /families/{id}/finance` | Delete all transactions, accounts, categories, saved CSV mappings and the currency; returns the (empty) overview |
 | `PATCH /families/{id}/finance/settings` | `{"currency": "EUR"}` (ISO 4217) and/or `{"csvMappings": [...]}` |
+| `GET /families/{id}/finance/accounts?at=YYYY-MM-DD` | `{"at", "accounts": [...]}`: the accounts with their balances at the end of that day (opening balance plus the transactions up to it); without `at`, now |
 | `POST /families/{id}/finance/accounts` | Add `{"name", "color", "icon", "openingCents"}` |
 | `PATCH` / `DELETE /families/{id}/finance/accounts/{account}` | Change or delete (deletes its transactions too; the response has their count); by id or name |
 | `POST /families/{id}/finance/categories` | Add `{"name", "color", "icon", "kind": "income" \| "expense" \| "both"}` |

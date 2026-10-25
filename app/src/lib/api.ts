@@ -443,11 +443,12 @@ export const api = {
     token: string,
     id: string,
     patch: Partial<Omit<Account, "id" | "balanceCents">>,
-  ) =>
-    request<Account>(
-      "PATCH",
-      `${fam(token)}/finance/accounts/${enc(id)}`,
-      patch,
+  ) => request<Account>("PATCH", `${fam(token)}/finance/accounts/${enc(id)}`, patch),
+  /** The accounts with their balances at the end of the day `at`. */
+  accountsAt: (token: string, at: string) =>
+    request<{ at: string; accounts: Account[] }>(
+      "GET",
+      `${fam(token)}/finance/accounts?${new URLSearchParams({ at })}`,
     ),
   deleteAccount: (token: string, id: string) =>
     request<{ deleted: string }>(

@@ -4,7 +4,7 @@
 // family's own accounts: totals count such a group once, by its net. A transaction can also be
 // a part of another one, its booking (a split booking, like an Amazon "Splitbuchung" whose order
 // lines the bank lists too): totals count the parts and what is left of the booking (see
-// netItems). Reading needs the view link, changing the edit link.
+// netItems). Viewers and editors read, editors change.
 
 import type { Ctx } from "./context.ts";
 import { addDays, diffDays, isValidDate } from "./dates.ts";
@@ -294,11 +294,11 @@ export function publicAccount(a: AccountRow, totals: Map<string, number>) {
   };
 }
 
-/** The accounts with their balances. */
-export async function listAccounts(store: Store, familyId: string) {
+/** The accounts with their balances: now, or at the end of the day `at`. */
+export async function listAccounts(store: Store, familyId: string, at?: string) {
   const [accounts, totals] = await Promise.all([
     store.listAccounts(familyId),
-    store.accountTotals(familyId),
+    store.accountTotals(familyId, at),
   ]);
   return accounts.map((a) => publicAccount(a, totals));
 }
@@ -612,24 +612,54 @@ function inSplit(t: TransactionRow, splits: Splits): boolean {
  * in) counts. A split booking's parts count with their own amounts and categories, and the
  * booking only with what is left of it, so the totals still match the statement.
  */
-export function netItems(rows: TransactionRow[], { groups, splits }: Links) {
-  const out: { day: string; amountCents: number; categoryId: string | null }[] = [];
+export function netItems(rows: TransactionRow[], { groups, splits }: Links): NetItem[] {
+  const out: NetItem[] = [];
+  const item = (t: TransactionRow, amountCents: number, categoryId: string | null) => ({
+    day: t.day,
+    amountCents,
+    categoryId,
+    accountId: t.account_id,
+    payee: t.payee,
+    description: t.description,
+  });
   for (const t of rows) {
     const parts = splits.get(t.id);
     const legs = groupOf(t, groups);
     if (parts) {
       const rest = remainderOf(t, parts);
-      if (rest !== 0) out.push({ day: t.day, amountCents: rest, categoryId: t.category_id });
+      if (rest !== 0) out.push(item(t, rest, t.category_id));
     } else if (!legs) {
-      out.push({ day: t.day, amountCents: t.amount_cents, categoryId: t.category_id });
+      out.push(item(t, t.amount_cents, t.category_id));
     } else if (legs[0].id === t.id) {
       const net = netOf(t, groups);
       if (net === 0) continue;
-      const categoryId = legs.find((l) => l.category_id)?.category_id ?? null;
-      out.push({ day: t.day, amountCents: net, categoryId });
+      out.push(item(t, net, legs.find((l) => l.category_id)?.category_id ?? null));
     }
   }
   return out;
+}
+
+/** What one transaction (or transfer group, or what is left of a split booking) counts as;
+ *  payee, description and account are those of the transaction (a group's lead leg). */
+export type NetItem = {
+  day: string;
+  amountCents: number;
+  categoryId: string | null;
+  accountId: string | null;
+  payee: string;
+  description: string;
+};
+
+/**
+ * What makes transactions "similar": the first words of the payee (or, without one, of the
+ * description), without numbers, punctuation and case, so "REWE Markt 1234 Berlin" and
+ * "Rewe Markt 5678 Berlin" match.
+ */
+export function similarKey(t: { payee: string; description: string }): string {
+  const words = (s: string) =>
+    s.toLowerCase().replace(/[^\p{L}\s]+/gu, " ").split(/\s+/).filter((w) => w.length > 1);
+  const payee = words(t.payee);
+  return (payee.length ? payee : words(t.description)).slice(0, 3).join(" ");
 }
 
 function netTotals(items: { amountCents: number }[]) {
@@ -683,10 +713,14 @@ function wordsOf(t: TransactionRow): string[] {
  * Splits `left` among `bookings` (of one day and account): with several bookings, each first
  * takes the parts that add up to it exactly. The parts left over go to the one booking without
  * an exact match, if there is just one: all of them if they add up to at most its amount in the
- * same direction (the rest being shipping, say), else the ones that add up to it exactly (an
- * order line listed twice stays out).
+ * same direction (the rest being shipping, say), else the ones that add up to it exactly.
+ * `all` gives every part left over to that booking (or else the largest one) all the same.
  */
-function assignParts(bookings: TransactionRow[], left: TransactionRow[]): SplitMatch[] {
+function assignParts(
+  bookings: TransactionRow[],
+  left: TransactionRow[],
+  all = false,
+): SplitMatch[] {
   bookings = [...bookings].sort((a, b) =>
     Math.abs(b.amount_cents) - Math.abs(a.amount_cents) || byLead(a, b)
   );
@@ -701,7 +735,12 @@ function assignParts(bookings: TransactionRow[], left: TransactionRow[]): SplitM
       left = left.filter((t) => !parts.includes(t));
     }
   }
-  if (unmatched.length !== 1 || !left.length) return out;
+  if (!left.length) return out;
+  if (all) {
+    const booking = unmatched.length === 1 ? unmatched[0] : bookings[0];
+    return [...out, { booking, parts: left }];
+  }
+  if (unmatched.length !== 1) return out;
   const [booking] = unmatched;
   const sum = left.reduce((s, t) => s + t.amount_cents, 0);
   const fits = Math.sign(sum) === Math.sign(booking.amount_cents) &&
@@ -713,15 +752,19 @@ function assignParts(bookings: TransactionRow[], left: TransactionRow[]): SplitM
 
 /**
  * Split bookings by order number: order lines without a payee that name an order ("Bestellnr.
- * 306-…") are the parts of the transaction with a payee of the same day and account that names
- * the same order (the bank's booking, "AMAZON PAYMENTS EUROPE S.C.A." with the order number).
+ * 306-…") are the parts of a transaction with a payee on the same account that names the same
+ * order (the bank's booking, "AMAZON PAYMENTS EUROPE S.C.A." with the order number): of the
+ * same day, or else of the closest day at most TRANSFER_DAYS away. All of them, even when they
+ * add up to more than the booking (an order line listed twice, a discount), as the bank books
+ * only the booking; the booking's remainder evens it out, so totals match the statement. A
+ * booking in `booked` (one with parts already) takes more parts.
  */
-function matchOrders(rows: TransactionRow[]): SplitMatch[] {
+function matchOrders(rows: TransactionRow[], booked: Set<string>): SplitMatch[] {
   const lines = new Map<string, TransactionRow[]>();
   for (const t of rows) {
-    const order = t.payee.trim() ? "" : orderOf(t);
+    const order = t.payee.trim() || booked.has(t.id) ? "" : orderOf(t);
     if (!order) continue;
-    const key = `${t.day}|${t.account_id ?? ""}|${order}`;
+    const key = `${t.account_id ?? ""}|${order}`;
     lines.set(key, [...(lines.get(key) ?? []), t]);
   }
   if (!lines.size) return [];
@@ -729,34 +772,44 @@ function matchOrders(rows: TransactionRow[]): SplitMatch[] {
   for (const t of rows) {
     if (!t.payee.trim()) continue;
     for (const word of new Set(wordsOf(t))) {
-      const key = `${t.day}|${t.account_id ?? ""}|${word}`;
+      const key = `${t.account_id ?? ""}|${word}`;
       if (lines.has(key)) bookings.set(key, [...(bookings.get(key) ?? []), t]);
     }
   }
-  const out: SplitMatch[] = [];
-  const taken = new Set<TransactionRow>();
-  for (const [key, parts] of lines) {
-    const free = (bookings.get(key) ?? []).filter((t) => !taken.has(t));
-    if (!free.length) continue;
-    for (const m of assignParts(free, parts)) {
-      out.push(m);
-      taken.add(m.booking);
+  const parts = new Map<TransactionRow, TransactionRow[]>();
+  for (const [key, all] of lines) {
+    const candidates = bookings.get(key) ?? [];
+    for (const day of new Set(all.map((t) => t.day))) {
+      const gap = (t: TransactionRow) => Math.abs(diffDays(t.day, day));
+      const near = candidates.filter((t) => gap(t) <= TRANSFER_DAYS);
+      if (!near.length) continue;
+      const closest = Math.min(...near.map(gap));
+      const onDay = near.filter((t) => gap(t) === closest);
+      const firstDay = onDay.map((t) => t.day).sort()[0];
+      const free = all.filter((t) => t.day === day);
+      for (const m of assignParts(onDay.filter((t) => t.day === firstDay), free, true)) {
+        parts.set(m.booking, [...(parts.get(m.booking) ?? []), ...m.parts]);
+      }
     }
   }
-  return out;
+  return [...parts].map(([booking, parts]) => ({ booking, parts }));
 }
 
 /**
- * Split bookings among transactions that aren't parts or bookings yet. First by order number
- * (see matchOrders); then a transaction marked "Splitbuchung" (in payee or description) takes
+ * Split bookings among transactions that aren't parts yet. First by order number (see
+ * matchOrders, where a booking in `booked` may take more parts); then, among the rest that
+ * aren't bookings either, a transaction marked "Splitbuchung" (in payee or description) takes
  * the other transactions of the same day, account and merchant as its parts (see assignParts).
  */
-export function matchSplits(rows: TransactionRow[]): SplitMatch[] {
-  const out = matchOrders(rows);
+export function matchSplits(
+  rows: TransactionRow[],
+  booked = new Set<string>(),
+): SplitMatch[] {
+  const out = matchOrders(rows, booked);
   const taken = new Set(out.flatMap((m) => [m.booking, ...m.parts]));
   const byKey = new Map<string, TransactionRow[]>();
   for (const t of rows) {
-    if (taken.has(t)) continue;
+    if (taken.has(t) || booked.has(t.id)) continue;
     const key = `${t.day}|${t.account_id ?? ""}|${merchantOf(t)}`;
     byKey.set(key, [...(byKey.get(key) ?? []), t]);
   }
@@ -850,12 +903,13 @@ async function unlinked(store: Store, familyId: string, from?: string, to?: stri
   return rows.filter((t) => !groupOf(t, groups) && !inSplit(t, splits));
 }
 
-/** Transactions in the range (all without one) that aren't in a split yet: legs of transfers
- *  too, as a wrongly combined "transfer" may well be a split booking's part. */
+/** Transactions in the range (all without one) that aren't parts of a split yet: legs of
+ *  transfers too, as a wrongly combined "transfer" may well be a split booking's part, and
+ *  bookings (their ids in `booked`), which may take more parts. */
 async function splitCandidates(store: Store, familyId: string, from?: string, to?: string) {
   const rows = await store.listTransactions(familyId, from, to);
   const splits = await loadSplits(store, familyId);
-  return rows.filter((t) => !inSplit(t, splits));
+  return { rows: rows.filter((t) => !t.split_of), booked: new Set(splits.keys()) };
 }
 
 /** The pairs that look like transfers in the range (all without one), newest first. */
@@ -900,7 +954,8 @@ export async function autoCombine(
   only?: Set<string>,
 ) {
   const touches = (ts: TransactionRow[]) => !only || ts.some((t) => only.has(t.id));
-  const matches = matchSplits(await splitCandidates(store, familyId, from, to))
+  const { rows, booked } = await splitCandidates(store, familyId, from, to);
+  const matches = matchSplits(rows, booked)
     .filter((m) => touches([m.booking, ...m.parts]));
   const splits = await linkSplits(store, familyId, matches);
   const pairs = matchTransfers(await unlinked(store, familyId, from, to))
@@ -1030,6 +1085,7 @@ async function categoriesRoute(ctx: Ctx, id: string | undefined): Promise<Respon
 
 async function accountsRoute(ctx: Ctx, id: string | undefined): Promise<Response> {
   const { store, req, method, load } = ctx;
+  if (id === undefined && method === "GET") return accountsAtRoute(ctx);
   const { family } = await load("edit");
   const accounts = await store.listAccounts(family.id);
   const body = await readBody(req);
@@ -1080,6 +1136,15 @@ async function accountsRoute(ctx: Ctx, id: string | undefined): Promise<Response
     }
   }
   throw new HttpError(405, "Method not allowed");
+}
+
+/** GET /finance/accounts?at=YYYY-MM-DD: the accounts with their balances at the end of that
+ *  day (opening balance plus the transactions up to it); without `at`, now. */
+async function accountsAtRoute({ store, url, load }: Ctx): Promise<Response> {
+  const { family } = await load("view");
+  const at = url.searchParams.get("at") ?? undefined;
+  if (at !== undefined && !isValidDate(at)) throw new HttpError(400, "at must be YYYY-MM-DD");
+  return json({ at: at ?? null, accounts: await listAccounts(store, family.id, at) });
 }
 
 /** A validated range; without from or to it is open on that side. */
@@ -1486,7 +1551,7 @@ async function importRoute({ store, req, load }: Ctx): Promise<Response> {
         splitCandidates(store, family.id, from, to),
         unlinked(store, family.id, from, to),
       ]);
-      splits = matchSplits([...fresh, ...candidates])
+      splits = matchSplits([...fresh, ...candidates.rows], candidates.booked)
         .filter((m) => touches([m.booking, ...m.parts])).length;
       transfers = Math.min(
         matchTransfers([...fresh, ...around]).filter((p) => touches([p.out, p.in])).length,

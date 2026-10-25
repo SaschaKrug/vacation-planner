@@ -422,10 +422,15 @@ export class SupabaseStore implements Store {
     return (gone ?? []).map(txRow);
   }
 
-  async accountTotals(familyId: string) {
+  async accountTotals(familyId: string, until?: string) {
     const rows = check(
-      await this.db.from("finance_account_totals").select("account_id,total_cents")
-        .eq("family_id", familyId),
+      until
+        ? await this.db.rpc("finance_account_totals_until", {
+          p_family_id: familyId,
+          p_day: until,
+        })
+        : await this.db.from("finance_account_totals").select("account_id,total_cents")
+          .eq("family_id", familyId),
     ) as { account_id: string; total_cents: number | string }[] | null;
     return new Map((rows ?? []).map((r) => [r.account_id, Number(r.total_cents)]));
   }

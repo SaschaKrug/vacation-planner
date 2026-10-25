@@ -1,7 +1,8 @@
 // The open family's finances: accounts, categories and settings, the transactions of the chosen
 // period (filtered), and the summary. Changes go straight to the API; each one can be undone from
 // its toast with the inverse ops the API returns. Account balances come with the overview, so it
-// reloads after every change that can move money.
+// reloads after every change that can move money; their balances at the end of the period (or
+// today, while it runs) load with what is shown.
 
 import { toast } from "sonner";
 import {
@@ -43,10 +44,18 @@ function lastDay(year: number, month: number) {
   return new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
 }
 
+/** Today in local time, as YYYY-MM-DD. */
+export function today() {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 export class FinanceStore {
   overview: FinanceOverview | null = null;
   list: TransactionList | null = null;
   summary: FinanceSummary | null = null;
+  /** The accounts' balances (by id) at the end of the day `at`; null for all time. */
+  balances: { at: string; cents: Record<string, number> } | null = null;
   loadingList = false;
   error: string | null = null;
   period: Period;
@@ -62,6 +71,7 @@ export class FinanceStore {
   private opened = false;
   private listSeq = 0;
   private summarySeq = 0;
+  private balancesSeq = 0;
 
   constructor(readonly token: string) {
     const now = new Date();
@@ -100,12 +110,18 @@ export class FinanceStore {
     return id ? this.accounts.find((a) => a.id === id) : undefined;
   }
 
+  /** The account's balance on the period's balance day (see balanceDay), else now. */
+  balanceOf(account: Account) {
+    return this.balances?.cents[account.id] ?? account.balanceCents;
+  }
+
   /** Loads the categories and the first page once; later calls do nothing. */
   open() {
     if (this.opened) return;
     this.opened = true;
     this.loadOverview();
     this.loadList();
+    this.loadBalances();
   }
 
   async loadOverview() {
@@ -129,11 +145,13 @@ export class FinanceStore {
     };
   }
 
-  /** The summary covers the year of a month (a chart of one month says little). */
-  summaryRange() {
-    return this.range(
-      this.period.mode === "month" ? { ...this.period, mode: "year" } : this.period,
-    );
+  /** The day whose balances the period shows: its last day, or today while it runs (none for
+   *  "all", which shows them now). */
+  balanceDay(period = this.period): string | null {
+    const { from, to } = this.range(period);
+    if (!from || !to) return null;
+    const now = today();
+    return from <= now && now <= to ? now : to;
   }
 
   async loadList() {
@@ -164,9 +182,31 @@ export class FinanceStore {
     this.emit();
   }
 
+  async loadBalances() {
+    const seq = ++this.balancesSeq;
+    const at = this.balanceDay();
+    if (!at) {
+      this.balances = null;
+      this.emit();
+      return;
+    }
+    try {
+      const res = await api.accountsAt(this.token, at);
+      if (seq !== this.balancesSeq) return;
+      this.balances = {
+        at: res.at,
+        cents: Object.fromEntries(res.accounts.map((a) => [a.id, a.balanceCents])),
+      };
+    } catch (err) {
+      if (seq !== this.balancesSeq) return;
+      this.error = (err as Error).message;
+    }
+    this.emit();
+  }
+
   async loadSummary() {
     const seq = ++this.summarySeq;
-    const { from, to } = this.summaryRange();
+    const { from, to } = this.range();
     const query: Record<string, string> = {};
     if (from) query.from = from;
     if (to) query.to = to;
@@ -182,6 +222,7 @@ export class FinanceStore {
   private reload() {
     if (!this.opened) return; // nothing shown yet: it loads when the page opens
     this.loadList();
+    this.loadBalances();
     if (this.summary) this.loadSummary();
   }
 
@@ -511,7 +552,7 @@ export class FinanceStore {
     return this.withOverview(() => api.addAccount(this.token, a));
   }
 
-  updateAccount(id: string, patch: Parameters<typeof api.updateAccount>[2]) {
+  async updateAccount(id: string, patch: Parameters<typeof api.updateAccount>[2]) {
     // Show it right away; the reload corrects it (and the balance) if saving fails.
     if (this.overview) {
       this.overview = {
@@ -520,7 +561,10 @@ export class FinanceStore {
       };
       this.emit();
     }
-    return this.withOverview(() => api.updateAccount(this.token, id, patch));
+    const out = await this.withOverview(() => api.updateAccount(this.token, id, patch));
+    // A new opening balance moves the balances on every day.
+    if (patch.openingCents !== undefined && this.opened) this.loadBalances();
+    return out;
   }
 
   moveAccount(i: number, dir: -1 | 1) {

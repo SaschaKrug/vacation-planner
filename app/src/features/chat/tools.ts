@@ -89,6 +89,20 @@ export function toolDetail(item: ToolItem): string {
     case "combine_transfers":
       parts.push(span(date(a.from), date(a.to)));
       break;
+    case "analyze_calendar": {
+      parts.push(span(date(a.from), date(a.to)));
+      const types = (Array.isArray(a.types) ? a.types : [a.types]).map(named).filter(Boolean);
+      parts.push(types.slice(0, 2).join(", ") + (types.length > 2 ? " …" : ""));
+      break;
+    }
+    case "calculate": {
+      const list = Array.isArray(a.expressions) ? a.expressions : [a.expressions ?? a.expression];
+      const first = str(list[0]);
+      parts.push(first.length > 40 ? first.slice(0, 40) + "…" : first);
+      if (list.length > 1) parts.push(`+${list.length - 1}`);
+      break;
+    }
+    case "analyze_transactions":
     case "list_transactions": {
       parts.push(span(date(a.from), date(a.to)));
       if (str(a.q)) parts.push(quoted(str(a.q)));

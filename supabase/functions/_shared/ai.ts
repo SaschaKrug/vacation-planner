@@ -1,6 +1,6 @@
 // The AI assistant's routes under /families/{id}/ai: settings (keys stored encrypted, never
 // returned), the endpoint's model list, a connection test, the chat and sorting transactions
-// into categories. All need the edit link:
+// into categories. All are for editors:
 // the assistant spends the family's AI tokens and can change things.
 
 import { type ChatMessage, listModels, type Provider, streamChat } from "./ai/provider.ts";

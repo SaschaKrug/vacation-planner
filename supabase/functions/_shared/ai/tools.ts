@@ -1,8 +1,8 @@
 // The assistant's tools: read and change the vacation calendar and the finances (with the same
-// validation as the REST API), search the web and read pages. Every change comes with undo
-// steps: requests against the family's own API that put things back.
+// validation as the REST API), analyze both, calculate, search the web and read pages. Every
+// change comes with undo steps: requests against the family's own API that put things back.
 
-import { dateRange, isValidDate, isWeekend } from "../dates.ts";
+import { dateRange, diffDays, isValidDate, isWeekend } from "../dates.ts";
 import {
   applyTransactionOps,
   autoCombine,
@@ -11,6 +11,7 @@ import {
   findCategory,
   findTransactions,
   listAccounts,
+  netItems,
   newCategory,
   publicCategory,
   publicTransaction,
@@ -30,6 +31,15 @@ import {
   resolveType,
   uniqueId,
 } from "../vacation.ts";
+import {
+  analyzeCalendar,
+  analyzeTransactions,
+  CALENDAR_DIMENSIONS,
+  TX_DIMENSIONS,
+  TX_SORTS,
+  TX_STATS,
+} from "./analytics.ts";
+import { CalcError, calculate, MAX_EXPRESSIONS } from "./calc.ts";
 import { checkUrl, htmlToText, type NetOptions, readLimited, safeFetch } from "./net.ts";
 import type { ToolSpec } from "./provider.ts";
 
@@ -108,6 +118,11 @@ export const MAX_TOOL_RESULT = 16_000;
  *  and the characters of a description it shows. */
 const MAX_TX_ROWS = 500;
 const MAX_TX_DESCRIPTION = 100;
+/** analyze_transactions: groups per call at most (fewer when they don't fit). */
+const MAX_GROUPS = 1000;
+const DEFAULT_GROUPS = 100;
+/** analyze_calendar: days per call at most (about ten years). */
+const MAX_ANALYZE_DAYS = 3700;
 const TX_COLUMNS = [
   "id",
   "date",
@@ -141,6 +156,36 @@ function range(args: Record<string, unknown>) {
 }
 
 const yearOf = (day: string) => Number(day.slice(0, 4));
+
+/** A list of allowed values (a single string works too), at most `max` of them. */
+function choices<T extends string>(
+  v: unknown,
+  allowed: readonly T[],
+  field: string,
+  max = allowed.length,
+): T[] | undefined {
+  if (v === undefined || v === null) return undefined;
+  const list = Array.isArray(v) ? v : [v];
+  const bad = list.find((x) => !allowed.includes(x as T));
+  if (bad !== undefined) {
+    throw new HttpError(400, `${field} can only hold ${allowed.join(", ")}`);
+  }
+  const out = [...new Set(list as T[])];
+  if (out.length > max) throw new HttpError(400, `${field} takes at most ${max} values`);
+  return out;
+}
+
+/** The first elements of `items` whose JSON, with `head`, stays below the tool result limit. */
+function fitting<T>(head: unknown, items: T[]): T[] {
+  let size = JSON.stringify(head).length + 60;
+  const out: T[] = [];
+  for (const item of items) {
+    size += JSON.stringify(item).length + 1;
+    if (size > MAX_TOOL_RESULT && out.length) break;
+    out.push(item);
+  }
+  return out;
+}
 
 /** Weekdays with a "needs cover" entry and nothing that covers it. */
 function gaps(types: TypeRow[], entries: Map<string, string[]>): string[] {
@@ -223,6 +268,69 @@ export const TOOLS: Record<string, Tool> = {
           gaps: gaps(inRange, entries),
         },
         summary: `${from} – ${to}`,
+      };
+    },
+  },
+
+  analyze_calendar: {
+    spec: {
+      name: "analyze_calendar",
+      description:
+        'Counts calendar days instead of you counting them in get_calendar: days per entry type (a day counts once for each of its types), year, month and/or weekday between two days, e.g. vacation days per parent this year. groupBy: up to 2 of type, year, month, weekday (default type; without type a day counts once whatever it holds). types: only these (ids or names). weekdaysOnly: leave out Saturdays and Sundays. skipDaysOff: leave out entries on days that also have a "day off" entry (vacation on a public holiday costs no vacation day).',
+      parameters: {
+        type: "object",
+        properties: {
+          from: { type: "string", description: "YYYY-MM-DD" },
+          to: { type: "string", description: "YYYY-MM-DD, at most about ten years after from" },
+          groupBy: { type: "array", items: { type: "string", enum: [...CALENDAR_DIMENSIONS] } },
+          types: { type: "array", items: { type: "string" } },
+          weekdaysOnly: { type: "boolean" },
+          skipDaysOff: { type: "boolean" },
+        },
+        required: ["from", "to"],
+      },
+    },
+    async run(args, { store, familyId }) {
+      const { from, to } = range(args);
+      if (diffDays(from, to) >= MAX_ANALYZE_DAYS) {
+        throw new HttpError(400, "Analyze at most about ten years at a time");
+      }
+      const asked = choices(args.groupBy, CALENDAR_DIMENSIONS, "groupBy", 2);
+      const groupBy = asked?.length ? asked : ["type" as const];
+      const [types, entries] = await Promise.all([
+        store.listTypes(familyId),
+        store.listEntries(familyId, from, to),
+      ]);
+      let only: Set<string> | undefined;
+      if (args.types !== undefined) {
+        const refs = Array.isArray(args.types) ? args.types : [args.types];
+        only = new Set();
+        for (const ref of refs) {
+          const name = String(ref).trim().toLowerCase();
+          const ids = types.filter((t) => t.id === ref || t.name.toLowerCase() === name);
+          if (!ids.length) throw new HttpError(404, `Unknown entry type "${ref}"`);
+          for (const t of ids) only.add(t.id);
+        }
+      }
+      const res = analyzeCalendar({
+        types,
+        entries,
+        from,
+        to,
+        only,
+        groupBy,
+        weekdaysOnly: args.weekdaysOnly === true,
+        skipDaysOff: args.skipDaysOff === true,
+      });
+      const head = { from, to, groupBy, days: res.days };
+      const groups = fitting(head, res.groups);
+      return {
+        result: {
+          ...head,
+          groups,
+          ...(groups.length < res.groups.length ? { more: res.groups.length - groups.length } : {}),
+        },
+        summary: `${res.days} days`,
       };
     },
   },
@@ -514,7 +622,7 @@ export const TOOLS: Record<string, Tool> = {
     spec: {
       name: "finance_summary",
       description:
-        "Income and expenses (integer cents) per month and per category between two days (a transfer between the family's accounts counts once by its net), plus the currency, the categories and the accounts with their current balances.",
+        "Income and expenses (integer cents) per month and per category between two days (a transfer between the family's accounts counts once by its net), plus the currency, the categories and the accounts with their current balances (balanceCents) and their balances at the end of `to` (balanceAtToCents).",
       parameters: {
         type: "object",
         properties: { from: { type: "string" }, to: { type: "string" } },
@@ -523,14 +631,88 @@ export const TOOLS: Record<string, Tool> = {
     },
     async run(args, { store, familyId }) {
       const { from, to } = range(args);
-      const [summary, categories, accounts] = await Promise.all([
+      const [summary, categories, accounts, atTo] = await Promise.all([
         financeSummary(store, familyId, from, to),
         store.listCategories(familyId),
         listAccounts(store, familyId),
+        store.accountTotals(familyId, to),
       ]);
+      const withAtTo = accounts.map((a) => ({
+        ...a,
+        balanceAtToCents: a.openingCents + (atTo.get(a.id) ?? 0),
+      }));
       return {
-        result: { ...summary, categoryNames: categories.map(publicCategory), accounts },
+        result: { ...summary, categoryNames: categories.map(publicCategory), accounts: withAtTo },
         summary: `${from} – ${to}`,
+      };
+    },
+  },
+
+  analyze_transactions: {
+    spec: {
+      name: "analyze_transactions",
+      description:
+        "Totals and statistics of transactions per group, computed exactly (use it instead of adding up list_transactions): up to 2 of groupBy: month, quarter, year, week (ISO), weekday, day, category, account, payee (similar spellings together), kind (income / expense). Each group has count, incomeCents, expenseCents, netCents, and the asked stats of its single amounts (avg, median, min, max, stddev; in cents, negative = out). With one groupBy, perGroup has the average and median group (e.g. the average month; empty months count as 0). Counted like all totals: a transfer between the family's accounts once by its net, a split booking by its parts. Same filters as list_transactions (from, to, account, category, kind, q). Time groups come in order, others largest first; sortBy: key, total (income + expenses), count, income, expense, net; order: asc or desc.",
+      parameters: {
+        type: "object",
+        properties: {
+          from: { type: "string" },
+          to: { type: "string" },
+          account: { type: "string" },
+          category: { type: "string" },
+          kind: { type: "string", enum: ["income", "expense", "transfer"] },
+          q: { type: "string" },
+          groupBy: {
+            type: "array",
+            items: { type: "string", enum: [...TX_DIMENSIONS] },
+            description: "Default: month",
+          },
+          stats: { type: "array", items: { type: "string", enum: [...TX_STATS] } },
+          sortBy: { type: "string", enum: [...TX_SORTS] },
+          order: { type: "string", enum: ["asc", "desc"] },
+          limit: { type: "integer", description: `Groups at most, default ${DEFAULT_GROUPS}` },
+        },
+      },
+    },
+    async run(args, { store, familyId }) {
+      const query = new URLSearchParams();
+      for (const k of ["from", "to", "account", "category", "kind", "q"]) {
+        if (typeof args[k] === "string" && args[k]) query.set(k, args[k] as string);
+      }
+      const asked = choices(args.groupBy, TX_DIMENSIONS, "groupBy", 2);
+      const groupBy = asked?.length ? asked : ["month" as const];
+      const stats = choices(args.stats, TX_STATS, "stats") ?? [];
+      const [sortBy] = choices(args.sortBy, TX_SORTS, "sortBy", 1) ?? [];
+      const [order] = choices(args.order, ["asc", "desc"] as const, "order", 1) ?? [];
+      const [{ rows, links }, categories, accounts] = await Promise.all([
+        findTransactions(store, familyId, query),
+        store.listCategories(familyId),
+        store.listAccounts(familyId),
+      ]);
+      const res = analyzeTransactions({
+        items: netItems(rows, links),
+        groupBy,
+        stats,
+        sortBy,
+        order,
+        categories,
+        accounts,
+        from: query.get("from") ?? undefined,
+        to: query.get("to") ?? undefined,
+      });
+      const limit = Math.min(MAX_GROUPS, Math.max(1, Number(args.limit) || DEFAULT_GROUPS));
+      const head = { groupBy, total: res.total, perGroup: res.perGroup, groupCount: 0 };
+      const groups = fitting(head, res.groups.slice(0, limit));
+      return {
+        result: {
+          groupBy,
+          total: res.total,
+          ...(res.perGroup ? { perGroup: res.perGroup } : {}),
+          groupCount: res.groups.length,
+          groups,
+          ...(groups.length < res.groups.length ? { more: res.groups.length - groups.length } : {}),
+        },
+        summary: `${res.groups.length} groups`,
       };
     },
   },
@@ -669,7 +851,7 @@ export const TOOLS: Record<string, Tool> = {
     spec: {
       name: "combine_transfers",
       description:
-        'Combines what belongs together, like the app\'s Auto-combine: first split bookings (order lines without a payee that name an order, "Bestellnr. 306-…", become parts of the booking of the same day and account that names the same order; a booking marked "Splitbuchung" takes the transactions of the same day, account and merchant as its parts; so they don\'t count twice), then transfers between the family\'s accounts (money out of one account and the same amount into another within 4 days, not yet combined), so each counts once by its net (0). from/to (YYYY-MM-DD) limit the range; without them the whole history.',
+        'Combines what belongs together, like the app\'s Auto-combine: first split bookings (order lines without a payee that name an order, "Bestellnr. 306-…", all become parts of the booking on the same account that names the same order, of the same day or else the closest within 4 days, also a booking already split; a booking marked "Splitbuchung" takes the transactions of the same day, account and merchant as its parts; so they don\'t count twice), then transfers between the family\'s accounts (money out of one account and the same amount into another within 4 days, not yet combined), so each counts once by its net (0). from/to (YYYY-MM-DD) limit the range; without them the whole history.',
       parameters: {
         type: "object",
         properties: {
@@ -709,6 +891,54 @@ export const TOOLS: Record<string, Tool> = {
           }
           : undefined,
       };
+    },
+  },
+
+  calculate: {
+    spec: {
+      name: "calculate",
+      description:
+        'Calculates exactly; use it for any arithmetic instead of working it out yourself. Numbers, lists [1, 2, 3], + - * / % ^ (element by element on lists), parentheses, "name = …" to reuse a result in later expressions, and functions: abs sqrt exp ln log(x, base=10) round(x, digits) floor ceil pow; sum count min max avg median stddev variance percentile(list, p 0–100) product; sort cumsum diff growth (relative change per step) seq(from, to, step); slope(y, x?) intercept(y, x?) correl(x, y) forecast(y, k) (the linear trend k steps after the last value); money, like spreadsheets (rate per period, money paid out negative): pmt(rate, nper, pv, fv?, type?) fv(rate, nper, pmt, pv?, type?) pv(rate, nper, pmt, fv?, type?) nper(rate, pmt, pv, fv?) npv(rate, flows) irr(flows) cagr(start, end, years). Constants pi, e. Each expression gets its value or an error.',
+      parameters: {
+        type: "object",
+        properties: {
+          expressions: {
+            type: "array",
+            items: { type: "string" },
+            description: 'Evaluated in order, e.g. ["rate = 0.035 / 12", "pmt(rate, 240, 300000)"]',
+          },
+          vars: {
+            type: "object",
+            description:
+              'Named numbers or lists of numbers, e.g. {"spent": [412.5, 380, 455.2]} (from other tools\' results)',
+          },
+        },
+        required: ["expressions"],
+      },
+    },
+    run(args) {
+      const raw = args.expressions ?? args.expression;
+      const expressions = Array.isArray(raw) ? raw : [raw];
+      if (!expressions.length || expressions.some((e) => typeof e !== "string")) {
+        throw new HttpError(400, "expressions must be a list of strings");
+      }
+      if (expressions.length > MAX_EXPRESSIONS) {
+        throw new HttpError(400, `At most ${MAX_EXPRESSIONS} expressions at a time`);
+      }
+      let results;
+      try {
+        results = calculate(expressions as string[], objectOf(args.vars ?? {}, "vars"));
+      } catch (err) {
+        if (err instanceof CalcError) throw new HttpError(400, err.message);
+        throw err;
+      }
+      const last = results.at(-1)!;
+      return Promise.resolve({
+        result: { results },
+        summary: results.length === 1 && last.value !== undefined && !Array.isArray(last.value)
+          ? `${last.expression.slice(0, 60)} = ${last.value}`
+          : `${results.length} ${results.length === 1 ? "result" : "results"}`,
+      });
     },
   },
 
