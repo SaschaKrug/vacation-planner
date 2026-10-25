@@ -145,7 +145,11 @@ New default categories in EN/DE (Groceries, Rent, Utilities, Mobility, Leisure, 
   `fetch_page` and `web_search` count per tool call.
 - The edge function's wall-clock limit (150s on the free plan) bounds a request, not a turn: after
   90s a request ends with `continue` before its next model call (each request takes at least one
-  step), and the app picks the turn up with a new request.
+  step), and the app picks the turn up with a new request. A model call still running at 130s is
+  cut off with an `error`, so the request reports back before the platform stops it.
+- A turn never ends blank: a model that stops without a word (no text, no tool calls) gets one more
+  call without tools to answer, else the chat says it gave no answer; and if a request's stream
+  closes without `done`, `error` or `continue`, the app shows that the answer broke off.
 
 ### Export v2 / agent doc
 

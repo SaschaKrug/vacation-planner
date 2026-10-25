@@ -375,6 +375,35 @@ Deno.test("near the time limit, the turn is handed on to the next request", asyn
   }
 });
 
+Deno.test("a model that ends without a word is asked once more for its answer", async () => {
+  const t = await configured();
+  let ev = await chat(t, "say nothing");
+  assertEquals(aiBody.tool_choice, "none");
+  assert(aiBody.messages[0].content.includes("## Answer now"));
+  assertEquals(
+    ev.filter((e) => e.event === "text").map((e) => e.data.delta).join(""),
+    "Here is the calendar.",
+  );
+  let added = ev.find((e) => e.event === "messages")!.data.messages;
+  assertEquals(added.map((m: { role: string }) => m.role), ["assistant", "tool", "assistant"]);
+  assertEquals(added.at(-1), { role: "assistant", content: "Here is the calendar." });
+  assert(ev.some((e) => e.event === "done"));
+
+  // Still nothing: the chat says so instead of ending blank.
+  ev = await chat(t, "stay silent");
+  assertEquals(ev.find((e) => e.event === "text")?.data.delta, "(The model gave no answer.)");
+  added = ev.find((e) => e.event === "messages")!.data.messages;
+  assertEquals(added, [{ role: "assistant", content: "(The model gave no answer.)" }]);
+  assert(ev.some((e) => e.event === "done"));
+});
+
+Deno.test("a model call that runs too long ends with an error, not a dropped connection", async () => {
+  const t = await configured({ aiDeadlineMs: 50 });
+  const ev = await chat(t, "take your time");
+  assertEquals(ev.map((e) => e.event), ["messages", "error"]);
+  assertMatch(ev[1].data.message, /took too long/);
+});
+
 Deno.test("the assistant reads the finances", async () => {
   const t = await configured();
   await t.call("POST", `/families/${t.f.id}/finance/transactions`, {

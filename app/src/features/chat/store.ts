@@ -222,6 +222,7 @@ export class ChatStore {
     this.abort = abort;
     const start = c.history.length; // where this turn's answer begins
     let more = false;
+    let ended = false; // the request ended with "done", "error" or "continue"
     let answer: Item & { kind: "assistant" } | null = null;
     const update = (fn: (items: Item[]) => Item[]) => {
       c.items = fn([...c.items]);
@@ -269,10 +270,15 @@ export class ChatStore {
         case "messages":
           c.history = [...c.history, ...e.data.messages];
           break;
+        case "done":
+          ended = true;
+          break;
         case "continue":
           more = true;
+          ended = true;
           break;
         case "error":
+          ended = true;
           update((
             items,
           ) => [...items, { kind: "error", text: e.data.message }]);
@@ -285,6 +291,7 @@ export class ChatStore {
     const body = { lang: getLang(), today: today(), ...this.context() };
     for (let first = true; first || (more && !abort.signal.aborted); first = false) {
       more = false;
+      ended = false;
       try {
         await api.chat(
           this.token,
@@ -300,6 +307,11 @@ export class ChatStore {
           onEvent,
           abort.signal,
         );
+        if (!ended && !abort.signal.aborted) {
+          // The connection closed before the server said how the turn ended (it was stopped,
+          // e.g. at the time limit, or the network dropped): say so instead of ending blank.
+          update((items) => [...items, { kind: "error", text: t("chat.cut_off") }]);
+        }
       } catch (err) {
         more = false;
         c.items = [...c.items, { kind: "error", text: (err as Error).message }];

@@ -26,6 +26,8 @@ export interface AiEnv {
   net: NetOptions;
   /** When a chat request hands the turn on to the next one (tests). */
   handOffMs?: number;
+  /** When a chat request cuts off a model call that is still running (tests). */
+  deadlineMs?: number;
 }
 
 const PAGES = ["vacation", "finance", "settings"];
@@ -269,6 +271,7 @@ async function chat({ store, req, load }: Ctx, env: AiEnv) {
         emit,
         signal: req.signal,
         handOffMs: env.handOffMs,
+        deadlineMs: env.deadlineMs,
       }),
     CORS,
   );
