@@ -153,6 +153,14 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   platform's time limit (a turn whose invocation died is taken over when someone looks at the
   chat). A failed model call is tried again up to 5 times. Requests to private networks are
   refused (also after redirects), pages are size- and time-limited.
+- **Long tasks run on:** an answer has no limit of steps; it runs as long as the model works on
+  (*Stop* ends it). Before the chat would no longer fit into the model's **context window**, the
+  model condenses its older part into a summary, which is kept with the chat (the chat shows
+  where), and goes on with the summary, the user's latest message and the newest steps, in this
+  answer and in the next ones. Under the message box, the chat shows how much of the context it
+  uses. The window comes from the API's model list where it says (else 128,000 tokens, or set it
+  in *Settings* → *AI assistant*); if the API still says the request is too long, the chat is
+  condensed and the step tried again.
 
 ### Settings
 
@@ -348,21 +356,21 @@ All are for editors only.
 
 | Method & path | Description |
 | --- | --- |
-| `GET /families/{id}/ai/settings` | `{"configured", "baseUrl", "model", "hasKey", "keyHint", "searchProvider", "hasSearchKey", "searchKeyHint", "allowWrites", "serverReady"}` (keys are never returned, only their last 4 characters) |
-| `PUT /families/{id}/ai/settings` | Any of `{"baseUrl", "apiKey", "model", "searchProvider": "none" \| "tavily" \| "brave", "searchKey", "allowWrites"}`; `""` removes a key |
+| `GET /families/{id}/ai/settings` | `{"configured", "baseUrl", "model", "hasKey", "keyHint", "searchProvider", "hasSearchKey", "searchKeyHint", "allowWrites", "contextWindow", "serverReady"}` (keys are never returned, only their last 4 characters) |
+| `PUT /families/{id}/ai/settings` | Any of `{"baseUrl", "apiKey", "model", "searchProvider": "none" \| "tavily" \| "brave", "searchKey", "allowWrites", "contextWindow"}`; `""` removes a key; `contextWindow`: the model's context window in tokens, `0` takes it from the API's model list (or 128,000) |
 | `POST /families/{id}/ai/models` | The API's models: `{"models": [...]}`; `{"baseUrl", "apiKey"}` in the body try values before saving them |
 | `POST /families/{id}/ai/test` | One short completion with the saved settings |
 | `POST /families/{id}/ai/categorize` | `{"ids": [...]}` or `{"from", "to", "skip"}`, and `"lang"`: sorts uncategorized transactions (the given ones, at most 200, or those in the range after the first `skip`, at most 200 per request) into categories: like similar earlier transactions where those agree, the rest by the model (with web search if set up; without AI settings this step is skipped) → `{"changed", "matched" (of these, like similar ones), "considered", "remaining", "ai", "inverse", "assignments": [{"id", "categoryId", "source": "similar" \| "ai"}]}`; `remaining` are the range's uncategorized rows not looked at yet (call again with `skip` + the ones left open), `inverse` undoes it via `/finance/transactions` |
-| `GET /families/{id}/ai/chats` | Your chats in the family, the latest first: `{"chats": [{"id", "title", "status": "idle" \| "running", "activity", "updatedAt"}]}` |
+| `GET /families/{id}/ai/chats` | Your chats in the family, the latest first: `{"chats": [{"id", "title", "status": "idle" \| "running", "activity", "usage": {"used", "max"} \| null (the context's tokens in use, and the window), "updatedAt"}]}` |
 | `POST /families/{id}/ai/chats` | Starts a chat: `{"text", "attachments": [{"kind": "file", "name", "text"} \| {"kind": "image", "name", "url": "data:image/…"}], "lang", "today", "year", "page"}` (up to 4 attachments) → `text/event-stream` like `events` below, starting with `chat`. The answer runs on the server: closing the connection doesn't stop it |
-| `GET /families/{id}/ai/chats/{chat}` | `{"chat", "rev", "items": [...]}`: what the chat shows (`user`, `assistant`, `tool`, `change` with `undo`: requests against the family that undo it, `question`, `error`) |
-| `GET /families/{id}/ai/chats/{chat}/events?since=` | Follows the chat (`text/event-stream`): `items` `{"rev"?, "items": [{"seq", "item"}]}` (what changed since revision `since`, by position), `delta` `{"seq", "text"}` (text being written), `chat` (status and activity), then `end` once no answer runs, or `reconnect` (call again with the latest `rev`) |
+| `GET /families/{id}/ai/chats/{chat}` | `{"chat", "rev", "items": [...]}`: what the chat shows (`user`, `assistant`, `tool`, `change` with `undo`: requests against the family that undo it, `question`, `compacted`: the model gets the chat before it as a summary, `error`) |
+| `GET /families/{id}/ai/chats/{chat}/events?since=` | Follows the chat (`text/event-stream`): `items` `{"rev"?, "items": [{"seq", "item"}]}` (what changed since revision `since`, by position), `delta` `{"seq", "text"}` (text being written), `chat` (status, activity and context usage), then `end` once no answer runs, or `reconnect` (call again with the latest `rev`) |
 | `POST /families/{id}/ai/chats/{chat}/messages` | The next message, like starting a chat (409 while an answer runs); a question waiting for its answer stays unanswered |
 | `POST /families/{id}/ai/chats/{chat}/answer` | `{"id", "selected": [...], "text", "lang", "today", "year", "page"}`: answers the assistant's question `id` (options and/or an own answer); the answer goes on |
 | `POST /families/{id}/ai/chats/{chat}/stop` | Stops the running answer; it ends with what it did so far |
 | `POST /families/{id}/ai/chats/{chat}/undone` | `{"id"}`: the change `id` of the chat was undone (the assistant hears it with the next message) |
 | `DELETE /families/{id}/ai/chats/{chat}` | Deletes the chat |
-| `POST /families/{id}/ai/chat` | One answer without a stored chat (the caller keeps the history): `{"messages": [...], "lang", "today", "year", "page"}` (OpenAI format, the last one the user's; a user message's `content` may be parts: `{"type": "text", "text"}` and up to 4 `{"type": "image_url", "image_url": {"url": "data:image/png;base64,…"}}`, the newest 8 images are sent) → `text/event-stream` with `text`, `tool`, `tool_result`, `change` (with `undo`: requests against the family that undo it), `messages` (to append to the history), `done` / `error` |
+| `POST /families/{id}/ai/chat` | One answer without a stored chat (the caller keeps the history): `{"messages": [...], "lang", "today", "year", "page"}` (OpenAI format, the last one the user's; a user message's `content` may be parts: `{"type": "text", "text"}` and up to 4 `{"type": "image_url", "image_url": {"url": "data:image/png;base64,…"}}`, the newest 8 images are sent) → `text/event-stream` with `text`, `tool`, `tool_result`, `change` (with `undo`: requests against the family that undo it), `messages` (to append to the history), `usage` `{"used", "max"}`, `compacting` / `compacted` `{"summary", "request"?, "keep"}` (the history got too long for the context window: the model went on with the summary instead of all but the newest `keep` messages), `done` / `continue` |
 
 ### Links
 

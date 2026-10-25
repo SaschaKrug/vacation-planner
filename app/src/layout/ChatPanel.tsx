@@ -466,6 +466,7 @@ function ChatView({ onClose }: { onClose: () => void }) {
               )}
           </div>
         </div>
+        <ContextMeter />
         {/* Keyboard hints mean nothing on a touch screen. */}
         <p className="mt-1.5 px-1 text-[11px] text-muted-foreground pointer-coarse:hidden">
           {t("chat.hint")}
@@ -542,6 +543,8 @@ function ActivityLine() {
   let text = t("chat.thinking");
   if (a.kind === "retrying") {
     text = t("chat.status.retrying", { n: a.attempt, max: a.max });
+  } else if (a.kind === "compacting") {
+    text = t("chat.status.compacting");
   } else if (a.kind === "tool" && running.length) {
     const more = running.length > 1 ? ` (+${running.length - 1})` : "";
     text = `${toolLabel(running.at(-1)!)}${more}…`;
@@ -554,6 +557,45 @@ function ActivityLine() {
       <Loader2 className="size-3.5 shrink-0 animate-spin" />
       <span className="min-w-0 truncate">{text}</span>
       {secs >= 5 && <span className="shrink-0 tabular-nums opacity-70">{secs} s</span>}
+    </div>
+  );
+}
+
+/** How much of the model's context window the open chat uses; the server condenses the older
+ *  messages before it is full (the bar turns amber when that is near). */
+function ContextMeter() {
+  const chat = useChat();
+  const usage = chat.current?.usage;
+  if (!usage?.max) return null;
+  const pct = Math.min(100, Math.round((usage.used / usage.max) * 100));
+  const format = new Intl.NumberFormat(getLang(), {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  });
+  const label = t("chat.context", {
+    used: format.format(usage.used),
+    max: format.format(usage.max),
+    pct,
+  });
+  return (
+    <div
+      className="mt-1.5 flex items-center gap-2 px-1 text-[11px] text-muted-foreground"
+      title={t("chat.context_help")}
+    >
+      <div
+        className="h-1 min-w-8 flex-1 overflow-hidden rounded-full bg-muted"
+        role="meter"
+        aria-label={label}
+        aria-valuemin={0}
+        aria-valuemax={usage.max}
+        aria-valuenow={Math.min(usage.used, usage.max)}
+      >
+        <div
+          className={cn("h-full rounded-full bg-primary/70", pct >= 70 && "bg-amber-500")}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <span className="shrink-0 tabular-nums">{label}</span>
     </div>
   );
 }
@@ -651,6 +693,18 @@ function ItemView(
   }
   if (item.kind === "assistant") return <Markdown text={item.text} />;
   if (item.kind === "question") return <QuestionCard item={item} />;
+  if (item.kind === "compacted") {
+    return (
+      <div
+        className="flex items-center gap-2 text-[11px] text-muted-foreground"
+        title={t("chat.context_help")}
+      >
+        <div className="h-px flex-1 bg-border" />
+        <span className="text-center">{t("chat.compacted")}</span>
+        <div className="h-px flex-1 bg-border" />
+      </div>
+    );
+  }
   if (item.kind === "error") {
     return (
       <p className="flex items-start gap-2 rounded-lg border border-gap/30 bg-gap/10 px-3 py-2 text-gap">

@@ -570,6 +570,11 @@ const STRINGS: Record<Lang, Dict> = {
     "chat.copy.you": "You",
     "chat.status.writing": "Writing…",
     "chat.status.retrying": "The model didn't answer – trying again ({n}/{max})…",
+    "chat.status.compacting": "Condensing the earlier conversation…",
+    "chat.compacted": "Earlier messages condensed for the model",
+    "chat.context": "Context: {used} of {max} tokens ({pct}%)",
+    "chat.context_help":
+      "How much of the model's context window this chat uses. Before it is full, older messages are condensed into a summary, so long tasks can go on.",
     "chat.detail.since": "from {d}",
     "chat.detail.until": "until {d}",
     "chat.detail.from_row": "from row {n}",
@@ -590,6 +595,9 @@ const STRINGS: Record<Lang, Dict> = {
     "ai_settings.model_help":
       "Load the list from the API, or type a model name. It needs to support tool calls.",
     "ai_settings.pick_model": "Pick a model",
+    "ai_settings.context_window": "Context window (tokens)",
+    "ai_settings.context_window_help":
+      "How many tokens the model takes at once. Empty: from the API's model list if it says, else 128,000. Long chats are condensed before it is full.",
     "ai_settings.load_models": "Load models",
     "ai_settings.no_models": "The API returned no models",
     "ai_settings.test": "Test",
@@ -1309,6 +1317,11 @@ const STRINGS: Record<Lang, Dict> = {
     "chat.copy.you": "Du",
     "chat.status.writing": "Schreibt…",
     "chat.status.retrying": "Das Modell hat nicht geantwortet – neuer Versuch ({n}/{max})…",
+    "chat.status.compacting": "Fasst den bisherigen Verlauf zusammen…",
+    "chat.compacted": "Ältere Nachrichten für das Modell zusammengefasst",
+    "chat.context": "Kontext: {used} von {max} Tokens ({pct} %)",
+    "chat.context_help":
+      "Wie viel vom Kontextfenster des Modells dieser Chat belegt. Bevor es voll ist, werden ältere Nachrichten zu einer Zusammenfassung verdichtet, damit lange Aufgaben weiterlaufen können.",
     "chat.detail.since": "ab {d}",
     "chat.detail.until": "bis {d}",
     "chat.detail.from_row": "ab Zeile {n}",
@@ -1332,6 +1345,9 @@ const STRINGS: Record<Lang, Dict> = {
     "ai_settings.model_help":
       "Lade die Liste von der API oder gib einen Modellnamen ein. Es muss Tool-Aufrufe können.",
     "ai_settings.pick_model": "Modell wählen",
+    "ai_settings.context_window": "Kontextfenster (Tokens)",
+    "ai_settings.context_window_help":
+      "Wie viele Tokens das Modell auf einmal verarbeitet. Leer: aus der Modellliste der API, wenn sie es angibt, sonst 128.000. Lange Chats werden zusammengefasst, bevor es voll ist.",
     "ai_settings.load_models": "Modelle laden",
     "ai_settings.no_models": "Die API hat keine Modelle geliefert",
     "ai_settings.test": "Testen",

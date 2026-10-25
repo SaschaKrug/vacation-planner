@@ -6,6 +6,16 @@ import { formatDate, isValidDate } from "../dates.ts";
 import { HttpError, objectOf } from "../http.ts";
 import type { AccountRow, CategoryRow, FamilyRow, TypeRow } from "../store.ts";
 import {
+  compact,
+  COMPACT_AT,
+  estimateTokens,
+  isContextError,
+  KEEP,
+  type SummaryMark,
+  summaryMessage,
+  windowFromError,
+} from "./context.ts";
+import {
   type ChatMessage,
   type ContentPart,
   type Provider,
@@ -14,10 +24,8 @@ import {
 } from "./provider.ts";
 import { MAX_TOOL_RESULT, type Question, runTool, type ToolContext, toolsFor } from "./tools.ts";
 
-/** Model calls per answer (across hand-offs); the last one gets no tools, so the model answers
- *  with what it has. */
-const MAX_STEPS = 30;
-const OUT_OF_STEPS = "(Stopped: too many steps in one answer.)";
+/** Messages of a history the caller keeps (POST /ai/chat); stored chats are condensed instead
+ *  (see context.ts). */
 const MAX_MESSAGES = 80;
 const MAX_CONTENT = 20_000;
 /** Attachments: parts per message, an attached file's text, images per message and per chat. */
@@ -39,12 +47,11 @@ const NO_ANSWER = "(The model gave no answer.)";
 const TOO_SLOW = "The AI model took too long to answer.";
 /** Times a model that ended without a word is asked again for its answer. */
 const MAX_NUDGES = 5;
-
-const WRAP_UP = `
-
-## Out of steps
-You can't use tools any more in this answer. Answer now with what you found and did so far,
-and say what is still open, so the user can ask you to go on.`;
+/** A request that still has to condense the conversation after this long hands it on first, so
+ *  condensing gets a new request's whole time. */
+const LATE_COMPACT_MS = 30_000;
+const CONTEXT_FULL =
+  "The conversation doesn't fit into the model's context window, even condensed. Start a new chat, or pick a model with a larger one.";
 
 /** For a model that ended its turn without a word: it gets one more call, without tools. */
 const ANSWER_NOW = `
@@ -280,13 +287,16 @@ export function cleanParts(raw: unknown[]): ContentPart[] {
 }
 
 /**
- * Runs the tool loop and emits: "text" {delta}, "tool" {id, name, args}, "tool_result"
- * {id, name, ok, summary}, "change" {id, kind, summary, undo}, "messages" {messages} (what the
- * app appends to its history, after every step), "question" {id, question, options, multiple}
- * (the model asked the user: the turn ends without the call's result, which the app adds with
- * the answer and then continues) and "done" or "continue" {retry?, message?}: time is nearly
- * up, or a model call failed (`retry`, with the reason), so the app sends the history again and
- * the turn goes on there.
+ * Runs the tool loop, as long as the model works on (there is no limit of steps), and emits:
+ * "text" {delta}, "tool" {id, name, args}, "tool_result" {id, name, ok, summary}, "change" {id,
+ * kind, summary, undo}, "messages" {messages} (what the app appends to its history, after every
+ * step), "question" {id, question, options, multiple} (the model asked the user: the turn ends
+ * without the call's result, which the app adds with the answer and then continues), "usage"
+ * {used, max} (the tokens of the context in use, and the window), "compacting" {} and
+ * "compacted" {summary, request?, keep} (the history got too long for the context window: all but
+ * its newest `keep` messages are now the summary, which the caller keeps in their place) and
+ * "done" or "continue" {retry?, message?}: time is nearly up, or a model call failed (`retry`,
+ * with the reason), so the app sends the history again and the turn goes on there.
  */
 export async function runChat(opts: {
   provider: Provider;
@@ -301,6 +311,10 @@ export async function runChat(opts: {
   handOffMs?: number;
   /** When to cut off a model call (tests). Default: DEADLINE_MS. */
   deadlineMs?: number;
+  /** The model's context window in tokens: the history is condensed before it is full. */
+  window?: number;
+  /** The summary the history starts with (it is the first message). */
+  summary?: SummaryMark | null;
 }) {
   const { provider, ctx, emit, signal } = opts;
   const tools = toolsFor({ writes: opts.writes, search: opts.search });
@@ -322,30 +336,71 @@ export async function runChat(opts: {
     if (added.length > sent) emit("messages", { messages: added.slice(sent) });
     sent = added.length;
   };
-  // Steps count across requests: the tool rounds since the user's message, or since the
-  // question they answered.
-  const turn = opts.history.findLastIndex((m) =>
-    m.role === "user" || m.tool_calls?.some((c) => c.function.name === "ask_user")
-  );
-  const used = opts.history.slice(turn + 1).filter((m) => m.tool_calls?.length).length;
   let nudges = 0;
+  let window = opts.window;
+  let summary: SummaryMark | Pick<SummaryMark, "content" | "request"> | null = opts.summary ??
+    null;
+  // Estimates of the tokens are scaled by what the endpoint reported for the last request.
+  let scale = 1;
+  const measure = (list: ChatMessage[]) => Math.round(scale * estimateTokens(list, tools));
+  // The endpoint said the context is full: condense before the next try (once).
+  let full = false;
+  let refused = false;
+
+  const handOff = () => {
+    flush();
+    emit("continue", {});
+  };
 
   try {
-    for (let step = used;; step++) {
+    for (let step = 0;; step++) {
       // Every request takes at least one step, then hands off before time runs out (not while
       // asking for an answer: the history may end with the user's message then).
-      if (step > used && !nudges && Date.now() - started >= handOffMs) {
-        flush();
-        emit("continue", {});
-        return;
+      if (step > 0 && !nudges && Date.now() - started >= handOffMs) return handOff();
+      if (window) {
+        const size = measure(messages);
+        if (full || size > window * COMPACT_AT) {
+          if (step > 0 && Date.now() - started >= Math.min(handOffMs, LATE_COMPACT_MS)) {
+            return handOff();
+          }
+          emit("compacting", {});
+          // What the messages may take: the window but the instructions and the tools, and
+          // room for the answer.
+          const fixed = measure([messages[0]]);
+          const room = Math.max(0, window * COMPACT_AT - fixed);
+          late = AbortSignal.timeout(
+            Math.max(1, Math.min(MODEL_TIMEOUT_MS, deadlineMs - (Date.now() - started))),
+          );
+          const done = await compact({
+            provider,
+            net: ctx.net,
+            signal: signal ? AbortSignal.any([signal, late]) : late,
+            messages: messages.slice(1),
+            summary,
+            room: room * KEEP,
+            chunk: Math.max(2000, room),
+          });
+          late = undefined;
+          if (done) {
+            summary = done.mark;
+            const kept = messages.slice(messages.length - done.keep);
+            messages.splice(1, messages.length - 1, summaryMessage(done.mark), ...kept);
+            emit("compacted", {
+              summary: done.mark.content,
+              ...(done.mark.request !== undefined ? { request: done.mark.request } : {}),
+              keep: done.keep,
+            });
+          } else if (full) throw new HttpError(502, CONTEXT_FULL);
+          full = false;
+        }
+        emit("usage", { used: measure(messages), max: window });
       }
-      const last = step >= MAX_STEPS - 1;
-      // The last call of a turn gets no tools, so the model answers.
-      const final = last || nudges > 0;
+      // A model that ended without a word gets no tools, so it answers.
+      const final = nudges > 0;
       const body = final
         ? {
           messages: [
-            { ...messages[0], content: opts.system + (last ? WRAP_UP : ANSWER_NOW) },
+            { ...messages[0], content: opts.system + ANSWER_NOW },
             ...messages.slice(1),
           ],
         }
@@ -361,23 +416,43 @@ export async function runChat(opts: {
         ctx.net,
         signal ? AbortSignal.any([signal, late]) : late,
       );
-      for await (const ev of stream) {
-        if (ev.type === "text") emit("text", { delta: ev.delta });
-        else {
-          content = ev.content;
-          calls = ev.toolCalls.filter((c) => c.function.name);
+      let usage: { prompt: number; completion: number } | undefined;
+      try {
+        for await (const ev of stream) {
+          if (ev.type === "text") emit("text", { delta: ev.delta });
+          else {
+            content = ev.content;
+            calls = ev.toolCalls.filter((c) => c.function.name);
+            usage = ev.usage;
+          }
         }
+      } catch (err) {
+        // Too long for the model: condense and try again (the window may be smaller than
+        // thought).
+        if (window && !refused && !signal?.aborted && !late?.aborted && isContextError(err)) {
+          window = Math.min(window, windowFromError(err) ?? window);
+          full = refused = true;
+          late = undefined;
+          continue;
+        }
+        throw err;
       }
       late = undefined;
+      refused = false;
+      if (window && usage) {
+        const estimate = estimateTokens(body.messages, tools);
+        scale = Math.min(4, Math.max(0.5, usage.prompt / Math.max(1, estimate)));
+        emit("usage", { used: usage.prompt + usage.completion, max: window });
+      }
       // Some models end a turn without a word (e.g. after tool results), or only call tools
       // when they mustn't: ask again for the answer.
       const silent = !content.trim() && (final || !calls.length);
-      if (silent && !last && nudges < MAX_NUDGES) {
+      if (silent && nudges < MAX_NUDGES) {
         nudges++;
         continue;
       }
       if (silent) {
-        content = last ? OUT_OF_STEPS : NO_ANSWER;
+        content = NO_ANSWER;
         emit("text", { delta: content });
       }
       if (!calls.length || final) {

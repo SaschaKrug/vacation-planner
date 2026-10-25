@@ -215,11 +215,40 @@ Deno.test("near the time limit, a turn hands itself on to a new invocation", asy
   // The stream follows the turn across the invocations.
   assertEquals(ev.at(-1)!.event, "end");
   const s = await state(t, id);
-  assertEquals(t.counts.resumes, 29);
-  assertEquals(s.items.filter((it) => it.kind === "tool").length, 29);
-  assertEquals(shown(s.items).at(-1), "assistant: Out of steps: here is what I have.");
+  assertEquals(t.counts.resumes, 30);
+  assertEquals(s.items.filter((it) => it.kind === "tool").length, 30);
+  assertEquals(shown(s.items).at(-1), "assistant: Done looking: 30 times.");
   assertEquals(shown(replay(ev)), shown(s.items));
-  assertEquals(aiBody.tool_choice, "none");
+});
+
+Deno.test("a long turn is condensed for the model, and the next message still knows it", async () => {
+  const t = await setup({}, { contextWindow: 12000 });
+  const { ev, id } = await start(t, "keep looking 40 times");
+  let s = await state(t, id);
+  assertEquals(shown(s.items).at(-1), "assistant: Done looking: 40 times.");
+  assertEquals(s.items.filter((it) => it.kind === "tool").length, 40);
+  // The chat shows where it was condensed; the stream showed the same.
+  assert(s.items.some((it) => it.kind === "compacted"));
+  assertEquals(shown(replay(ev)), shown(s.items));
+  // How full the context is, kept with the chat.
+  assertEquals(s.chat.usage.max, 12000);
+  assert(s.chat.usage.used > 0 && s.chat.usage.used < 12000);
+  // The summary is kept among the messages; the next message builds on it.
+  const stored = await t.store.listChatMessages(id);
+  const marks = stored.filter((r) => r.message.role === "summary");
+  assert(marks.length >= 1);
+  await t.call("POST", `${t.ai}/chats/${id}/messages`, { text: "how often?", ...CONTEXT });
+  s = await state(t, id);
+  assertEquals(shown(s.items).at(-1), "assistant: Mock reply: how often?");
+  const [, summary, next] = aiBody.messages;
+  assertMatch(summary.content, /^\[What happened earlier[\s\S]*Looked \d+ times/);
+  assertEquals(next.role, "assistant");
+  assertEquals(aiBody.messages.at(-1), { role: "user", content: "how often?" });
+  // Everything after the summary is there, nothing went missing in between.
+  const from = marks.at(-1)!.message.from as number;
+  const after = stored.slice(from).filter((r) => r.message.role !== "summary");
+  // The instructions, the summary, the messages after it, and the new one.
+  assertEquals(aiBody.messages.length, 2 + after.length + 1);
 });
 
 Deno.test("the assistant asks, and goes on with the answer", async () => {

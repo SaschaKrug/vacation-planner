@@ -11,7 +11,8 @@
 //   "analyze <dimension>"                 -> analyze_transactions grouped by it, this year
 //   a URL                                 -> fetch_page
 //   "ask" / "ask several"                 -> ask_user: where to go (pick one / several)
-//   "keep looking"                        -> get_calendar again and again, until tools are off
+//   "keep looking" / "keep looking N times" -> get_calendar 30 (N) times, then "Done looking."
+//                                            (the looks before a summary count too)
 //   "say nothing"                         -> get_calendar, then no words until tools are off
 //   "stay silent"                         -> no words at all
 //   "take your time"                      -> answers after 200 ms
@@ -24,6 +25,11 @@
 // it can't place.
 // After a tool result it says what happened; anything else is echoed. A message with images
 // (content parts) gets "I see 2 images." before the echo.
+// Asked to condense a conversation, it says how often it looked so far ("Looked 12 times.").
+// It reports the tokens used (a token is 4 characters) when asked to (stream_options). The model
+// "mock-large" has a context window of 64,000 tokens (in the model list), "mock-tiny" one of
+// 10,000 that only its errors tell. Under .../v1/strict it refuses options it doesn't know
+// (stream_options), like Mistral.
 
 type Part = { type: string; text?: string };
 type Msg = { role: string; content: string | null | Part[]; tool_calls?: unknown[] };
@@ -114,15 +120,61 @@ function wait(ms: number, signal: AbortSignal) {
 /** How often a "then fail N times" message failed so far. */
 const failed = new Map<string, number>();
 
+const TINY_WINDOW = 10_000;
+
+/** How often the conversation looked at the calendar: in the summary, and after it. */
+function looks(messages: Msg[]) {
+  const before = messages.map((m) => /Looked (\d+) times/.exec(textOf(m.content))?.[1])
+    .findLast(Boolean);
+  return Number(before ?? 0) + messages.filter((m) => m.role === "tool").length;
+}
+
 export async function mockAi(req: Request): Promise<Response> {
-  const path = new URL(req.url).pathname.replace(/^.*\/v1/, "");
+  const strict = /\/v1\/strict\//.test(new URL(req.url).pathname);
+  const path = new URL(req.url).pathname.replace(/^.*\/v1(\/strict)?/, "");
   if (req.method === "GET" && path === "/models") {
-    return Response.json({ data: [{ id: "mock-large" }, { id: "mock-small" }] });
+    return Response.json({
+      data: [{ id: "mock-large", context_length: 64_000 }, { id: "mock-small" }, {
+        id: "mock-tiny",
+      }],
+    });
   }
   if (req.method !== "POST" || path !== "/chat/completions") {
     return Response.json({ error: { message: "Not found" } }, { status: 404 });
   }
   const body = await req.json();
+  if (strict && body.stream_options) {
+    return Response.json({
+      object: "error",
+      message: {
+        detail: [{
+          type: "extra_forbidden",
+          loc: ["body", "stream_options"],
+          msg: "Extra inputs are not permitted",
+        }],
+      },
+    }, { status: 422 });
+  }
+  const tokens = Math.ceil(JSON.stringify([body.messages, body.tools ?? []]).length / 4);
+  if (body.model === "mock-tiny" && tokens > TINY_WINDOW) {
+    return Response.json({
+      error: {
+        message:
+          `This model's maximum context length is ${TINY_WINDOW} tokens. However, your messages resulted in ${tokens} tokens.`,
+      },
+    }, { status: 400 });
+  }
+  const res = await respond(req, body);
+  if (!body.stream_options?.include_usage || !body.stream || !res.ok) return res;
+  // The tokens come in a chunk of their own, before the end.
+  const usage = `data: ${
+    JSON.stringify({ choices: [], usage: { prompt_tokens: tokens, completion_tokens: 10 } })
+  }\n\n`;
+  const text = (await res.text()).replace("data: [DONE]", usage + "data: [DONE]");
+  return new Response(text, { headers: { "content-type": "text/event-stream" } });
+}
+
+async function respond(req: Request, body: any): Promise<Response> {
   const messages: Msg[] = body.messages ?? [];
   const last = messages.at(-1)!;
   const stream = body.stream === true;
@@ -131,6 +183,12 @@ export async function mockAi(req: Request): Promise<Response> {
   );
 
   const system = textOf(messages[0]?.content);
+  if (system.startsWith("You condense a conversation")) {
+    const input = textOf(last.content);
+    const before = Number(/Looked (\d+) times/.exec(input)?.[1] ?? 0);
+    const n = before + (input.match(/^Result of get_calendar/gm)?.length ?? 0);
+    return reply(stream, `Looked ${n} times. Condensed: ${input.length} characters.`);
+  }
   if (system.startsWith("You sort bank transactions into categories.")) {
     return categorize(
       stream,
@@ -163,8 +221,12 @@ export async function mockAi(req: Request): Promise<Response> {
       return Response.json({ error: { message: "Overloaded" } }, { status: 503 });
     }
   }
-  if (/keep looking/i.test(asked)) {
-    if (body.tool_choice === "none") return reply(stream, "Out of steps: here is what I have.");
+  const looking = /keep looking(?: (\d+) times)?/i.exec(asked);
+  if (looking) {
+    const n = looks(messages);
+    if (n >= Number(looking[1] ?? 30) || body.tool_choice === "none") {
+      return reply(stream, `Done looking: ${n} times.`);
+    }
     return reply(stream, "", {
       name: "get_calendar",
       args: { from: "2026-01-01", to: "2026-01-31" },

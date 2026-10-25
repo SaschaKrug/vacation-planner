@@ -31,6 +31,8 @@ export function AiSection() {
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState("");
+  // Tokens as typed; "" finds the window out.
+  const [contextWindow, setContextWindow] = useState("");
   const [models, setModels] = useState<string[] | null>(null);
   const [searchProvider, setSearchProvider] = useState<
     AiSettings["searchProvider"]
@@ -44,6 +46,7 @@ export function AiSection() {
     setSettings(s);
     setBaseUrl(s.baseUrl);
     setModel(s.model);
+    setContextWindow(s.contextWindow ? String(s.contextWindow) : "");
     setSearchProvider(s.searchProvider);
     setApiKey("");
     setSearchKey("");
@@ -73,6 +76,7 @@ export function AiSection() {
       const body: AiSettingsPatch = {
         baseUrl,
         model,
+        contextWindow: Number(contextWindow) || 0,
         searchProvider,
         ...patch,
       };
@@ -121,7 +125,7 @@ export function AiSection() {
   }
 
   const dirty = baseUrl !== settings.baseUrl || model !== settings.model ||
-    !!apiKey ||
+    (Number(contextWindow) || 0) !== settings.contextWindow || !!apiKey ||
     searchProvider !== settings.searchProvider || !!searchKey;
 
   return (
@@ -227,6 +231,21 @@ export function AiSection() {
               {t("ai_settings.load_models")}
             </Button>
           </div>
+        </Field>
+        <Field
+          label={t("ai_settings.context_window")}
+          help={t("ai_settings.context_window_help")}
+        >
+          <Input
+            className="w-40"
+            type="number"
+            inputMode="numeric"
+            min={1000}
+            step={1000}
+            value={contextWindow}
+            placeholder="128000"
+            onChange={(e) => setContextWindow(e.target.value)}
+          />
         </Field>
         <div className="flex flex-wrap items-center gap-2">
           <Button disabled={!!busy || !dirty} onClick={() => save()}>

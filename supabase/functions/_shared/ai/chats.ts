@@ -2,7 +2,9 @@
 // what they show (items) and what the model gets back (messages). A turn doesn't run in the
 // app's request but in the background: it goes on when the app is closed, and before the
 // platform's time limit it hands itself on to a new invocation of the function. The app, on any
-// device, follows it: live from the invocation that runs the turn, else from the database.
+// device, follows it: live from the invocation that runs the turn, else from the database. A
+// turn runs as long as the model works on; when the chat gets too long for the model's context
+// window, its older part is condensed into a summary (see context.ts), kept with the messages.
 //
 // Routes under /families/{id}/ai/chats:
 //   GET                    the user's chats
@@ -34,6 +36,7 @@ import {
   sseResponse,
   windowHistory,
 } from "./chat.ts";
+import { type StoredMessage, type SummaryMark, viewOf } from "./context.ts";
 import type { ChatMessage, ContentPart, Provider, ToolCall } from "./provider.ts";
 import type { ToolContext } from "./tools.ts";
 
@@ -44,6 +47,8 @@ export interface Turn {
   ctx: ToolContext;
   writes: boolean;
   search: boolean;
+  /** The model's context window in tokens. */
+  window: number;
 }
 
 export type Prepare = (
@@ -88,6 +93,8 @@ export type Item =
     answer?: { selected: string[]; text?: string };
     skipped?: boolean;
   }
+  /** The older part of the chat was condensed for the model from here on. */
+  | { kind: "compacted" }
   | { kind: "error"; text: string };
 
 type Attachment = { kind: "image" | "file"; name: string; url?: string };
@@ -96,7 +103,7 @@ type QuestionItem = Item & { kind: "question" };
 
 /** What a running turn does right now. */
 type Activity =
-  | { kind: "thinking" | "writing" | "tool" }
+  | { kind: "thinking" | "writing" | "tool" | "compacting" }
   | { kind: "retrying"; attempt: number; max: number };
 
 /** A turn that doesn't renew its hold on the chat for this long is taken over. */
@@ -145,6 +152,8 @@ type Live =
   | { type: "end" };
 
 type Summary = ReturnType<typeof summaryOf>;
+/** How full the model's context is: tokens in use, and the window. */
+type Usage = { used: number; max: number };
 
 /** A turn running in this invocation, for followers to listen to. */
 class LocalRun {
@@ -171,6 +180,7 @@ export function summaryOf(c: ChatRow) {
     title: c.title,
     status: c.status,
     activity: c.status === "running" ? c.activity : null,
+    usage: (c.usage ?? null) as Usage | null,
     updatedAt: c.updated_at,
   };
 }
@@ -197,7 +207,7 @@ function pause(ms: number, signal?: AbortSignal) {
 
 /** The question that waits for its answer: the last one, unanswered, while the history ends
  *  with its call. */
-function openQuestion(items: Item[], messages: ChatMessage[]): QuestionItem | undefined {
+function openQuestion(items: Item[], messages: StoredMessage[]): QuestionItem | undefined {
   const q = items.findLast((it) => it.kind === "question");
   if (q?.kind !== "question" || q.answer || q.skipped) return undefined;
   const last = messages.at(-1);
@@ -270,8 +280,9 @@ type Outcome =
 class Runner {
   private chat!: ChatRow;
   private items: Item[] = [];
-  private messages: ChatMessage[] = [];
+  private messages: StoredMessage[] = [];
   private activity: Activity | null = null;
+  private usage: Usage | null = null;
   private retries = 0;
   private queue: Promise<void> = Promise.resolve();
   private failed = false;
@@ -339,7 +350,7 @@ class Runner {
     this.timer ??= setTimeout(() => this.saveItems(), SAVE_MS);
   }
 
-  private addMessages(list: ChatMessage[]) {
+  private addMessages(list: StoredMessage[]) {
     const rows = list.map((message, i) => ({
       seq: this.messages.length + i,
       message: message as unknown as Record<string, unknown>,
@@ -355,6 +366,7 @@ class Runner {
         run_until: leaseUntil(this.env),
         activity: this.activity,
         retries: this.retries,
+        usage: this.usage,
       }, this.token);
       if (!row) return this.run.abort.abort("lost");
       this.chat = row;
@@ -362,10 +374,17 @@ class Runner {
     });
   }
 
+  private publishChat() {
+    this.run.publish({
+      type: "chat",
+      chat: summaryOf({ ...this.chat, activity: this.activity, usage: this.usage }),
+    });
+  }
+
   private doing(activity: Activity) {
     if (JSON.stringify(activity) === JSON.stringify(this.activity)) return;
     this.activity = activity;
-    this.run.publish({ type: "chat", chat: summaryOf({ ...this.chat, activity }) });
+    this.publishChat();
     this.renew();
   }
 
@@ -380,8 +399,9 @@ class Runner {
     this.chat = chat;
     for (const r of itemRows) this.items[r.seq] = r.item as Item;
     this.run.items = this.items;
-    this.messages = messageRows.map((r) => r.message as unknown as ChatMessage);
+    this.messages = messageRows.map((r) => r.message as unknown as StoredMessage);
     this.activity = chat.activity as Activity | null;
+    this.usage = chat.usage as Usage | null;
     // A turn taken over from an invocation that died counts as a failed try.
     this.retries = chat.retries + (takeover ? 1 : 0);
     const beat = setInterval(() => {
@@ -533,6 +553,32 @@ class Runner {
           this.retries = 0;
           break;
         }
+        case "usage":
+          if (data.used === this.usage?.used && data.max === this.usage?.max) break;
+          this.usage = { used: data.used, max: data.max };
+          this.publishChat();
+          this.renew();
+          break;
+        case "compacting":
+          this.doing({ kind: "compacting" });
+          break;
+        case "compacted": {
+          // The summary stands for the messages before the newest `keep` (summaries aside).
+          let from = this.messages.length;
+          for (let n = data.keep; n > 0;) if (this.messages[--from].role !== "summary") n--;
+          const mark: SummaryMark = {
+            role: "summary",
+            content: data.summary,
+            ...(data.request !== undefined ? { request: data.request } : {}),
+            from,
+          };
+          this.addMessages([mark]);
+          this.answer = null;
+          this.add({ kind: "compacted" });
+          this.saveItems();
+          this.doing({ kind: "thinking" });
+          break;
+        }
         case "done":
           outcome = { kind: "done" };
           break;
@@ -541,9 +587,11 @@ class Runner {
           break;
       }
     };
+    const at = this.messages.findLastIndex((m) => m.role === "summary");
     await runChat({
       ...turn,
-      history: windowHistory(this.messages),
+      history: viewOf(this.messages),
+      summary: at < 0 ? null : this.messages[at] as SummaryMark,
       emit,
       signal: this.signal,
       handOffMs: Math.max(0, handOffMs),
@@ -678,6 +726,7 @@ class Runner {
         run_until: leaseUntil(this.env),
         activity: this.activity,
         retries: this.retries,
+        usage: this.usage,
       }, this.token)
     );
     if (!this.failed) await handOn(this.env, this.base, this.chat, this.token);
@@ -962,6 +1011,7 @@ async function send(ctx: Ctx, env: Env, id: string | null) {
       context: { ...context },
       activity: null,
       notes: [],
+      usage: null,
       rev: 0,
       created_at: now,
       updated_at: now,
@@ -1145,6 +1195,7 @@ async function importChat(ctx: Ctx) {
     context: {},
     activity: null,
     notes: [],
+    usage: null,
     rev: 0,
     created_at: updated,
     updated_at: updated,

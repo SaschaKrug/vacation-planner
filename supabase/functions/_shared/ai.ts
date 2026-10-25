@@ -3,7 +3,14 @@
 // turn without a stored chat (for scripts) and sorting transactions into categories. All are
 // for editors: the assistant spends the family's AI tokens and can change things.
 
-import { type ChatMessage, listModels, type Provider, streamChat } from "./ai/provider.ts";
+import { DEFAULT_WINDOW } from "./ai/context.ts";
+import {
+  type ChatMessage,
+  contextWindow,
+  listModels,
+  type Provider,
+  streamChat,
+} from "./ai/provider.ts";
 import { checkUrl, type Fetch, type NetOptions } from "./ai/net.ts";
 import { matchSimilar, type Search, suggestCategories } from "./ai/categorize.ts";
 import {
@@ -49,6 +56,10 @@ export interface AiEnv {
   retryMs?: number;
 }
 
+/** The context windows a family can set (tokens); 0 finds it out (or takes DEFAULT_WINDOW). */
+const MIN_WINDOW = 1000;
+const MAX_WINDOW = 10_000_000;
+
 /** Transactions one categorize request sends to the model. */
 const MAX_CATEGORIZE = 200;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -62,6 +73,7 @@ function emptyRow(familyId: string): AiSettingsRow {
     search_provider: "none",
     search_key_enc: "",
     allow_writes: true,
+    context_window: 0,
     updated_at: new Date().toISOString(),
   };
 }
@@ -98,6 +110,7 @@ async function publicSettings(env: AiEnv, row: AiSettingsRow) {
     hasSearchKey: !!row.search_key_enc,
     searchKeyHint: hint(searchKey),
     allowWrites: row.allow_writes,
+    contextWindow: row.context_window ?? 0,
     serverReady: !!env.secrets,
   };
 }
@@ -156,7 +169,7 @@ async function getSettings({ store, load }: Ctx, env: AiEnv) {
 }
 
 /** PUT /ai/settings {baseUrl, apiKey ("" removes it), model, searchProvider, searchKey,
- *  allowWrites}: only the fields given change. */
+ *  allowWrites, contextWindow (tokens, 0: from the endpoint)}: only the fields given change. */
 async function putSettings({ store, req, load }: Ctx, env: AiEnv) {
   const { family } = await load("edit");
   const body = await readBody(req);
@@ -191,6 +204,19 @@ async function putSettings({ store, req, load }: Ctx, env: AiEnv) {
       throw new HttpError(400, "allowWrites must be true or false");
     }
     row.allow_writes = body.allowWrites;
+  }
+  if (body.contextWindow !== undefined) {
+    const n = body.contextWindow;
+    if (
+      typeof n !== "number" || !Number.isInteger(n) ||
+      (n !== 0 && (n < MIN_WINDOW || n > MAX_WINDOW))
+    ) {
+      throw new HttpError(
+        400,
+        `contextWindow must be 0 (automatic) or ${MIN_WINDOW} to ${MAX_WINDOW} tokens`,
+      );
+    }
+    row.context_window = n;
   }
   row.updated_at = new Date().toISOString();
   await store.saveAiSettings(row);
@@ -257,11 +283,12 @@ async function prepareTurn(
   if (!row.base_url || !row.model) throw new HttpError(400, "The AI assistant isn't set up yet");
   const p: Provider = await provider(row, env);
   const search = await searchOf(row, env);
-  const [types, categories, accounts, settings] = await Promise.all([
+  const [types, categories, accounts, settings, window] = await Promise.all([
     store.listTypes(family.id),
     store.listCategories(family.id),
     store.listAccounts(family.id),
     store.getFinanceSettings(family.id),
+    row.context_window || contextWindow(p, env.net),
   ]);
   const system = systemPrompt({
     family,
@@ -279,6 +306,7 @@ async function prepareTurn(
     ctx: { lang: context.lang, store, familyId: family.id, net: env.net, search, signal },
     writes: row.allow_writes,
     search: !!search,
+    window: window || DEFAULT_WINDOW,
   };
 }
 

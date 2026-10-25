@@ -101,6 +101,8 @@ export interface AiSettingsRow {
   search_provider: SearchProvider;
   search_key_enc: string;
   allow_writes: boolean;
+  /** The model's context window in tokens; 0: found out from the endpoint. */
+  context_window: number;
   updated_at: string;
 }
 
@@ -126,6 +128,8 @@ export interface ChatRow {
   activity: Record<string, unknown> | null;
   /** Changes the user undid, for the model with the next message. */
   notes: string[];
+  /** How full the model's context was at the last step: {used, max} tokens. */
+  usage: Record<string, unknown> | null;
   /** Counts the changes of the items. */
   rev: number;
   created_at: string;
@@ -144,6 +148,7 @@ export type ChatPatch = Partial<
     | "context"
     | "activity"
     | "notes"
+    | "usage"
     | "updated_at"
   >
 >;

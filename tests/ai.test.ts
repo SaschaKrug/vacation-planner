@@ -126,6 +126,9 @@ function events(sse: string) {
   }).filter((e) => e.event !== "ping");
 }
 
+/** The events but how full the context is (sent before and after every model call). */
+const names = (ev: { event: string }[]) => ev.map((e) => e.event).filter((n) => n !== "usage");
+
 /** What the app adds to its history: the messages of every step. */
 function addedOf(ev: { event: string; data: any }[]) {
   return ev.filter((e) => e.event === "messages").flatMap((e) => e.data.messages);
@@ -171,6 +174,7 @@ Deno.test("stores the AI settings with the keys encrypted and never returns them
     hasSearchKey: true,
     searchKeyHint: "9876",
     allowWrites: false,
+    contextWindow: 0,
     serverReady: true,
   });
   const row = (await t.store.getAiSettings(t.f.id))!;
@@ -182,6 +186,16 @@ Deno.test("stores the AI settings with the keys encrypted and never returns them
   assertEquals((await t.view("GET", `/families/${t.f.id}/ai/settings`)).status, 403);
   assertEquals((await t.call("PUT", `${t.ai}/settings`, { searchProvider: "bing" })).status, 400);
   assertEquals((await t.call("PUT", `${t.ai}/settings`, { apiKey: "has space" })).status, 400);
+  // The model's context window: a number of tokens, or 0 to find it out.
+  const window = await t.call("PUT", `${t.ai}/settings`, { contextWindow: 32000 });
+  assertEquals(window.data.contextWindow, 32000);
+  for (const contextWindow of [-1, 500, 1.5, "32000", 20_000_000]) {
+    assertEquals(
+      (await t.call("PUT", `${t.ai}/settings`, { contextWindow })).status,
+      400,
+      String(contextWindow),
+    );
+  }
 });
 
 Deno.test("without AI_CONFIG_KEY keys can't be saved", async () => {
@@ -235,7 +249,7 @@ Deno.test("lists the endpoint's models and tests the connection", async () => {
   const t = await family();
   // The form can ask before anything is saved.
   const list = await t.call("POST", `${t.ai}/models`, { baseUrl: AI, apiKey: KEY });
-  assertEquals(list.data.models, ["mock-large", "mock-small"]);
+  assertEquals(list.data.models, ["mock-large", "mock-small", "mock-tiny"]);
   assertEquals((await t.call("POST", `${t.ai}/test`)).status, 400); // nothing saved yet
   await t.call("PUT", `${t.ai}/settings`, { baseUrl: AI, apiKey: KEY, model: "mock-small" });
   const test = await t.call("POST", `${t.ai}/test`);
@@ -246,8 +260,7 @@ Deno.test("lists the endpoint's models and tests the connection", async () => {
 Deno.test("the assistant changes the calendar and the change can be undone", async () => {
   const t = await configured();
   const ev = await chat(t, "Add vacation from 2026-08-03 to 2026-08-07");
-  const names = ev.map((e) => e.event);
-  assertEquals(names.filter((n) => n !== "text"), [
+  assertEquals(names(ev).filter((n) => n !== "text"), [
     "tool",
     "tool_result",
     "change",
@@ -264,6 +277,11 @@ Deno.test("the assistant changes the calendar and the change can be undone", asy
   assertEquals(entries["2026-08-03"], ["vacation"]);
   const text = ev.filter((e) => e.event === "text").map((e) => e.data.delta).join("");
   assertMatch(text, /Done: 5 days changed/);
+  // How full the context is: the window from the endpoint's model list, the tokens it reported.
+  assert(aiBody.stream_options.include_usage);
+  const usage = ev.filter((e) => e.event === "usage").map((e) => e.data);
+  assert(usage.length >= 4);
+  assert(usage.every((u) => u.max === 64000 && u.used > 1000 && u.used < 64000));
 
   // The history for the next turn: the call, its (shortened) result and the answer.
   const added = addedOf(ev);
@@ -306,7 +324,7 @@ Deno.test("the assistant asks a question and goes on with the answer", async () 
   // The model is told to ask rather than guess.
   assertMatch(aiBody.messages[0].content, /## Ask instead of guessing/);
   // The question ends the turn, without the call's result: that is the user's answer.
-  assertEquals(ev.map((e) => e.event).filter((n) => n !== "text"), [
+  assertEquals(names(ev).filter((n) => n !== "text"), [
     "messages",
     "question",
     "done",
@@ -396,16 +414,67 @@ Deno.test("the assistant searches the web and reads pages, but not private ones"
   assert(!requests.some((r) => r.includes("169.254")));
 });
 
-Deno.test("out of steps, the assistant answers with what it has instead of looping on", async () => {
+Deno.test("an endpoint that doesn't know stream_options is asked without it", async () => {
+  const t = await configured({}, { baseUrl: AI + "/strict" });
+  const before = requests.length;
+  const ev = await chat(t, "hello");
+  assertMatch(ev.filter((e) => e.event === "text").map((e) => e.data.delta).join(""), /hello/);
+  assertEquals(aiBody.stream_options, undefined);
+  // Refused once, then asked without it (also from now on).
+  assertEquals(requests.slice(before).filter((r) => r.endsWith("/chat/completions")).length, 2);
+  await chat(t, "again");
+  assertEquals(requests.slice(before).filter((r) => r.endsWith("/chat/completions")).length, 3);
+  // Without the endpoint's numbers, the context in use is estimated.
+  const usage = ev.filter((e) => e.event === "usage").map((e) => e.data);
+  assert(usage.length && usage.every((u) => u.used > 1000 && u.max === 64000));
+});
+
+Deno.test("a long task runs on as long as the model works, without a limit of steps", async () => {
   const t = await configured();
-  const ev = await chat(t, "keep looking");
-  const tools = ev.filter((e) => e.event === "tool");
-  assertEquals(tools.length, 29);
-  assertEquals(aiBody.tool_choice, "none");
-  assert(aiBody.messages[0].content.includes("## Out of steps"));
+  const ev = await chat(t, "keep looking 60 times");
+  assertEquals(ev.filter((e) => e.event === "tool").length, 60);
+  assertEquals(aiBody.tool_choice, "auto");
   const added = addedOf(ev);
-  assertEquals(added.at(-1), { role: "assistant", content: "Out of steps: here is what I have." });
+  assertEquals(added.at(-1), { role: "assistant", content: "Done looking: 60 times." });
   assert(ev.some((e) => e.event === "done"));
+  assert(!ev.some((e) => e.event === "compacted")); // it all fits
+});
+
+Deno.test("a conversation too long for the context is condensed, not cut off", async () => {
+  const t = await configured({}, { contextWindow: 12000 });
+  const user = { role: "user", content: "keep looking 40 times" };
+  const ev = await chat(t, user.content);
+  // It looked 40 times in all: the summary keeps count of the looks it condensed.
+  assertEquals(ev.filter((e) => e.event === "tool").length, 40);
+  assertEquals(addedOf(ev).at(-1), { role: "assistant", content: "Done looking: 40 times." });
+  const compacted = ev.filter((e) => e.event === "compacted").map((e) => e.data);
+  assert(compacted.length >= 1);
+  assertMatch(compacted[0].summary, /^Looked \d+ times/);
+  // The user's request stays word for word with the summary.
+  assertEquals(compacted[0].request, user.content);
+  assert(
+    ev.findIndex((e) => e.event === "compacting") < ev.findIndex((e) => e.event === "compacted"),
+  );
+  // The model got the summary first, then the newest messages (from a call, not a result).
+  const [, summary, next] = aiBody.messages;
+  assertEquals(summary.role, "user");
+  assertMatch(summary.content, /condensed[\s\S]*Looked \d+ times[\s\S]*keep looking 40 times$/);
+  assertEquals(next.role, "assistant");
+  // The context never got full.
+  const usage = ev.filter((e) => e.event === "usage").map((e) => e.data);
+  assert(usage.every((u) => u.max === 12000 && u.used < 12000), JSON.stringify(usage));
+});
+
+Deno.test("when the endpoint says the context is full, the conversation is condensed", async () => {
+  // The model list doesn't tell this model's window (10,000): only its error does.
+  const t = await configured({}, { model: "mock-tiny" });
+  const ev = await chat(t, "keep looking 50 times");
+  assertEquals(addedOf(ev).at(-1), { role: "assistant", content: "Done looking: 50 times." });
+  assert(ev.some((e) => e.event === "compacted"));
+  assert(!ev.some((e) => e.event === "continue"));
+  const usage = ev.filter((e) => e.event === "usage").map((e) => e.data);
+  assertEquals(usage[0].max, 128000);
+  assertEquals(usage.at(-1).max, 10000);
 });
 
 Deno.test("near the time limit, the turn is handed on to the next request", async () => {
@@ -413,7 +482,7 @@ Deno.test("near the time limit, the turn is handed on to the next request", asyn
   const user = { role: "user", content: "keep looking" };
   // Each request takes one step, then hands off.
   let ev = await chat(t, "keep looking");
-  assertEquals(ev.map((e) => e.event), ["tool", "tool_result", "messages", "continue"]);
+  assertEquals(names(ev), ["tool", "tool_result", "messages", "continue"]);
   const history: unknown[] = [user, ...addedOf(ev)];
   assertEquals(history.length, 3);
   let rounds = 1;
@@ -426,15 +495,11 @@ Deno.test("near the time limit, the turn is handed on to the next request", asyn
     if (!ev.some((e) => e.event === "continue")) break;
     assertEquals(ev.filter((e) => e.event === "tool").length, 1);
   }
-  // The steps count across requests: the 30th step answers without tools.
-  assertEquals(rounds, 30);
-  assertEquals(aiBody.tool_choice, "none");
+  // It looked 30 times, one step per request, then answered.
+  assertEquals(rounds, 31);
   assert(ev.some((e) => e.event === "done"));
-  assertEquals(history.at(-1), {
-    role: "assistant",
-    content: "Out of steps: here is what I have.",
-  });
-  assertEquals(history.length, 1 + 29 * 2 + 1);
+  assertEquals(history.at(-1), { role: "assistant", content: "Done looking: 30 times." });
+  assertEquals(history.length, 1 + 30 * 2 + 1);
 
   // A long turn keeps its user message, even past the history limit.
   const turn = history.slice(0, -1);
@@ -482,8 +547,8 @@ Deno.test("a model that ends without a word is asked again for its answer", asyn
 Deno.test("a failed or too slow model call hands the step back to be tried again", async () => {
   // Too slow: cut off before the platform would stop the request.
   let t = await configured({ aiDeadlineMs: 50 });
-  let ev = await chat(t, "take your time");
-  assertEquals(ev.map((e) => e.event), ["continue"]);
+  let ev = (await chat(t, "take your time")).filter((e) => e.event !== "usage");
+  assertEquals(names(ev), ["continue"]);
   assertEquals(ev[0].data.retry, true);
   assertMatch(ev[0].data.message, /took too long/);
 
@@ -491,8 +556,8 @@ Deno.test("a failed or too slow model call hands the step back to be tried again
   t = await configured();
   const user = { role: "user", content: "keep looking, then fail" };
   const res = await t.call("POST", `${t.ai}/chat`, { messages: [user] });
-  ev = events(res.data);
-  assertEquals(ev.map((e) => e.event), ["tool", "tool_result", "messages", "continue"]);
+  ev = events(res.data).filter((e) => e.event !== "usage");
+  assertEquals(names(ev), ["tool", "tool_result", "messages", "continue"]);
   assertEquals(ev[3].data.retry, true);
   assertMatch(ev[3].data.message, /refused the request: 503/);
   const history = [user, ...addedOf(ev)];

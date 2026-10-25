@@ -55,6 +55,8 @@ export function transcript(items: Item[], result: (id: string) => string | undef
           : "";
         return [`**❓ ${item.question}**`, ...lines, answer].filter(Boolean).join("\n");
       }
+      case "compacted":
+        return `*${t("chat.compacted")}*`;
       case "error":
         return `⚠️ ${item.text}`;
     }

@@ -142,6 +142,8 @@ export interface AiSettings {
   hasSearchKey: boolean;
   searchKeyHint: string;
   allowWrites: boolean;
+  /** The model's context window in tokens; 0: from the API's model list (or 128,000). */
+  contextWindow: number;
   serverReady: boolean;
 }
 
@@ -152,6 +154,7 @@ export interface AiSettingsPatch {
   searchProvider?: AiSettings["searchProvider"];
   searchKey?: string;
   allowWrites?: boolean;
+  contextWindow?: number;
 }
 
 /** A request against /families/{id} that undoes (part of) a change the assistant made. */
@@ -171,8 +174,14 @@ export interface ChatQuestion {
 
 /** What a running turn does right now. */
 export type ChatActivity =
-  | { kind: "thinking" | "writing" | "tool" }
+  | { kind: "thinking" | "writing" | "tool" | "compacting" }
   | { kind: "retrying"; attempt: number; max: number };
+
+/** How full the model's context is: the tokens the chat uses, and the most it takes. */
+export interface ChatUsage {
+  used: number;
+  max: number;
+}
 
 /** A chat as the list shows it; the server runs its turns. */
 export interface ChatSummary {
@@ -180,6 +189,8 @@ export interface ChatSummary {
   title: string;
   status: "idle" | "running";
   activity: ChatActivity | null;
+  /** At its last step (null before the first). */
+  usage: ChatUsage | null;
   updatedAt: string;
 }
 
