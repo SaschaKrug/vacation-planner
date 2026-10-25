@@ -247,6 +247,7 @@ if (args["mock-ai"]) {
       search_provider: "none",
       search_key_enc: "",
       allow_writes: true,
+      context_window: 0,
       updated_at: new Date().toISOString(),
     });
   }

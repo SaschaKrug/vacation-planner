@@ -13,6 +13,7 @@ import {
   type ChatInput,
   type ChatQuestion,
   type ChatSummary,
+  type ChatUsage,
   type UndoStep,
 } from "@/lib/api";
 import { getLang, t } from "@/lib/i18n";
@@ -57,6 +58,8 @@ export type Item =
     answer?: { selected: string[]; text?: string };
     skipped?: boolean;
   })
+  /** From here on, the model gets the earlier part of the chat as a summary. */
+  | { kind: "compacted" }
   | { kind: "error"; text: string };
 
 export type QuestionItem = Item & { kind: "question" };
@@ -73,6 +76,8 @@ export interface Chat {
   items: Item[];
   /** The items are saved up to this revision (the server sends what changed since). */
   rev: number;
+  /** How full the model's context is. */
+  usage: ChatUsage | null;
 }
 
 /** A follow request: how it gets the chat's events. */
@@ -233,7 +238,14 @@ export class ChatStore {
       const s = await api.chat<Item>(this.token, id);
       if (this.currentId !== id) return;
       for (const it of s.items) if (it?.kind === "change") this.seen.add(it.id);
-      this.current = { id, title: s.chat.title, status: s.chat.status, items: s.items, rev: s.rev };
+      this.current = {
+        id,
+        title: s.chat.title,
+        status: s.chat.status,
+        items: s.items,
+        rev: s.rev,
+        usage: s.chat.usage ?? null,
+      };
       this.summary(s.chat);
       this.emit();
       if (s.chat.status === "running") this.follow(id);
@@ -306,6 +318,7 @@ export class ChatStore {
         status: "idle",
         items: [],
         rev: 0,
+        usage: null,
       };
     }
     const c = this.current;
@@ -455,6 +468,7 @@ export class ChatStore {
         if (!c) break;
         c.title = e.data.title;
         c.status = e.data.status;
+        c.usage = e.data.usage ?? c.usage;
         const a = e.data.activity;
         if (!a || e.data.status !== "running") this.activity = null;
         else if (JSON.stringify({ ...this.activity, at: 0 }) !== JSON.stringify({ ...a, at: 0 })) {
