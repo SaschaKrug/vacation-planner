@@ -32,6 +32,8 @@ const MAX_MAPPINGS = 20;
 const MAX_SUGGESTIONS = 200;
 const TRANSFER_DAYS = 4; // how far apart the two legs of a suggested transfer may be
 const SPLIT_RE = /split-?buchung/i; // how banks mark a booking whose parts they list as well
+// An order line's order number, which the bank's booking of the order names too.
+const ORDER_RE = /\bbestell(?:ung)?\s*(?:nr\.?|nummer)\s*:?\s*([\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)*)/iu;
 const MAX_SPLIT_SEARCH = 16; // parts that a booking's exact sum is searched among
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -664,44 +666,104 @@ function exactParts(parts: TransactionRow[], cents: number): TransactionRow[] | 
   return best;
 }
 
+/** The order number an order line names ("Bestellnr. 306-1234567-1234567"), lower case and
+ *  without dashes. */
+function orderOf(t: TransactionRow): string {
+  return t.description.match(ORDER_RE)?.[1].replaceAll("-", "").toLowerCase() ?? "";
+}
+
+/** The words of a transaction's payee and description like orderOf: lower case, and words
+ *  joined by dashes (order numbers) as one word without them. */
+function wordsOf(t: TransactionRow): string[] {
+  const words = `${t.payee} ${t.description}`.match(/[\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)*/gu);
+  return (words ?? []).map((w) => w.replaceAll("-", "").toLowerCase());
+}
+
 /**
- * Split bookings among transactions that aren't parts or bookings yet: a transaction marked
- * "Splitbuchung" (in payee or description) takes the other transactions of the same day,
- * account and merchant as its parts, as long as they add up to at most its amount in the same
- * direction (the rest being shipping, say). With several such bookings, each first takes the
- * parts that add up to it exactly; the parts left over go to the one booking without an exact
- * match, if there is just one.
+ * Splits `left` among `bookings` (of one day and account): with several bookings, each first
+ * takes the parts that add up to it exactly. The parts left over go to the one booking without
+ * an exact match, if there is just one: all of them if they add up to at most its amount in the
+ * same direction (the rest being shipping, say), else the ones that add up to it exactly (an
+ * order line listed twice stays out).
+ */
+function assignParts(bookings: TransactionRow[], left: TransactionRow[]): SplitMatch[] {
+  bookings = [...bookings].sort((a, b) =>
+    Math.abs(b.amount_cents) - Math.abs(a.amount_cents) || byLead(a, b)
+  );
+  left = [...left].sort(byLead);
+  const out: SplitMatch[] = [];
+  const unmatched: TransactionRow[] = [];
+  for (const booking of bookings) {
+    const parts = bookings.length > 1 ? exactParts(left, booking.amount_cents) : undefined;
+    if (!parts) unmatched.push(booking);
+    else {
+      out.push({ booking, parts });
+      left = left.filter((t) => !parts.includes(t));
+    }
+  }
+  if (unmatched.length !== 1 || !left.length) return out;
+  const [booking] = unmatched;
+  const sum = left.reduce((s, t) => s + t.amount_cents, 0);
+  const fits = Math.sign(sum) === Math.sign(booking.amount_cents) &&
+    Math.abs(sum) <= Math.abs(booking.amount_cents);
+  const parts = fits ? left : exactParts(left, booking.amount_cents);
+  if (parts) out.push({ booking, parts });
+  return out;
+}
+
+/**
+ * Split bookings by order number: order lines without a payee that name an order ("Bestellnr.
+ * 306-…") are the parts of the transaction with a payee of the same day and account that names
+ * the same order (the bank's booking, "AMAZON PAYMENTS EUROPE S.C.A." with the order number).
+ */
+function matchOrders(rows: TransactionRow[]): SplitMatch[] {
+  const lines = new Map<string, TransactionRow[]>();
+  for (const t of rows) {
+    const order = t.payee.trim() ? "" : orderOf(t);
+    if (!order) continue;
+    const key = `${t.day}|${t.account_id ?? ""}|${order}`;
+    lines.set(key, [...(lines.get(key) ?? []), t]);
+  }
+  if (!lines.size) return [];
+  const bookings = new Map<string, TransactionRow[]>();
+  for (const t of rows) {
+    if (!t.payee.trim()) continue;
+    for (const word of new Set(wordsOf(t))) {
+      const key = `${t.day}|${t.account_id ?? ""}|${word}`;
+      if (lines.has(key)) bookings.set(key, [...(bookings.get(key) ?? []), t]);
+    }
+  }
+  const out: SplitMatch[] = [];
+  const taken = new Set<TransactionRow>();
+  for (const [key, parts] of lines) {
+    const free = (bookings.get(key) ?? []).filter((t) => !taken.has(t));
+    if (!free.length) continue;
+    for (const m of assignParts(free, parts)) {
+      out.push(m);
+      taken.add(m.booking);
+    }
+  }
+  return out;
+}
+
+/**
+ * Split bookings among transactions that aren't parts or bookings yet. First by order number
+ * (see matchOrders); then a transaction marked "Splitbuchung" (in payee or description) takes
+ * the other transactions of the same day, account and merchant as its parts (see assignParts).
  */
 export function matchSplits(rows: TransactionRow[]): SplitMatch[] {
+  const out = matchOrders(rows);
+  const taken = new Set(out.flatMap((m) => [m.booking, ...m.parts]));
   const byKey = new Map<string, TransactionRow[]>();
   for (const t of rows) {
+    if (taken.has(t)) continue;
     const key = `${t.day}|${t.account_id ?? ""}|${merchantOf(t)}`;
     byKey.set(key, [...(byKey.get(key) ?? []), t]);
   }
-  const out: SplitMatch[] = [];
   for (const same of byKey.values()) {
-    const bookings = same.filter((t) => SPLIT_RE.test(t.payee) || SPLIT_RE.test(t.description))
-      .sort((a, b) => Math.abs(b.amount_cents) - Math.abs(a.amount_cents) || byLead(a, b));
-    let left = same.filter((t) => !bookings.includes(t)).sort(byLead);
-    if (!bookings.length || !left.length) continue;
-    const unmatched: TransactionRow[] = [];
-    for (const booking of bookings) {
-      const parts = bookings.length > 1 ? exactParts(left, booking.amount_cents) : undefined;
-      if (!parts) unmatched.push(booking);
-      else {
-        out.push({ booking, parts });
-        left = left.filter((t) => !parts.includes(t));
-      }
-    }
-    if (unmatched.length !== 1 || !left.length) continue;
-    const [booking] = unmatched;
-    const sum = left.reduce((s, t) => s + t.amount_cents, 0);
-    if (
-      Math.sign(sum) === Math.sign(booking.amount_cents) &&
-      Math.abs(sum) <= Math.abs(booking.amount_cents)
-    ) {
-      out.push({ booking, parts: left });
-    }
+    const bookings = same.filter((t) => SPLIT_RE.test(t.payee) || SPLIT_RE.test(t.description));
+    const left = same.filter((t) => !bookings.includes(t));
+    if (bookings.length && left.length) out.push(...assignParts(bookings, left));
   }
   return out.sort((a, b) => byLead(b.booking, a.booking));
 }

@@ -1958,6 +1958,86 @@ Deno.test("an import combines split bookings, so their order lines don't count t
   assertEquals([again.data.added, again.data.splits], [0, 0]);
 });
 
+/** A checking account statement whose order lines have no payee: they name their order
+ *  ("Bestellnr."), as does the bank's booking, which isn't marked "Splitbuchung". */
+const AMAZON = "AMAZON PAYMENTS EUROPE S.C.A.";
+const ORDER_STATEMENT = [
+  {
+    date: "2026-01-02",
+    amountCents: -7289,
+    payee: AMAZON,
+    description: "306-0265205-1111111 AMZN",
+  },
+  {
+    date: "2026-01-02",
+    amountCents: -7289,
+    payee: "",
+    description: "Fleece Bestellnr. 306-0265205-1111111",
+  },
+  // Two charges for one order, and an order line listed twice.
+  { date: "2026-05-20", amountCents: -7295, payee: AMAZON, description: "306-6954512-2222222" },
+  { date: "2026-05-20", amountCents: -2804, payee: AMAZON, description: "306-6954512-2222222" },
+  {
+    date: "2026-05-20",
+    amountCents: -2804,
+    payee: "",
+    description: "Wiper Bestellnr. 306-6954512-2222222",
+  },
+  {
+    date: "2026-05-20",
+    amountCents: -2804,
+    payee: "",
+    description: "Wiper Bestellnr. 306-6954512-2222222 ",
+  },
+  {
+    date: "2026-05-20",
+    amountCents: -7295,
+    payee: "",
+    description: "Board Bestellnr. 306-6954512-2222222",
+  },
+  // A discount: the order line is more than the booking, so it's left alone.
+  { date: "2026-05-20", amountCents: -1359, payee: AMAZON, description: "306-1227454-3333333" },
+  {
+    date: "2026-05-20",
+    amountCents: -1699,
+    payee: "",
+    description: "Lock Bestellnr. 306-1227454-3333333",
+  },
+  // Order lines of an order whose booking is on another day stay alone too.
+  {
+    date: "2026-05-21",
+    amountCents: -500,
+    payee: "",
+    description: "Cable Bestellnr. 306-0265205-1111111",
+  },
+];
+
+Deno.test("auto-combine finds split bookings by their order number", async () => {
+  const { call, f, list } = await accountsFamily();
+  const body = { rows: ORDER_STATEMENT, accountId: "checking", autoTransfers: true };
+  const res = await call("POST", `${f}/import`, body);
+  assertEquals([res.data.added, res.data.splits, res.data.transfers], [10, 3, 0]);
+  const all = await list("account=checking");
+  const bookings = all.transactions.filter((t: any) => t.split)
+    .map((t: any) => [t.date, t.amountCents, t.split.parts, t.split.remainderCents]);
+  assertEquals(bookings, [
+    ["2026-05-20", -7295, 1, 0],
+    ["2026-05-20", -2804, 1, 0],
+    ["2026-01-02", -7289, 1, 0],
+  ]);
+  const alone = all.transactions.filter((t: any) => !t.split && !t.splitOf)
+    .map((t: any) => `${t.date} ${t.amountCents}`).sort();
+  assertEquals(alone, [
+    "2026-05-20 -1359",
+    "2026-05-20 -1699",
+    "2026-05-20 -2804",
+    "2026-05-21 -500",
+  ]);
+  // Only the duplicate, the discounted order and the line of another day count twice.
+  const net = -(7289 + 7295 + 2804 + 2804 + 1359 + 1699 + 500);
+  assertEquals(all.incomeCents - all.expenseCents, net);
+});
+
 Deno.test("auto-combine turns a voucher wrongly combined as a transfer into a part", async () => {
   const { call, f, add, ops, list } = await accountsFamily();
   const [card] = await add({
