@@ -292,6 +292,8 @@ Deno.test("the assistant asks a question and goes on with the answer", async () 
   const t = await configured({}, { allowWrites: false });
   const user = { role: "user", content: "ask several" };
   const ev = await chat(t, user.content);
+  // The model is told to ask rather than guess.
+  assertMatch(aiBody.messages[0].content, /## Ask instead of guessing/);
   // The question ends the turn, without the call's result: that is the user's answer.
   assertEquals(ev.map((e) => e.event).filter((n) => n !== "text"), [
     "messages",

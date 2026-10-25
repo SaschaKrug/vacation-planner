@@ -959,7 +959,7 @@ export const TOOLS: Record<string, Tool> = {
     spec: {
       name: "ask_user",
       description:
-        'Asks the user a question with answers to pick from, when you need their decision or a detail to go on (which of several matches, which option they prefer, their OK for a bigger change). Give 2 to 8 short, distinct options; multiple: true lets them pick several. They can always write their own answer instead, so don\'t add an "Other" option. The answer comes back as this tool\'s result: {"selected": [...]} and/or {"ownAnswer": "..."}, or {"skipped": true} when they wrote a new message instead. Ask one question at a time; call no other tools after it in the same step.',
+        'Asks the user a question with answers to pick from. Use it whenever you need their decision or a detail only they know, instead of guessing or asking in plain text: which of several matches, which option they prefer, a missing detail, their OK for a bigger change, what to do next. Give 2 to 8 short, distinct options; multiple: true lets them pick several. They can always write their own answer instead, so don\'t add an "Other" option. The answer comes back as this tool\'s result: {"selected": [...]} and/or {"ownAnswer": "..."}, or {"skipped": true} when they wrote a new message instead. Ask one question at a time; call no other tools after it in the same step.',
       parameters: {
         type: "object",
         properties: {
