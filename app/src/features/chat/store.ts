@@ -124,6 +124,8 @@ export class ChatStore {
   private listeners = new Set<() => void>();
   private abort: AbortController | null = null;
   private loading: Promise<void> | null = null;
+  /** Tool results in full, by tool call id: the saved history keeps only their start. */
+  private results = new Map<string, string>();
 
   constructor(
     readonly token: string,
@@ -330,6 +332,11 @@ export class ChatStore {
         case "messages":
           doing("thinking");
           c.history = [...c.history, ...e.data.messages];
+          for (const m of e.data.messages) {
+            if (m.role === "tool" && m.tool_call_id && typeof m.content === "string") {
+              this.results.set(m.tool_call_id, m.content);
+            }
+          }
           answer = null;
           step = { text: "", calls: [], results: new Map() };
           break;
@@ -447,6 +454,13 @@ export class ChatStore {
     c.updatedAt = Date.now();
     this.save();
     this.emit();
+  }
+
+  /** A tool call's result: in full if it ran on this device since the page loaded. */
+  toolResult(chat: Chat, id: string): string | undefined {
+    const saved = chat.history.find((m) => m.role === "tool" && m.tool_call_id === id);
+    const content = this.results.get(id) ?? saved?.content;
+    return typeof content === "string" ? content : undefined;
   }
 
   async undo(chatId: string, changeId: string) {

@@ -2,6 +2,7 @@ import {
   CalendarDays,
   Check,
   CircleAlert,
+  Copy,
   FileText,
   Globe,
   History,
@@ -18,9 +19,10 @@ import {
   Wallet,
   X,
 } from "lucide-react";
-import { type DragEvent, useEffect, useRef, useState } from "react";
+import { type DragEvent, Fragment, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
+import { copyText } from "@/components/CopyField";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import {
@@ -45,6 +47,7 @@ import {
 } from "@/features/chat/attachments";
 import type { Item, ItemAttachment } from "@/features/chat/store";
 import { toolDetail, toolLabel } from "@/features/chat/tools";
+import { transcript } from "@/features/chat/transcript";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { getLang, t } from "@/lib/i18n";
 import { readFlag, writeFlag } from "@/lib/storage";
@@ -142,6 +145,10 @@ function ChatView({ onClose }: { onClose: () => void }) {
   const listRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const current = chat.current;
+  /** Copies items of the open chat, with every tool call's arguments and result. */
+  const copy = (items: Item[]) => {
+    if (current) copyText(transcript(items, (id) => chat.toolResult(current, id)));
+  };
 
   useEffect(() => {
     chat.loadSettings();
@@ -221,6 +228,16 @@ function ChatView({ onClose }: { onClose: () => void }) {
         <h2 className="min-w-0 flex-1 truncate font-semibold">
           {current?.title ?? t("chat.title")}
         </h2>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={t("chat.copy.chat")}
+          title={t("chat.copy.chat")}
+          disabled={!current?.items.length}
+          onClick={() => current && copy(current.items)}
+        >
+          <Copy />
+        </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -300,13 +317,32 @@ function ChatView({ onClose }: { onClose: () => void }) {
         {settings && !ready && <SetupHint />}
         {chat.settingsError && <p className="text-gap">{chat.settingsError}</p>}
         {ready && !current?.items.length && <Suggestions onPick={send} />}
-        {current?.items.map((item, i) => (
-          <ItemView
-            key={i}
-            item={item}
-            onUndo={(id) => chat.undo(current.id, id)}
-          />
-        ))}
+        {current?.items.map((item, i, items) => {
+          // An answer is everything between two messages of the user; once it's complete it
+          // gets a copy button.
+          const next = items[i + 1];
+          const complete = item.kind !== "user" &&
+            (next ? next.kind === "user" : !chat.busy);
+          let start = i;
+          while (complete && start > 0 && items[start - 1].kind !== "user") start--;
+          return (
+            <Fragment key={i}>
+              <ItemView item={item} onUndo={(id) => chat.undo(current.id, id)} />
+              {complete && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="-mt-2 size-7 text-muted-foreground"
+                  aria-label={t("chat.copy.answer")}
+                  title={t("chat.copy.answer")}
+                  onClick={() => copy(items.slice(start, i + 1))}
+                >
+                  <Copy className="size-3.5" />
+                </Button>
+              )}
+            </Fragment>
+          );
+        })}
         {chat.busy && <ActivityLine />}
       </div>
 
