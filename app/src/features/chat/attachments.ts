@@ -1,8 +1,7 @@
 // Files and screenshots attached to a chat message: images are shrunk to a JPEG data URL, text
-// files are read as text. Both go to the assistant as OpenAI content parts.
+// files are read as text. The server passes both on to the assistant.
 
 import { toast } from "sonner";
-import type { ChatMessage, ContentPart } from "@/lib/api";
 import { t } from "@/lib/i18n";
 
 export type Attachment =
@@ -109,43 +108,4 @@ async function toJpeg(file: File, name: string): Promise<string> {
   } finally {
     URL.revokeObjectURL(src);
   }
-}
-
-/** The content of a user message: the typed text, then the text files, then the images. */
-export function toParts(text: string, list: Attachment[]): ContentPart[] {
-  const parts: ContentPart[] = [];
-  if (text) parts.push({ type: "text", text });
-  for (const a of list) {
-    if (a.kind === "file") {
-      parts.push({
-        type: "text",
-        text: `Attached file “${a.name}”:\n\`\`\`\n${a.text}\n\`\`\``,
-      });
-    }
-  }
-  for (const a of list) {
-    if (a.kind === "image") {
-      parts.push({ type: "image_url", image_url: { url: a.url } });
-    }
-  }
-  return parts;
-}
-
-/** The history with only the newest `keep` images; older ones become the text `note`. */
-export function keepImages(
-  history: ChatMessage[],
-  keep: number,
-  note: string,
-): ChatMessage[] {
-  let n = 0;
-  return history.slice().reverse().map((m) =>
-    Array.isArray(m.content)
-      ? {
-        ...m,
-        content: m.content.slice().reverse().map((p): ContentPart =>
-          p.type === "image_url" && ++n > keep ? { type: "text", text: note } : p
-        ).reverse(),
-      }
-      : m
-  ).reverse();
 }

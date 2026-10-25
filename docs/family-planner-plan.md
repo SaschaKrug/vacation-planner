@@ -154,6 +154,13 @@ New default categories in EN/DE (Groceries, Rent, Utilities, Mobility, Leisure, 
   `continue`: the app keeps what the running step did (its tool calls, with "interrupted" for tools
   without a result, so they aren't done twice) and drops its partial text. Each turn tries again up
   to 5 times, waiting 1, 2, … 5 s, and only then shows the error.
+- Later, chats moved to the server (`ai_chats`, `ai_chat_items`, `ai_chat_messages`): the app sends
+  a message and only follows the chat; the Edge Function runs the turn in the background
+  (`EdgeRuntime.waitUntil`), saves each step, and before the time limit calls itself (`…/resume`
+  with the turn's token) to go on. The turn holds the chat with a lease it renews every few seconds;
+  a turn whose invocation died is taken over by whoever looks at the chat. Followers get the items
+  changed since a revision, and the text live from the invocation that runs the turn (else polled
+  from the database). The retries moved to the server too.
 
 ### Export v2 / agent doc
 

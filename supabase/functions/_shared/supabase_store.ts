@@ -5,6 +5,10 @@ import type {
   AuthTokenRow,
   CategoryRow,
   ChallengeRow,
+  ChatItemRow,
+  ChatMessageRow,
+  ChatPatch,
+  ChatRow,
   EntryRow,
   FamilyPatch,
   FamilyRow,
@@ -29,6 +33,11 @@ const CHUNK = 200; // keeps `in (...)` filters well below URL length limits
 function check<T>(res: { data: T; error: { message: string } | null }): T {
   if (res.error) throw new Error(res.error.message);
   return res.data;
+}
+
+/** Supabase returns bigint columns as strings. */
+function chatRow(r: ChatRow): ChatRow {
+  return { ...r, rev: Number(r.rev) };
 }
 
 /** Supabase returns bigint columns as strings. */
@@ -533,5 +542,87 @@ export class SupabaseStore implements Store {
 
   async saveAiSettings(row: AiSettingsRow) {
     check(await this.db.from("ai_settings").upsert(row, { onConflict: "family_id" }));
+  }
+
+  async listChats(familyId: string, userId: string) {
+    const rows = check(
+      await this.db.from("ai_chats").select("*").eq("family_id", familyId).eq("user_id", userId)
+        .order("updated_at", { ascending: false }).limit(PAGE),
+    ) as ChatRow[];
+    return rows.map(chatRow);
+  }
+
+  async getChat(id: string) {
+    const rows = check(
+      await this.db.from("ai_chats").select("*").eq("id", id).limit(1),
+    ) as ChatRow[];
+    return rows[0] ? chatRow(rows[0]) : null;
+  }
+
+  async createChat(row: ChatRow) {
+    check(await this.db.from("ai_chats").insert(row));
+  }
+
+  async updateChat(id: string, patch: ChatPatch, token?: string) {
+    let q = this.db.from("ai_chats").update(patch).eq("id", id);
+    if (token !== undefined) q = q.eq("run_token", token);
+    const rows = check(await q.select()) as ChatRow[];
+    return rows[0] ? chatRow(rows[0]) : null;
+  }
+
+  async claimChat(id: string, token: string, until: string, mode: "start" | "resume") {
+    const q = mode === "start"
+      ? this.db.from("ai_chats")
+        .update({ status: "running", run_token: token, run_until: until, stop: false, retries: 0 })
+        .eq("id", id).eq("status", "idle")
+      // Tokens are alphanumeric; the time needs quotes in the filter.
+      : this.db.from("ai_chats").update({ run_token: token, run_until: until })
+        .eq("id", id).eq("status", "running")
+        .or(`run_token.eq.${token},run_until.is.null,run_until.lt."${new Date().toISOString()}"`);
+    const rows = check(await q.select()) as ChatRow[];
+    return rows[0] ? chatRow(rows[0]) : null;
+  }
+
+  async deleteChat(id: string) {
+    // Items and messages go with it (ON DELETE CASCADE).
+    check(await this.db.from("ai_chats").delete().eq("id", id));
+  }
+
+  async listChatItems(chatId: string, since = 0) {
+    const out: ChatItemRow[] = [];
+    for (let from = 0;; from += PAGE) {
+      const rows = check(
+        await this.db.from("ai_chat_items").select("seq, rev, item").eq("chat_id", chatId)
+          .gt("rev", since).order("seq").range(from, from + PAGE - 1),
+      ) as ChatItemRow[];
+      out.push(...rows.map((r) => ({ ...r, rev: Number(r.rev) })));
+      if (rows.length < PAGE) return out;
+    }
+  }
+
+  async putChatItems(chatId: string, items: Omit<ChatItemRow, "rev">[]) {
+    const rev = check(
+      await this.db.rpc("ai_chat_put_items", { p_chat: chatId, p_items: items }),
+    ) as number | string | null;
+    return rev === null ? null : Number(rev);
+  }
+
+  async listChatMessages(chatId: string) {
+    const out: ChatMessageRow[] = [];
+    for (let from = 0;; from += PAGE) {
+      const rows = check(
+        await this.db.from("ai_chat_messages").select("seq, message").eq("chat_id", chatId)
+          .order("seq").range(from, from + PAGE - 1),
+      ) as ChatMessageRow[];
+      out.push(...rows);
+      if (rows.length < PAGE) return out;
+    }
+  }
+
+  async addChatMessages(chatId: string, rows: ChatMessageRow[]) {
+    if (!rows.length) return;
+    check(
+      await this.db.from("ai_chat_messages").insert(rows.map((r) => ({ chat_id: chatId, ...r }))),
+    );
   }
 }

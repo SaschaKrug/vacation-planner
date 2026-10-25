@@ -15,6 +15,8 @@
 //   "say nothing"                         -> get_calendar, then no words until tools are off
 //   "stay silent"                         -> no words at all
 //   "take your time"                      -> answers after 200 ms
+//   "... slowly"                          -> every answer takes a second (e.g. "keep looking
+//                                            slowly": half a minute of steps)
 //   "keep looking, then fail"             -> get_calendar, then fails (503)
 //   "calendar, then fail 2 times"         -> get_calendar, fails twice (503), then answers
 // Asked to sort transactions into categories (the categorize prompt), it picks the category
@@ -98,6 +100,17 @@ function categorize(stream: boolean, system: string, messages: Msg[], canSearch:
   return reply(stream, "```json\n" + JSON.stringify(answer) + "\n```");
 }
 
+/** Waits `ms`, or fails once the request is aborted. */
+function wait(ms: number, signal: AbortSignal) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener("abort", () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    });
+  });
+}
+
 /** How often a "then fail N times" message failed so far. */
 const failed = new Map<string, number>();
 
@@ -137,14 +150,9 @@ export async function mockAi(req: Request): Promise<Response> {
       args: { from: "2026-01-01", to: "2026-01-31" },
     });
   }
+  if (/\bslowly\b/i.test(asked)) await wait(1000, req.signal);
   if (/take your time/i.test(asked)) {
-    await new Promise((resolve, reject) => {
-      const timer = setTimeout(resolve, 200);
-      req.signal.addEventListener("abort", () => {
-        clearTimeout(timer);
-        reject(req.signal.reason);
-      });
-    });
+    await wait(200, req.signal);
     return reply(stream, "Sorry for the wait.");
   }
   const fails = /then fail(?: (\d+) times)?/i.exec(asked);

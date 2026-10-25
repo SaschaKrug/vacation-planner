@@ -10,6 +10,9 @@ if (!url || !key) throw new Error("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are 
 
 const db = createClient(url, key, { auth: { persistSession: false } });
 
+/** Supabase's runtime: keeps the function running for a promise after the response. */
+declare const EdgeRuntime: { waitUntil(task: Promise<unknown>): void };
+
 // Inside the function, request URLs don't carry the public host and path, so links in the
 // AI instructions page are built from the project URL.
 const publicBase = `${url.replace(/\/+$/, "")}/functions/v1/api`;
@@ -28,4 +31,6 @@ Deno.serve(createHandler(new SupabaseStore(db), {
   appOrigins: Deno.env.get("APP_ORIGIN")?.split(",").map((o) => o.trim()).filter(Boolean),
   // The first admin's password; "admin" if not set (it has to be changed at the first sign-in).
   initialAdminPassword: Deno.env.get("INITIAL_ADMIN_PASSWORD") || undefined,
+  // An AI chat's turn goes on after the response, until it hands itself on to a new request.
+  background: (task) => EdgeRuntime.waitUntil(task),
 }));

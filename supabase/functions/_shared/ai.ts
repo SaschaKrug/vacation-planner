@@ -1,19 +1,28 @@
 // The AI assistant's routes under /families/{id}/ai: settings (keys stored encrypted, never
-// returned), the endpoint's model list, a connection test, the chat and sorting transactions
-// into categories. All are for editors:
-// the assistant spends the family's AI tokens and can change things.
+// returned), the endpoint's model list, a connection test, the chats (see ai/chats.ts), a chat
+// turn without a stored chat (for scripts) and sorting transactions into categories. All are
+// for editors: the assistant spends the family's AI tokens and can change things.
 
 import { type ChatMessage, listModels, type Provider, streamChat } from "./ai/provider.ts";
-import { checkUrl, type NetOptions } from "./ai/net.ts";
+import { checkUrl, type Fetch, type NetOptions } from "./ai/net.ts";
 import { matchSimilar, type Search, suggestCategories } from "./ai/categorize.ts";
-import { cleanHistory, runChat, sseResponse, systemPrompt } from "./ai/chat.ts";
+import {
+  type ChatContext,
+  cleanContext,
+  cleanHistory,
+  runChat,
+  sseResponse,
+  systemPrompt,
+} from "./ai/chat.ts";
+import { handleChats, type Turn } from "./ai/chats.ts";
 import type { Ctx } from "./context.ts";
-import { formatDate, isValidDate } from "./dates.ts";
+import { isValidDate } from "./dates.ts";
 import { applyTransactionOps } from "./finance.ts";
 import { CORS, HttpError, json, NO_STORE, readBody } from "./http.ts";
 import type { SecretBox } from "./secrets.ts";
 import {
   type AiSettingsRow,
+  type FamilyRow,
   SEARCH_PROVIDERS,
   type SearchProvider,
   type Store,
@@ -24,13 +33,22 @@ export interface AiEnv {
   /** Encrypts the stored keys; without it (no AI_CONFIG_KEY) keys can't be saved. */
   secrets: SecretBox | null;
   net: NetOptions;
+  /** Keeps a chat turn running after its request answered (EdgeRuntime.waitUntil). */
+  background: (task: Promise<unknown>) => void;
+  /** How a chat turn calls the API again, to hand itself on to a new invocation. */
+  selfFetch: Fetch;
   /** When a chat request hands the turn on to the next one (tests). */
   handOffMs?: number;
   /** When a chat request cuts off a model call that is still running (tests). */
   deadlineMs?: number;
+  /** How often the chat's followers look for news, and how long a stream lasts (tests). */
+  pollMs?: number;
+  streamMs?: number;
+  /** How long a chat turn holds the chat without renewing, and waits before a retry (tests). */
+  leaseMs?: number;
+  retryMs?: number;
 }
 
-const PAGES = ["vacation", "finance", "settings"];
 /** Transactions one categorize request sends to the model. */
 const MAX_CATEGORIZE = 200;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -105,7 +123,15 @@ function cleanKey(v: unknown, field: string): string {
 
 /** Routes /families/{id}/ai/...; null for anything else. */
 export function handleAi(ctx: Ctx, env: AiEnv): Promise<Response> | null {
-  if (ctx.rest[0] !== "ai" || ctx.rest.length !== 2) return null;
+  if (ctx.rest[0] !== "ai") return null;
+  if (ctx.rest[1] === "chats") {
+    return handleChats(
+      ctx,
+      env,
+      (store, family, context, signal) => prepareTurn(store, env, family, context, signal),
+    );
+  }
+  if (ctx.rest.length !== 2) return null;
   const route = `${ctx.method} ${ctx.rest[1]}`;
   switch (route) {
     case "GET settings":
@@ -219,13 +245,14 @@ async function test({ store, req, load }: Ctx, env: AiEnv) {
   return json({ ok: true, model: p.model, reply: reply.trim().slice(0, 200) });
 }
 
-/** POST /ai/chat {messages, year, page, lang, today, continue?}: streams the answer
- *  (text/event-stream). With `continue: true` the history ends with tool results and the turn
- *  that a "continue" event handed back goes on. */
-async function chat({ store, req, load }: Ctx, env: AiEnv) {
-  const { family } = await load("edit");
-  const body = await readBody(req);
-  const history: ChatMessage[] = cleanHistory(body.messages, body.continue === true);
+/** A chat turn of the family: its model, the instructions for the context, and the tools. */
+async function prepareTurn(
+  store: Store,
+  env: AiEnv,
+  family: FamilyRow,
+  context: ChatContext,
+  signal?: AbortSignal,
+): Promise<Turn> {
   const row = await loadRow(store, family.id);
   if (!row.base_url || !row.model) throw new HttpError(400, "The AI assistant isn't set up yet");
   const p: Provider = await provider(row, env);
@@ -236,38 +263,40 @@ async function chat({ store, req, load }: Ctx, env: AiEnv) {
     store.listAccounts(family.id),
     store.getFinanceSettings(family.id),
   ]);
-  // The app's local date, so "today" matches the user's day; the server's as a fallback.
-  const today = isValidDate(body.today) ? body.today as string : formatDate(new Date());
-  const year = Number.isInteger(body.year) ? body.year as number : Number(today.slice(0, 4));
   const system = systemPrompt({
     family,
     types,
     categories,
     accounts,
     currency: settings?.currency ?? "EUR",
-    today,
-    year,
-    page: PAGES.includes(body.page as string) ? body.page as string : "vacation",
-    lang: body.lang === "de" ? "de" : "en",
+    ...context,
     writes: row.allow_writes,
     search: !!search,
   });
+  return {
+    provider: p,
+    system,
+    ctx: { lang: context.lang, store, familyId: family.id, net: env.net, search, signal },
+    writes: row.allow_writes,
+    search: !!search,
+  };
+}
+
+/** POST /ai/chat {messages, year, page, lang, today, continue?}: one turn of a chat the caller
+ *  keeps (the app's chats are stored, see ai/chats.ts), streamed (text/event-stream). With
+ *  `continue: true` the history ends with tool results and the turn that a "continue" event
+ *  handed back goes on. */
+async function chat({ store, req, load }: Ctx, env: AiEnv) {
+  const { family } = await load("edit");
+  const body = await readBody(req);
+  const history: ChatMessage[] = cleanHistory(body.messages, body.continue === true);
+  // The app's local date, so "today" matches the user's day; the server's as a fallback.
+  const turn = await prepareTurn(store, env, family, cleanContext(body), req.signal);
   return sseResponse(
     (emit) =>
       runChat({
-        provider: p,
-        system,
+        ...turn,
         history,
-        ctx: {
-          lang: body.lang === "de" ? "de" : "en",
-          store,
-          familyId: family.id,
-          net: env.net,
-          search,
-          signal: req.signal,
-        },
-        writes: row.allow_writes,
-        search: !!search,
         emit,
         signal: req.signal,
         handOffMs: env.handOffMs,

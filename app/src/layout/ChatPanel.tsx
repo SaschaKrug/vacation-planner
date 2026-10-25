@@ -46,7 +46,7 @@ import {
   MAX_ATTACHMENTS,
   readAttachment,
 } from "@/features/chat/attachments";
-import type { Item, ItemAttachment, QuestionItem } from "@/features/chat/store";
+import { type Item, type ItemAttachment, type QuestionItem, visible } from "@/features/chat/store";
 import { toolDetail, toolLabel } from "@/features/chat/tools";
 import { transcript } from "@/features/chat/transcript";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -153,6 +153,13 @@ function ChatView({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     chat.loadSettings();
+    chat.loadChats();
+    // Back on the page: catch up with what happened meanwhile (also on other devices).
+    const onVisible = () => {
+      if (document.visibilityState === "visible") chat.refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
   }, [chat]);
 
   // Follow the answer as it streams in.
@@ -235,7 +242,7 @@ function ChatView({ onClose }: { onClose: () => void }) {
           aria-label={t("chat.copy.chat")}
           title={t("chat.copy.chat")}
           disabled={!current?.items.length}
-          onClick={() => current && copy(current.items)}
+          onClick={() => current && copy(visible(current.items))}
         >
           <Copy />
         </Button>
@@ -265,6 +272,12 @@ function ChatView({ onClose }: { onClose: () => void }) {
                 onSelect={() => chat.open(c.id)}
               >
                 <span className="min-w-0 flex-1 truncate">{c.title}</span>
+                {c.status === "running" && (
+                  <Loader2
+                    className="size-3.5 shrink-0 animate-spin text-muted-foreground"
+                    aria-label={t("chat.thinking")}
+                  />
+                )}
                 <span className="text-xs text-muted-foreground">
                   {new Date(c.updatedAt).toLocaleDateString(getLang(), {
                     day: "numeric",
@@ -318,7 +331,7 @@ function ChatView({ onClose }: { onClose: () => void }) {
         {settings && !ready && <SetupHint />}
         {chat.settingsError && <p className="text-gap">{chat.settingsError}</p>}
         {ready && !current?.items.length && <Suggestions onPick={send} />}
-        {current?.items.map((item, i, items) => {
+        {current && visible(current.items).map((item, i, items) => {
           // An answer is everything between two messages of the user; once it's complete it
           // gets a copy button.
           const next = items[i + 1];
@@ -652,7 +665,8 @@ function ItemView(
     return (
       <div
         className="flex items-center gap-2 text-xs text-muted-foreground"
-        title={[label, detail, item.summary].filter(Boolean).join("\n")}
+        title={[label, detail, item.interrupted ? t("chat.interrupted") : item.summary]
+          .filter(Boolean).join("\n")}
       >
         <Icon className="size-3.5 shrink-0" />
         <span className="min-w-0 truncate">

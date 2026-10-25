@@ -62,7 +62,8 @@ export function setMe(me: Me) {
   set({ me });
 }
 
-/** Forgets the session and what this device kept of the families (cached calendars, chats). */
+/** Forgets the session and what this device kept of the families (cached calendars, chats
+ *  from before they were stored on the server). */
 export function clearSession() {
   try {
     for (const key of Object.keys(localStorage)) {
