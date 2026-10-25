@@ -452,6 +452,9 @@ const STRINGS: Record<Lang, Dict> = {
       "Delete the account “{name}”?\n\nAll its transactions are deleted too. This can't be undone.",
     "finance.opening": "Opening balance",
     "finance.balance": "Balance",
+    "finance.balance_on": ({ date }) => `Balances on ${date}`,
+    "finance.balance_now": "Now",
+    "finance.balance_now_below": "(below: now)",
     "finance.transfer": "Transfer",
     "finance.transfers": "Transfers",
     "finance.transfer_amount_hint":
@@ -1047,6 +1050,9 @@ const STRINGS: Record<Lang, Dict> = {
       "Das Konto „{name}“ löschen?\n\nAlle seine Buchungen werden ebenfalls gelöscht. Das lässt sich nicht rückgängig machen.",
     "finance.opening": "Anfangsstand",
     "finance.balance": "Kontostand",
+    "finance.balance_on": ({ date }) => `Kontostände am ${date}`,
+    "finance.balance_now": "Aktuell",
+    "finance.balance_now_below": "(darunter: aktuell)",
     "finance.transfer": "Umbuchung",
     "finance.transfers": "Umbuchungen",
     "finance.transfer_amount_hint":

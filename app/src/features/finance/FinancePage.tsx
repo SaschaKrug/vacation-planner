@@ -16,7 +16,7 @@ import { formatMoney } from "@/lib/money";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/layout/PageHeader";
 import { ImportDialog } from "./ImportDialog";
-import type { PeriodMode } from "./store";
+import { type PeriodMode, today } from "./store";
 import { SummaryView } from "./SummaryView";
 import { TransactionDialog } from "./TransactionDialog";
 import { TransactionsView } from "./TransactionsView";
@@ -150,17 +150,26 @@ export function StatTiles(
   );
 }
 
-/** The accounts with their balances; picking one shows only its transactions. With several
- *  accounts a total comes first, and picking it shows them all again. */
+/** The accounts with their balances on the day the period shows (its last day, or today while
+ *  it runs); picking one shows only its transactions. With several accounts a total comes
+ *  first, and picking it shows them all again. On another day than today, the cards also tell
+ *  the balances now. */
 function AccountCards() {
   const finance = useFinance();
   const lang = getLang();
   const active = finance.filter.account;
+  const at = finance.balances?.at;
+  const day = at
+    ? new Intl.DateTimeFormat(lang, { day: "numeric", month: "short", year: "numeric" })
+      .format(new Date(at + "T00:00:00"))
+    : "";
+  const past = !!at && at !== today();
   const cards = finance.accounts.map((a) => ({
     id: a.id,
     label: `${a.icon ? `${a.icon} ` : ""}${a.name}`,
     color: a.color as string | undefined,
-    cents: a.balanceCents,
+    cents: finance.balanceOf(a),
+    now: a.balanceCents,
   }));
   if (cards.length > 1) {
     cards.unshift({
@@ -168,37 +177,54 @@ function AccountCards() {
       label: t("finance.all_accounts"),
       color: undefined,
       cents: cards.reduce((sum, c) => sum + c.cents, 0),
+      now: cards.reduce((sum, c) => sum + c.now, 0),
     });
   }
   return (
-    <div className={tileGrid}>
-      {cards.map((c) => (
-        <button
-          key={c.id || "all"}
-          type="button"
-          aria-pressed={active === c.id}
-          title={t("finance.balance")}
-          className={cn(
-            tileBox,
-            "transition-colors hover:bg-accent",
-            c.id && active === c.id && "border-primary ring-1 ring-primary",
+    <div className="space-y-1.5">
+      {past && (
+        <p className="text-xs text-muted-foreground">
+          {t("finance.balance_on", { date: day })}
+          {cards.some((c) => c.now !== c.cents) && (
+            <span className="sm:hidden">{` ${t("finance.balance_now_below")}`}</span>
           )}
-          onClick={() => finance.setFilter({ account: active === c.id ? "" : c.id })}
-        >
-          <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-            {c.color && (
-              <span
-                className="size-2.5 shrink-0 rounded-full"
-                style={{ backgroundColor: c.color }}
-              />
+        </p>
+      )}
+      <div className={tileGrid}>
+        {cards.map((c) => (
+          <button
+            key={c.id || "all"}
+            type="button"
+            aria-pressed={active === c.id}
+            title={day ? t("finance.balance_on", { date: day }) : t("finance.balance")}
+            className={cn(
+              tileBox,
+              "transition-colors hover:bg-accent",
+              c.id && active === c.id && "border-primary ring-1 ring-primary",
             )}
-            <span className="truncate">{c.label}</span>
-          </div>
-          <div className={cn(tileValue, c.cents < 0 && "text-gap")}>
-            {formatMoney(c.cents, finance.currency, lang)}
-          </div>
-        </button>
-      ))}
+            onClick={() => finance.setFilter({ account: active === c.id ? "" : c.id })}
+          >
+            <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+              {c.color && (
+                <span
+                  className="size-2.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: c.color }}
+                />
+              )}
+              <span className="truncate">{c.label}</span>
+            </div>
+            <div className={cn(tileValue, c.cents < 0 && "text-gap")}>
+              {formatMoney(c.cents, finance.currency, lang)}
+            </div>
+            {past && c.now !== c.cents && (
+              <div className="truncate text-xs text-muted-foreground tabular-nums">
+                <span className="max-sm:hidden">{`${t("finance.balance_now")} `}</span>
+                {formatMoney(c.now, finance.currency, lang)}
+              </div>
+            )}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

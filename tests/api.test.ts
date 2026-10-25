@@ -1380,6 +1380,32 @@ async function accountsFamily() {
   return { ...t, add, ops, list };
 }
 
+Deno.test("tells the account balances at the end of a day", async () => {
+  const { call, s, f, add, ops } = await accountsFamily();
+  const [, , booking, part] = await add(
+    { date: "2026-03-01", amountCents: -300, accountId: "checking" },
+    { date: "2026-03-31", amountCents: 5000, accountId: "savings" },
+    { date: "2026-04-02", amountCents: -200, accountId: "checking" },
+    { date: "2026-04-02", amountCents: -150, accountId: "checking" },
+  );
+  // A part of a split booking doesn't count, its booking does.
+  await ops({ action: "split", id: booking, ids: [part] });
+  const at = async (day?: string) => {
+    const res = await call("GET", `${f}/accounts${day ? `?at=${day}` : ""}`);
+    assertEquals(res.status, 200, JSON.stringify(res.data));
+    return [res.data.at, ...res.data.accounts.map((a: any) => a.balanceCents)];
+  };
+  assertEquals(await at("2026-02-28"), ["2026-02-28", 1000, 0]);
+  assertEquals(await at("2026-03-01"), ["2026-03-01", 700, 0]);
+  assertEquals(await at("2026-03-31"), ["2026-03-31", 700, 5000]);
+  assertEquals(await at("2026-04-02"), ["2026-04-02", 500, 5000]);
+  assertEquals(await at(), [null, 500, 5000]);
+  assertEquals((await call("GET", `${f}/accounts?at=2026-13-01`)).status, 400);
+  // Reading needs the view link only.
+  const view = `/families/${s.readId}/finance/accounts?at=2026-03-01`;
+  assertEquals((await call("GET", view)).data.accounts.length, 2);
+});
+
 Deno.test("manages finance accounts with balances", async () => {
   const { call, s, f, add } = await accountsFamily();
   const overview = (await call("GET", f)).data;
