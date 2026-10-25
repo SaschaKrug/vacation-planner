@@ -1138,6 +1138,7 @@ Deno.test("new families get default finance categories", async () => {
     icon: "💼",
     kind: "income",
     position: 0,
+    parentId: null,
   });
   const de = await call("POST", "/families", { lang: "de" });
   const cats = (await call("GET", `/families/${de.data.family.id}/finance`)).data.categories;
@@ -1170,6 +1171,89 @@ Deno.test("manages finance categories and settings", async () => {
 
   assertEquals((await call("DELETE", `${f}/categories/pets`)).status, 200);
   assertEquals((await call("DELETE", `${f}/categories/pets`)).status, 404);
+});
+
+Deno.test("nests finance categories to any depth", async () => {
+  const { call, s, f } = await financeFamily();
+  const food = (await call("POST", `${f}/categories`, { name: "Food", color: "#ff0000" })).data;
+  assertEquals(food.parentId, null);
+  // Moving a category under another; a subcategory has its top-level category's kind.
+  const moved = await call("PATCH", `${f}/categories/groceries`, { parentId: "Food" });
+  assertEquals([moved.data.parentId, moved.data.kind], ["food", "expense"]);
+  const bakery = await call("POST", `${f}/categories`, {
+    name: "Bakery",
+    color: "#00ff00",
+    kind: "income",
+    parentId: "food > GROCERIES",
+  });
+  assertEquals([bakery.status, bakery.data.parentId, bakery.data.kind], [
+    201,
+    "groceries",
+    "expense",
+  ]);
+  // Not into itself or one of its subcategories.
+  for (const parentId of ["food", "bakery"]) {
+    assertEquals((await call("PATCH", `${f}/categories/food`, { parentId })).status, 400);
+  }
+  // The top level's kind goes down the tree; a subcategory's can't be set.
+  await call("PATCH", `${f}/categories/food`, { kind: "both" });
+  await call("PATCH", `${f}/categories/bakery`, { kind: "income" });
+  const kinds = async () =>
+    Object.fromEntries(
+      (await call("GET", f)).data.categories.map((c: any) => [c.id, [c.parentId, c.kind]]),
+    );
+  assertEquals((await kinds()).bakery, ["groceries", "both"]);
+
+  // A name that several categories have needs the path.
+  await call("POST", `${f}/categories`, { name: "Other", color: "#000000", parentId: "food" });
+  const ambiguous = await call("POST", `${f}/transactions`, {
+    date: "2026-03-01",
+    amountCents: -1,
+    categoryId: "Other",
+  });
+  assertEquals(ambiguous.status, 400);
+  assertMatch(ambiguous.data.error, /Food > Other/);
+
+  const add = await call("POST", `${f}/transactions`, {
+    ops: [
+      { date: "2026-03-01", amountCents: -100, payee: "Market", categoryId: "Food" },
+      { date: "2026-03-02", amountCents: -200, payee: "Super", categoryId: "Food > Groceries" },
+      { date: "2026-03-03", amountCents: -400, payee: "Baker", categoryId: "bakery" },
+      { date: "2026-03-04", amountCents: -800, payee: "Snacks", categoryId: "Food > Other" },
+      { date: "2026-03-05", amountCents: -1600, payee: "Rent", categoryId: "housing" },
+    ],
+  });
+  assertEquals(add.status, 200);
+  // Filtering by a category includes its subcategories.
+  const total = async (category: string) =>
+    (await call("GET", `${f}/transactions?category=${encodeURIComponent(category)}`)).data
+      .expenseCents;
+  assertEquals(await total("food"), 1500);
+  assertEquals(await total("groceries"), 600);
+  assertEquals(await total("Food > Groceries > Bakery"), 400);
+
+  // Deleting moves the subcategories and transactions to the parent.
+  assertEquals((await call("DELETE", `${f}/categories/groceries`)).status, 200);
+  assertEquals((await kinds()).bakery, ["food", "both"]);
+  const list = (await call("GET", `${f}/transactions?category=food`)).data.transactions;
+  assertEquals(list.find((t: any) => t.payee === "Super").categoryId, "food");
+  // A top-level one's subcategories become top-level ones, its transactions uncategorized.
+  await call("DELETE", `${f}/categories/food`);
+  assertEquals((await kinds()).bakery, [null, "both"]);
+  assertEquals(await total("none"), 300);
+
+  // Export and import keep the tree; a loop is refused.
+  await call("PATCH", `${f}/categories/bakery`, { parentId: "housing" });
+  const file = (await call("GET", `/families/${s.id}/export`)).data;
+  const target = (await call("POST", "/families", {})).data.family;
+  assertEquals((await call("POST", `/families/${target.id}/import`, file)).status, 200);
+  const imported = (await call("GET", `/families/${target.id}/finance`)).data.categories;
+  assertEquals(imported.find((c: any) => c.id === "bakery").parentId, "housing");
+  const loop = file.finance.categories.map((c: any) =>
+    c.id === "housing" ? { ...c, parentId: "bakery" } : c
+  );
+  const bad = { ...file, finance: { ...file.finance, categories: loop } };
+  assertEquals((await call("POST", `/families/${target.id}/import`, bad)).status, 400);
 });
 
 Deno.test("adds, updates and deletes transactions with undo ops", async () => {
@@ -1864,6 +1948,78 @@ Deno.test("a memory store snapshot keeps accounts and transfers", async () => {
   older.restore(JSON.parse(JSON.stringify(old)));
   const [t] = await older.getTransactions(s.id, [a]);
   assertEquals([t.account_id, t.transfer_id], [null, null]);
+});
+
+Deno.test("the AI tools nest categories and analyze them per level", async () => {
+  const { call, store, s, f } = await financeFamily();
+  const ctx = { lang: "en" as const, store, familyId: s.id, net: {} as any, search: null };
+  const allowed = new Set(Object.keys(TOOLS));
+  const run = async (name: string, args: unknown) =>
+    await runTool(name, JSON.stringify(args), ctx, allowed);
+  const undo = async (out: Awaited<ReturnType<typeof run>>) => {
+    for (const step of out.change!.undo) {
+      await call(step.method, `/families/${s.id}${step.path}`, step.body);
+    }
+  };
+
+  const food = await run("manage_categories", { action: "add", name: "Food" });
+  assertEquals((food.result as any).parentId, null);
+  await run("manage_categories", { action: "update", category: "Groceries", parent: "Food" });
+  const bakery = await run("manage_categories", {
+    action: "add",
+    name: "Bakery",
+    parent: "Food > Groceries",
+  });
+  assertEquals((bakery.result as any).parentId, "groceries");
+  // Moving back to the top level, and undoing it.
+  const moved = await run("manage_categories", {
+    action: "update",
+    category: "Groceries",
+    parent: "",
+  });
+  assertEquals((moved.result as any).parentId, null);
+  await undo(moved);
+  const cats = (await call("GET", f)).data.categories;
+  assertEquals(cats.find((c: any) => c.id === "groceries").parentId, "food");
+  const loop = await run("manage_categories", {
+    action: "update",
+    category: "Food",
+    parent: "Bakery",
+  });
+  assertMatch(String((loop.result as any).error), /itself or one of its subcategories/);
+
+  await call("POST", `${f}/transactions`, {
+    ops: [
+      { date: "2026-03-01", amountCents: -100, payee: "Market", categoryId: "food" },
+      { date: "2026-03-02", amountCents: -200, payee: "Super", categoryId: "groceries" },
+      { date: "2026-03-03", amountCents: -400, payee: "Baker", categoryId: "bakery" },
+      { date: "2026-03-05", amountCents: -1600, payee: "Rent", categoryId: "housing" },
+    ],
+  });
+  const groups = async (args: Record<string, unknown>) =>
+    ((await run("analyze_transactions", { groupBy: ["category"], ...args })).result as any)
+      .groups.map((g: any) => [g.category, g.categoryPath ?? null, g.expenseCents]);
+  assertEquals(await groups({ categoryLevel: 1 }), [["housing", null, 1600], ["food", null, 700]]);
+  assertEquals(await groups({ category: "food", categoryLevel: 2, sortBy: "key" }), [
+    ["food", null, 100],
+    ["groceries", "Food > Groceries", 600],
+  ]);
+  assertEquals((await groups({ category: "food" })).map((g: any[]) => g[0]), [
+    "bakery",
+    "groceries",
+    "food",
+  ]);
+  const bad = await run("analyze_transactions", { groupBy: ["category"], categoryLevel: 0 });
+  assertMatch(String((bad.result as any).error), /categoryLevel/);
+
+  const summary = await run("finance_summary", { from: "2026-03-01", to: "2026-03-31" });
+  const byId = Object.fromEntries(
+    (summary.result as any).categories.map((c: any) => [c.categoryId, c]),
+  );
+  assertEquals(byId.food.expenseCents, 100);
+  assertEquals(byId.food.withSubcategories, { incomeCents: 0, expenseCents: 700, count: 3 });
+  assertEquals(byId.bakery.path, "Food > Groceries > Bakery");
+  assertEquals("withSubcategories" in byId.bakery, false);
 });
 
 Deno.test("the AI tools know accounts and transfers", async () => {

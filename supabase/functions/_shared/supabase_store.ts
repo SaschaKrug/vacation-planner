@@ -399,10 +399,8 @@ export class SupabaseStore implements Store {
   }
 
   async deleteCategory(familyId: string, id: string) {
-    // Transactions keep their rows: ON DELETE SET NULL clears their category.
-    check(
-      await this.db.from("finance_categories").delete().eq("family_id", familyId).eq("id", id),
-    );
+    // One database function: subcategories and transactions move to the parent first.
+    check(await this.db.rpc("delete_finance_category", { p_family_id: familyId, p_id: id }));
   }
 
   async listAccounts(familyId: string) {

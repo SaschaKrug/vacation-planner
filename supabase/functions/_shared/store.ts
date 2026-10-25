@@ -47,8 +47,10 @@ export interface CategoryRow {
   name: string;
   color: string;
   icon: string; // an emoji, or ""
-  kind: CategoryKind;
-  position: number;
+  kind: CategoryKind; // a subcategory has the kind of its top-level category
+  position: number; // among its siblings
+  /** The category it is a subcategory of; null for a top-level one. */
+  parent_id: string | null;
 }
 
 /** A finance account (Konto), e.g. the checking account. */
@@ -322,7 +324,8 @@ export interface Store {
   /** Categories ordered by position. */
   listCategories(familyId: string): Promise<CategoryRow[]>;
   upsertCategories(rows: CategoryRow[]): Promise<void>;
-  /** Deletes the category; its transactions become uncategorized. */
+  /** Deletes the category; its subcategories and transactions move to its parent (top level:
+   *  the subcategories become top-level ones, the transactions uncategorized). */
   deleteCategory(familyId: string, id: string): Promise<void>;
   /** Accounts ordered by position. */
   listAccounts(familyId: string): Promise<AccountRow[]>;
@@ -735,9 +738,11 @@ export class MemoryStore implements Store {
 
   deleteCategory(familyId: string, id: string) {
     const list = this.categories.get(familyId) ?? [];
+    const parent = list.find((c) => c.id === id)?.parent_id ?? null;
     this.categories.set(familyId, list.filter((c) => c.id !== id));
+    for (const c of list) if (c.parent_id === id) c.parent_id = parent;
     for (const t of this.transactions.get(familyId)?.values() ?? []) {
-      if (t.category_id === id) t.category_id = null;
+      if (t.category_id === id) t.category_id = parent;
     }
     return Promise.resolve();
   }

@@ -2,6 +2,7 @@
 // add up rows itself: transactions (counted like every total in the app: a transfer by its net,
 // a split booking by its parts) and calendar days per entry type.
 
+import { categoryTree } from "../category_tree.ts";
 import { weekday } from "../dates.ts";
 import { type NetItem, similarKey } from "../finance.ts";
 import type { AccountRow, CategoryRow, EntryRow, TypeRow } from "../store.ts";
@@ -141,6 +142,9 @@ function figures(amounts: number[], stats: TxStat[]) {
  * Groups the items by up to two dimensions and sums them up per group. Statistics (avg,
  * median, …) are of the single amounts (negative = money out). Time groups are in order;
  * others by their volume (income + expenses), largest first, unless `sortBy` says otherwise.
+ * Categories are a tree: with `categoryLevel` (1 = top level) an item counts for its
+ * category's ancestor at that level (or its own category, if that isn't as deep); without, for
+ * its own category.
  */
 export function analyzeTransactions(input: {
   items: NetItem[];
@@ -148,22 +152,29 @@ export function analyzeTransactions(input: {
   stats: TxStat[];
   sortBy?: TxSort;
   order?: "asc" | "desc";
+  categoryLevel?: number;
   categories: CategoryRow[];
   accounts: AccountRow[];
   from?: string;
   to?: string;
 }): TxAnalysis {
   const { items, groupBy, stats } = input;
-  const categories = new Map(input.categories.map((c) => [c.id, c]));
+  const tree = categoryTree(input.categories);
   const accounts = new Map(input.accounts.map((a) => [a.id, a]));
   const keyOf = (dim: TxDimension, it: NetItem): Key => {
     switch (dim) {
       case "category": {
-        const c = it.categoryId ? categories.get(it.categoryId) : undefined;
+        const own = it.categoryId ? tree.byId.get(it.categoryId) : undefined;
+        const c = own && input.categoryLevel ? tree.atLevel(own.id, input.categoryLevel) : own;
+        const id = c?.id ?? it.categoryId;
         return {
-          key: it.categoryId ?? "",
-          order: [c ? c.position : Infinity],
-          fields: { category: it.categoryId, categoryName: c?.name ?? null },
+          key: id ?? "",
+          order: [c ? tree.index(c.id) : Infinity],
+          fields: {
+            category: id,
+            categoryName: c?.name ?? null,
+            ...(c && tree.depth(c.id) > 1 ? { categoryPath: tree.path(c.id) } : {}),
+          },
         };
       }
       case "account": {

@@ -22,6 +22,7 @@ import { today } from "@/features/vacation/store";
 import type { Transaction } from "@/lib/api";
 import { getLang, t } from "@/lib/i18n";
 import { centsToInput, parseMoney } from "@/lib/money";
+import { CategoryOptions } from "./CategoryOptions";
 
 /** Adds a transaction, or edits one. */
 export function TransactionDialog(
@@ -52,8 +53,6 @@ export function TransactionDialog(
   });
   const [note, setNote] = useState(transaction?.note ?? "");
   const [error, setError] = useState("");
-
-  const categories = finance.categories.filter((c) => c.kind === "both" || c.kind === kind);
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -164,11 +163,7 @@ export function TransactionDialog(
                 <SelectItem value="none">
                   {t("finance.uncategorized")}
                 </SelectItem>
-                {categories.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.icon} {c.name}
-                  </SelectItem>
-                ))}
+                <CategoryOptions fits={(c) => c.kind === "both" || c.kind === kind} />
               </SelectContent>
             </Select>
           </label>

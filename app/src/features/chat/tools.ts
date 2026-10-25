@@ -151,6 +151,7 @@ export function toolDetail(item: ToolItem): string {
     case "manage_categories": {
       const name = named(a.name) || named(a.category);
       if (name) parts.push(quoted(name));
+      if (named(a.parent)) parts.push(`→ ${quoted(named(a.parent))}`);
       break;
     }
   }

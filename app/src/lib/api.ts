@@ -36,8 +36,12 @@ export interface Category {
   name: string;
   color: string;
   icon: string;
+  /** A subcategory has the kind of its top-level category. */
   kind: CategoryKind;
+  /** Among its siblings. */
   position: number;
+  /** The category it is a subcategory of; null for a top-level one. */
+  parentId: string | null;
 }
 
 /** A bank account (Konto); its balance is the opening balance plus all its transactions. */
@@ -492,8 +496,10 @@ export const api = {
     token: string,
     patch: { currency?: string; csvMappings?: unknown[] },
   ) => request<FinanceOverview>("PATCH", `${fam(token)}/finance/settings`, patch),
-  addCategory: (token: string, c: Omit<Category, "id" | "position">) =>
-    request<Category>("POST", `${fam(token)}/finance/categories`, c),
+  addCategory: (
+    token: string,
+    c: Omit<Category, "id" | "position" | "parentId"> & { parentId?: string | null },
+  ) => request<Category>("POST", `${fam(token)}/finance/categories`, c),
   updateCategory: (token: string, id: string, patch: Partial<Category>) =>
     request<Category>(
       "PATCH",

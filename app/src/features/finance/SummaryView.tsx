@@ -1,9 +1,12 @@
+import { ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useFinance } from "@/features/family/context";
-import type { FinanceSummary } from "@/lib/api";
+import type { Category, FinanceSummary } from "@/lib/api";
 import { getLang, t } from "@/lib/i18n";
 import { formatMoney } from "@/lib/money";
+import { cn } from "@/lib/utils";
+import type { CategoryNode } from "./categoryTree";
 import { StatTiles } from "./FinancePage";
 
 /** Income and expenses per month, and where the money went, for the chosen period (a single
@@ -298,15 +301,82 @@ function Row(
   );
 }
 
-/** Where the money went (or came from): one bar per category, largest first. */
+/** One row of the breakdown: a category with its subcategories (`total`), or what is directly
+ *  in a category that has subcategories too, or the uncategorized transactions. */
+interface BreakdownRow {
+  key: string;
+  label: string;
+  cents: number;
+  depth: number;
+  node?: CategoryNode;
+}
+
+/**
+ * Where the money went (or came from): one bar per top-level category, largest first, its
+ * subcategories folded in. A category with subcategories opens to show them (and what is in
+ * the category itself), as deep as the tree goes. Bars share one scale, shares are of the total.
+ */
 function CategoryBreakdown({ summary }: { summary: FinanceSummary }) {
   const finance = useFinance();
   const lang = getLang();
   const [kind, setKind] = useState<"expense" | "income">("expense");
+  const [open, setOpen] = useState<Set<string>>(() => new Set());
   const key = kind === "expense" ? "expenseCents" : "incomeCents";
-  const rows = summary.categories.filter((c) => c[key] > 0).sort((a, b) => b[key] - a[key]);
-  const total = rows.reduce((n, c) => n + c[key], 0);
-  const max = rows[0]?.[key] ?? 1;
+  const tree = finance.categoryTree;
+
+  // What each category holds itself, and with its subcategories.
+  const own = new Map<string, number>();
+  let uncategorized = 0;
+  for (const c of summary.categories) {
+    if (c.categoryId && tree.byId.has(c.categoryId)) own.set(c.categoryId, c[key]);
+    else uncategorized += c[key];
+  }
+  const totals = new Map<string, number>();
+  const sum = (n: CategoryNode): number => {
+    const cents = n.children.reduce((s, k) => s + sum(k), own.get(n.category.id) ?? 0);
+    totals.set(n.category.id, cents);
+    return cents;
+  };
+  tree.roots.forEach(sum);
+
+  const label = (c: Category) => `${c.icon ? c.icon + " " : ""}${c.name}`;
+  const nodeRows = (nodes: CategoryNode[], depth: number): BreakdownRow[] =>
+    nodes.map((n) => ({
+      key: n.category.id,
+      label: label(n.category),
+      cents: totals.get(n.category.id) ?? 0,
+      depth,
+      node: n,
+    })).filter((r) => r.cents > 0).sort((a, b) => b.cents - a.cents);
+  const top = nodeRows(tree.roots, 0);
+  if (uncategorized > 0) {
+    top.push({ key: "none", label: t("finance.uncategorized"), cents: uncategorized, depth: 0 });
+    top.sort((a, b) => b.cents - a.cents);
+  }
+  const total = top.reduce((n, r) => n + r.cents, 0);
+  const max = top[0]?.cents ?? 1;
+
+  /** The row and, when it is open, the rows below it. */
+  const expand = (r: BreakdownRow): BreakdownRow[] => {
+    const children = r.node ? nodeRows(r.node.children, r.depth + 1) : [];
+    if (!children.length || !open.has(r.key)) return [r];
+    const direct = own.get(r.key) ?? 0;
+    const below = direct > 0
+      ? [...children, {
+        key: `${r.key}:direct`,
+        label: t("finance.directly_in", { name: r.node!.category.name }),
+        cents: direct,
+        depth: r.depth + 1,
+      }].sort((a, b) => b.cents - a.cents)
+      : children;
+    return [r, ...below.flatMap(expand)];
+  };
+  const toggle = (id: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
 
   return (
     <section className="rounded-xl border bg-card p-4">
@@ -326,30 +396,71 @@ function CategoryBreakdown({ summary }: { summary: FinanceSummary }) {
           </TabsList>
         </Tabs>
       </div>
-      {!rows.length && <p className="text-sm text-muted-foreground">{t("finance.no_data")}</p>}
+      {!top.length && <p className="text-sm text-muted-foreground">{t("finance.no_data")}</p>}
       <ul className="space-y-2.5">
-        {rows.map((c) => {
-          const cat = finance.categoryById(c.categoryId);
-          const share = Math.round((c[key] / total) * 100);
+        {top.flatMap(expand).map((r) => {
+          const share = Math.round((r.cents / total) * 100);
+          const opens = !!r.node?.children.some((k) => (totals.get(k.category.id) ?? 0) > 0);
+          const isOpen = open.has(r.key);
           return (
             <li
-              key={c.categoryId ?? "none"}
+              key={r.key}
               className="grid grid-cols-[minmax(7rem,12rem)_1fr_auto] items-center gap-3 text-sm"
             >
-              <span className="truncate">
-                {cat ? `${cat.icon ? cat.icon + " " : ""}${cat.name}` : t("finance.uncategorized")}
+              <span
+                className="flex min-w-0 items-center gap-1"
+                style={{ paddingLeft: `${Math.min(r.depth, 6) * 0.75}rem` }}
+              >
+                {opens
+                  ? (
+                    <button
+                      type="button"
+                      className="flex min-w-0 items-center gap-1 rounded-sm text-left hover:underline"
+                      aria-expanded={isOpen}
+                      title={t(
+                        isOpen ? "finance.hide_subcategories" : "finance.show_subcategories",
+                      )}
+                      onClick={() => toggle(r.key)}
+                    >
+                      <ChevronRight
+                        className={cn(
+                          "size-4 shrink-0 text-muted-foreground transition-transform",
+                          isOpen && "rotate-90",
+                        )}
+                      />
+                      <span className="truncate">{r.label}</span>
+                    </button>
+                  )
+                  : (
+                    <>
+                      {/* where the others have their arrow */}
+                      <span className="size-4 shrink-0" />
+                      <span
+                        className={cn(
+                          "truncate",
+                          r.depth > 0 && "text-muted-foreground",
+                          r.key.endsWith(":direct") && "italic",
+                        )}
+                      >
+                        {r.label}
+                      </span>
+                    </>
+                  )}
               </span>
               <span
                 className="h-3 overflow-hidden rounded-r-[4px]"
                 title={`${share}%`}
               >
                 <span
-                  className="block h-full rounded-r-[4px] bg-(--series-1)"
-                  style={{ width: `${Math.max(1, (c[key] / max) * 100)}%` }}
+                  className={cn(
+                    "block h-full rounded-r-[4px] bg-(--series-1)",
+                    r.depth > 0 && "opacity-60",
+                  )}
+                  style={{ width: `${Math.max(1, (r.cents / max) * 100)}%` }}
                 />
               </span>
               <span className="text-right whitespace-nowrap tabular-nums">
-                {formatMoney(c[key], summary.currency, lang)}
+                {formatMoney(r.cents, summary.currency, lang)}
                 <span className="ml-2 inline-block w-9 text-xs text-muted-foreground">
                   {share}%
                 </span>
