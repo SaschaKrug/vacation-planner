@@ -7,6 +7,8 @@
 //   "add category <name>"                 -> manage_categories (add)
 //   "delete category <name>"              -> manage_categories (delete)
 //   "search <words>"                      -> web_search
+//   "calculate <expression>"              -> calculate
+//   "analyze <dimension>"                 -> analyze_transactions grouped by it, this year
 //   a URL                                 -> fetch_page
 //   "keep looking"                        -> get_calendar again and again, until tools are off
 //   "say nothing"                         -> get_calendar, then no words until tools are off
@@ -165,6 +167,10 @@ export async function mockAi(req: Request): Promise<Response> {
     if (result.error) return reply(stream, `That didn't work: ${result.error}`);
     const text = result.changed !== undefined
       ? `Done: ${result.changed} days changed.`
+      : result.results?.[0]?.expression !== undefined
+      ? result.results.map((r: any) => `${r.expression} = ${r.value ?? r.error}`).join("; ")
+      : result.groups
+      ? `${result.groupCount} groups, ${result.total.expenseCents / 100} spent.`
       : result.results
       ? `I found ${result.results.length} results, e.g. ${result.results[0]?.title ?? "nothing"}.`
       : result.title !== undefined
@@ -222,6 +228,16 @@ export async function mockAi(req: Request): Promise<Response> {
     return reply(stream, "", {
       name: "finance_summary",
       args: { from: `${year}-01-01`, to: `${year}-12-31` },
+    });
+  }
+  const calc = /^(?:calculate|berechne) (.+)$/i.exec(text);
+  if (calc) return reply(stream, "", { name: "calculate", args: { expressions: [calc[1]] } });
+  const analyze = /^(?:analyze|analysiere) (\w+)$/i.exec(text);
+  if (analyze) {
+    const year = today.slice(0, 4);
+    return reply(stream, "", {
+      name: "analyze_transactions",
+      args: { from: `${year}-01-01`, to: `${year}-12-31`, groupBy: [analyze[1].toLowerCase()] },
     });
   }
   if (url) return reply(stream, "", { name: "fetch_page", args: { url } });

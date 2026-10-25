@@ -4,6 +4,7 @@
 // payees it doesn't know on the web (when search is set up). Its answer is a JSON object of row
 // number -> category id. Only categories that fit (income / expense) count.
 
+import { similarKey } from "../finance.ts";
 import { HttpError } from "../http.ts";
 import type { Lang } from "../ics.ts";
 import type { CategoryRow, SearchProvider, Store, TransactionRow } from "../store.ts";
@@ -31,18 +32,6 @@ const LANGUAGES: Record<Lang, string> = { en: "English", de: "German" };
 export function fits(c: CategoryRow, amountCents: number): boolean {
   if (c.kind === "both" || amountCents === 0) return true;
   return (c.kind === "income") === amountCents > 0;
-}
-
-/**
- * What makes transactions "similar": the first words of the payee (or, without one, of the
- * description), without numbers, punctuation and case, so "REWE Markt 1234 Berlin" and
- * "Rewe Markt 5678 Berlin" match.
- */
-export function similarKey(t: { payee: string; description: string }): string {
-  const words = (s: string) =>
-    s.toLowerCase().replace(/[^\p{L}\s]+/gu, " ").split(/\s+/).filter((w) => w.length > 1);
-  const payee = words(t.payee);
-  return (payee.length ? payee : words(t.description)).slice(0, 3).join(" ");
 }
 
 /**

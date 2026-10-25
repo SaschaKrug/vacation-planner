@@ -1,7 +1,8 @@
 import { assert, assertEquals, assertMatch } from "jsr:@std/assert@1";
 import { mockAi } from "../dev/mock_ai.ts";
-import { parseAnswer, similarKey } from "../supabase/functions/_shared/ai/categorize.ts";
+import { parseAnswer } from "../supabase/functions/_shared/ai/categorize.ts";
 import { htmlToText, isPrivateAddress } from "../supabase/functions/_shared/ai/net.ts";
+import { similarKey } from "../supabase/functions/_shared/finance.ts";
 import { createHandler, type HandlerOptions } from "../supabase/functions/_shared/handler.ts";
 import { MemoryRateLimiter } from "../supabase/functions/_shared/rate_limit.ts";
 import { devSecret } from "../supabase/functions/_shared/secrets.ts";
@@ -436,6 +437,25 @@ Deno.test("the assistant reads the finances", async () => {
   assertEquals(ev.find((e) => e.event === "tool")!.data.name, "finance_summary");
   const text = ev.filter((e) => e.event === "text").map((e) => e.data.delta).join("");
   assertMatch(text, /Income 1000, expenses 25/);
+});
+
+Deno.test("the assistant calculates and analyzes the finances, also read-only", async () => {
+  const t = await configured({}, { allowWrites: false });
+  await t.call("POST", `/families/${t.f.id}/finance/transactions`, {
+    ops: [
+      { date: "2026-02-01", amountCents: -2500, categoryId: "groceries" },
+      { date: "2026-02-03", amountCents: -1500, categoryId: "groceries" },
+    ],
+  });
+  const calc = await chat(t, "calculate round(1199.1 * 12 * 1.19, 2)");
+  assertEquals(calc.find((e) => e.event === "tool")!.data.name, "calculate");
+  const text = (ev: typeof calc) =>
+    ev.filter((e) => e.event === "text").map((e) => e.data.delta).join("");
+  assertMatch(text(calc), /= 17123\.15/);
+
+  const analyze = await chat(t, "analyze category");
+  assertEquals(analyze.find((e) => e.event === "tool")!.data.args.groupBy, ["category"]);
+  assertMatch(text(analyze), /1 groups, 40 spent/);
 });
 
 Deno.test("the assistant adds categories, with undo, and deletes them only when confirmed", async () => {

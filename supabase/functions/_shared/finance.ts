@@ -612,24 +612,54 @@ function inSplit(t: TransactionRow, splits: Splits): boolean {
  * in) counts. A split booking's parts count with their own amounts and categories, and the
  * booking only with what is left of it, so the totals still match the statement.
  */
-export function netItems(rows: TransactionRow[], { groups, splits }: Links) {
-  const out: { day: string; amountCents: number; categoryId: string | null }[] = [];
+export function netItems(rows: TransactionRow[], { groups, splits }: Links): NetItem[] {
+  const out: NetItem[] = [];
+  const item = (t: TransactionRow, amountCents: number, categoryId: string | null) => ({
+    day: t.day,
+    amountCents,
+    categoryId,
+    accountId: t.account_id,
+    payee: t.payee,
+    description: t.description,
+  });
   for (const t of rows) {
     const parts = splits.get(t.id);
     const legs = groupOf(t, groups);
     if (parts) {
       const rest = remainderOf(t, parts);
-      if (rest !== 0) out.push({ day: t.day, amountCents: rest, categoryId: t.category_id });
+      if (rest !== 0) out.push(item(t, rest, t.category_id));
     } else if (!legs) {
-      out.push({ day: t.day, amountCents: t.amount_cents, categoryId: t.category_id });
+      out.push(item(t, t.amount_cents, t.category_id));
     } else if (legs[0].id === t.id) {
       const net = netOf(t, groups);
       if (net === 0) continue;
-      const categoryId = legs.find((l) => l.category_id)?.category_id ?? null;
-      out.push({ day: t.day, amountCents: net, categoryId });
+      out.push(item(t, net, legs.find((l) => l.category_id)?.category_id ?? null));
     }
   }
   return out;
+}
+
+/** What one transaction (or transfer group, or what is left of a split booking) counts as;
+ *  payee, description and account are those of the transaction (a group's lead leg). */
+export type NetItem = {
+  day: string;
+  amountCents: number;
+  categoryId: string | null;
+  accountId: string | null;
+  payee: string;
+  description: string;
+};
+
+/**
+ * What makes transactions "similar": the first words of the payee (or, without one, of the
+ * description), without numbers, punctuation and case, so "REWE Markt 1234 Berlin" and
+ * "Rewe Markt 5678 Berlin" match.
+ */
+export function similarKey(t: { payee: string; description: string }): string {
+  const words = (s: string) =>
+    s.toLowerCase().replace(/[^\p{L}\s]+/gu, " ").split(/\s+/).filter((w) => w.length > 1);
+  const payee = words(t.payee);
+  return (payee.length ? payee : words(t.description)).slice(0, 3).join(" ");
 }
 
 function netTotals(items: { amountCents: number }[]) {
