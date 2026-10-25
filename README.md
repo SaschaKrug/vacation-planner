@@ -9,13 +9,33 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
 
 ### The app
 
-- **Families:** every family is one secret id. The left sidebar switches between the families
-  opened on this device (or creates / opens another one) and between the topics: **Vacation**
-  and **Finance**. **Settings** holds everything else. The right sidebar (✨, `Ctrl/⌘+J`) is
-  the AI chat; phones open both as sheets.
-- No login: every family has a secret **edit link** (`/f/<id>`) and a separate **view-only
-  link**. Anyone with the edit link can change it, so only share it with people who should. The
-  calendar feed has an id of its own (see [Links](#links)). Old links (`/?s=<id>`) still work.
+- **Families:** the left sidebar switches between your families (or creates a new one) and
+  between the topics: **Vacation** and **Finance**. **Settings** holds everything else. The
+  right sidebar (✨, `Ctrl/⌘+J`) is the AI chat; phones open both as sheets.
+- **Sign in** with a **passkey** (fingerprint, face or device PIN) or with your email and a
+  **password**. You see the families you are a member of: as **editor** (change everything,
+  add people) or **viewer** (only look). Only the calendar feed works without signing in (see
+  [Links](#links)). Old links (`/f/<id>`, `/?s=<id>`) still open the family, after signing in.
+
+### Accounts & administration
+
+- A new installation starts with one account, **`admin` / `admin`**. Its first sign-in asks
+  for a new password before anything else (the initial one can be set with the
+  `INITIAL_ADMIN_PASSWORD` secret instead). The admin gets every family that exists then, so
+  families from before accounts can be handed out.
+- **Administration** (admins only, in the sidebar and the account menu): *Users* creates
+  accounts and makes other admins; a new account comes with a **one-time setup link** (7 days)
+  that signs the person in and asks for a passkey or a password. A new setup link also helps
+  with a forgotten password: it sets a new one without the old one. *Families* creates
+  families, renames and deletes them, and decides who is a member with which role. Being an
+  admin doesn't open a family: admins add themselves as members for that.
+- **Account** (the menu at the bottom of the sidebar): name and email, passkeys (add one per
+  device, rename, delete), the password (change it, or remove it to use passkeys only), and
+  personal **API tokens** for scripts and AI agents. Changing the password signs out the other
+  devices. Signing out forgets the family data this device kept (cached calendars, chats).
+- In a family, *Settings* → *Members*: editors add people by the email of their account and
+  change roles; everyone can leave. A family keeps at least one editor. Any user can create a
+  family, and is its editor.
 
 ### Vacation
 
@@ -78,15 +98,14 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
 - **Overview:** for the chosen month, year or all time: income, expenses and the balance, the
   spending (or income) per category and, for a year or all time, a chart per month, also as a
   table.
-- The view-only link shows the finances read-only; the legacy view link and the calendar feed
-  never do.
+- Viewers see the finances read-only; the calendar feed never shows them.
 
 ### AI assistant
 
 - Chat with any **OpenAI-compatible** model (OpenAI, OpenRouter, Mistral, Groq, a local Ollama /
   LM Studio …), set up per family in *Settings* → *AI assistant*: API URL, key, and a model
-  picked from the API's list. Keys are stored encrypted and never shown again; everyone with
-  the edit link uses the setup (the view-only link has no chat).
+  picked from the API's list. Keys are stored encrypted and never shown again; all editors of
+  the family use the setup (viewers have no chat).
 - It **looks things up** in the calendar and the finances, **changes** them (entries, notes,
   types, categories, transactions), **searches the web** (Tavily or Brave, with their own key)
   and **reads pages**. Every change shows up in the chat with **Undo**; bigger changes (more than
@@ -125,26 +144,27 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
 ### Settings
 
 - **General:** the family's name; language (English / German) and light / dark per device.
-- **Sharing:** the edit and view-only links, a new view-only link when the old one got around,
-  and the **calendar feed**: pick what it includes, then *Subscribe on this device*, or on a
-  Mac: Calendar → File → New Calendar Subscription → paste the feed URL → Location **iCloud**.
-  The feed URL opens nothing but the feed, so it never exposes the edit or view link.
+- **Members:** who belongs to the family, as editor or viewer (see above).
+- **Calendar feed:** pick what it includes, then *Subscribe on this device*, or on a Mac:
+  Calendar → File → New Calendar Subscription → paste the feed URL → Location **iCloud**. The
+  feed URL opens nothing but the feed, and works without signing in (calendar apps can't); *New
+  link* replaces it when it got around.
 - **Vacation:** the entry types of each year, and the calendar options of this device.
 - **Finance:** the currency, the accounts (name, color, icon, opening balance), the categories
   (name, color, icon, income / expense / both) and the remembered bank formats.
 - **AI assistant:** the model, web search and whether the assistant may change things.
-- **Data:** *Export (JSON)* downloads the whole family (all years, types, entries and notes, but
-  not its links) as a file; *Import from file…* (edit link only) replaces all of that with such
-  a file, e.g. to restore a backup (the family keeps its name and links; can't be undone).
-  *Clone family* copies everything into a new family with its own links; it works from a
-  view-only link too, which gives you your own editable copy.
+- **Data:** *Export (JSON)* downloads the whole family (all years, types, entries, notes and
+  finances, but not its ids) as a file; *Import from file…* (editors only) replaces all of that
+  with such a file, e.g. to restore a backup (the family keeps its name and members; can't be
+  undone). *Clone family* copies everything into a new family with you as its editor; viewers
+  can clone too, which gives them their own editable copy.
 - New families get default types in the app's language, and the calendar feed uses it for its
   texts.
 
 ## Architecture
 
 ```
-GitHub Pages (app/)  ──fetch──▶  Supabase Edge Function "api"  ──▶  Postgres (8 tables)
+GitHub Pages (app/)  ──fetch──▶  Supabase Edge Function "api"  ──▶  Postgres (13 tables)
 iCloud / Apple Calendar ──GET calendar.ics──┘
 ```
 
@@ -183,6 +203,12 @@ migrations → Edge Function → frontend to the `gh-pages` branch.
 
 4. Run the workflow: *Actions → Deploy → Run workflow* (or push to `main`).
 
+5. **Sign in** as `admin` / `admin` and choose a new password right away: until then, anyone
+   who knows the default could take the account. To start with another password, add the
+   repository secret `INITIAL_ADMIN_PASSWORD` before the first deploy (it is only used while
+   there are no accounts). The deploy also sets `APP_ORIGIN` (the app's address, from the
+   custom domain): passkeys only work from there.
+
 The tables use Row Level Security without policies, so they are not reachable with the public
 anon key; all access goes through the Edge Function, which uses the service role key.
 
@@ -199,6 +225,8 @@ deleted. Over the limit, it answers `429` with a `Retry-After` header.
 | AI requests (chat, model list, test, categorize) per client | 60 per 5 minutes |
 | AI requests per family | 300 per hour |
 | Changes (`POST`, `PATCH`, `DELETE`) per client | 300 per 5 minutes |
+| Sign-ins (password, passkey, setup link) per client | 30 per 5 minutes |
+| Password attempts per account, from all clients | 50 per hour |
 
 Reads, including the calendar feed, are not limited: iCloud fetches every subscription from a
 few shared addresses. If counting fails, requests go through. The limits are in
@@ -223,19 +251,23 @@ No database needed: the dev server runs the real API handler on an in-memory sto
 | Option | Effect |
 | --- | --- |
 | `--persist` | Keeps the data in `.dev/data.json` across restarts (delete the file to start over) |
-| `--seed` | Adds a *Demo family* with types, entries, notes and uncovered days in this and next year, and six months of transactions, if there are no families yet |
+| `--seed` | Adds a *Demo family* with types, entries, notes and uncovered days in this and next year, and six months of transactions, if there are no families yet; `admin` is its editor |
 | `--rate-limit` | Low rate limits (3 new families, 30 changes per minute) to try the app's 429 handling |
 | `--mock-ai` | A scripted OpenAI-compatible endpoint at `/mock-ai/v1`, set up for every family without AI settings, so the chat and its tools can be tried without a key (see `dev/mock_ai.ts` for what it reacts to) |
 
 The dev server lets the assistant reach localhost, e.g. a local model at
 `http://localhost:11434/v1` (Ollama); production refuses private addresses.
 
-On start, the server prints the edit and view links of all families it holds.
+On start, the server prints the links of all families it holds. A new store starts with
+`admin` / `admin` like production (the password is changed at the first sign-in; with
+`--persist`, delete `.dev/data.json` to start over). Passkeys work on `localhost`.
 
 ## API
 
-Base URL: `https://<project-ref>.supabase.co/functions/v1/api`. The family id from the edit link
-is the access key; the other links can only read (see [Links](#links)). Types can be referenced
+Base URL: `https://<project-ref>.supabase.co/functions/v1/api`. Every request (but the calendar
+feed) needs a personal **API token** (*Account* → *API tokens*) as
+`Authorization: Bearer <token>`: it acts as you, so it opens the families you are a member of,
+and changes them where you are an editor. Others' families answer `404`. Types can be referenced
 by id or by name (case-insensitive). Dates are `YYYY-MM-DD`.
 
 `/sessions/...` is the name from before families and works as an alias of `/families/...`
@@ -248,12 +280,16 @@ working across years.
 
 | Method & path | Description |
 | --- | --- |
-| `POST /families` | Create a family. Body (optional): `{"name": "...", "year": 2026, "types": [{"name","color","role"}]}`; the types go into `year` (default: current year); `"lang": "de"` gives German default types and name |
-| `GET /families/{id}?year=2026` | `family` (the links this id may know, `name`, `access`), the year's types, entries and notes, and `typeYears` (all years with types). `?from=&to=` also works; no filter = all. The same object is also in `session`, for scripts from before families |
+| `POST /families` | Create a family, with you as its editor. Body (optional): `{"name": "...", "year": 2026, "types": [{"name","color","role"}]}`; the types go into `year` (default: current year); `"lang": "de"` gives German default types and name |
+| `GET /families/{id}?year=2026` | `family` (`id`, `feedId`, `legacyId` for editors, `name`, `access`: `edit` or `view`), the year's types, entries and notes, and `typeYears` (all years with types). `?from=&to=` also works; no filter = all. The same object is also in `session`, for scripts from before families |
 | `PATCH /families/{id}` | Rename: `{"name": "..."}` |
-| `POST /families/{id}/links` | New link: `{"link": "view"}` or `{"link": "feed"}` makes a new view or feed id (the old one stops working); `{"link": "legacy"}` removes the legacy view link. Returns the family like `GET /families/{id}` |
-| `POST /families/{id}/clone` | Copy the family (all years, types, entries, notes) into a new one with new ids. Body (optional): `{"name": "..."}`, default *“… (copy)”*. The view-only id works too |
-| `GET /families/{id}/export` | The whole family as a file: `{"format": "family-planner", "version": 2, "name", "types": [...], "entries": {...}, "notes": {...}, "finance": {"currency", "accounts", "categories", "transactions"}}`, all years, without the family's ids. The view-only id works too; the legacy id exports without `finance` |
+| `POST /families/{id}/links` | `{"link": "feed"}` makes a new feed id (the old one stops working); `{"link": "legacy"}` removes the legacy link. Returns the family like `GET /families/{id}` |
+| `GET /families/{id}/members` | `[{"userId", "email", "name", "role": "editor" \| "viewer", "you"}]` |
+| `POST /families/{id}/members` | Editors: `{"email", "role"}` adds the account with that email (`404` if there is none) |
+| `PATCH /families/{id}/members/{userId}` | Editors: `{"role"}`. A family keeps at least one editor |
+| `DELETE /families/{id}/members/{userId}` | Editors remove members; everyone can remove themselves (leave) |
+| `POST /families/{id}/clone` | Copy the family (all years, types, entries, notes, finances) into a new one with new ids and you as its editor. Body (optional): `{"name": "..."}`, default *“… (copy)”*. Viewers can clone too |
+| `GET /families/{id}/export` | The whole family as a file: `{"format": "family-planner", "version": 2, "name", "types": [...], "entries": {...}, "notes": {...}, "finance": {"currency", "accounts", "categories", "transactions"}}`, all years, without the family's ids. Viewers can export too |
 | `POST /families/{id}/import?year=2026` | Replace all years, types, entries and notes with those of an export file (the body), in one transaction, and the finances if the file has them; name and ids stay. Version 1 files and `"format": "vacation-planner"` (exported before the rename) work too. Returns the family like `GET /families/{id}` |
 | `GET /families/{id}/entries?year=2026` | `{"2026-08-03": ["vacation", "day-care-closed"], ...}` |
 | `POST /families/{id}/entries` | Change entries (see below) |
@@ -272,8 +308,8 @@ Roles: `none`, `needs_cover`, `covers`, `day_off`.
 
 ### Finance
 
-Amounts are integer **cents**, negative for money going out. Reading needs the view or edit id,
-changing the edit id.
+Amounts are integer **cents**, negative for money going out. Viewers and editors read, editors
+change.
 
 | Method & path | Description |
 | --- | --- |
@@ -295,7 +331,7 @@ changing the edit id.
 
 ### AI assistant
 
-All need the edit id.
+All are for editors only.
 
 | Method & path | Description |
 | --- | --- |
@@ -308,27 +344,54 @@ All need the edit id.
 
 ### Links
 
-Every family has several ids; each one is a link with its own access:
+Only one link works without signing in: the **calendar feed**, as calendar apps can't sign in.
 
-| Id | In `family` | Can |
+| Id | In `family` | Opens |
 | --- | --- | --- |
-| Edit id | `id` | Everything |
-| View id | `readId` | Read everything (finances too), export, clone |
-| Feed id | `feedId` | Only `calendar.ics` |
-| Legacy id | `legacyId` | Read the calendar, its feed, export, clone. Only planners from before families have one: their old view id, so links and calendar subscriptions shared back then keep working without ever seeing anything that's new in families (like finances) |
+| Family id | `id` | Nothing by itself: `/families/{id}/...` needs a member's token |
+| Feed id | `feedId` | Only `calendar.ics`, without a token |
+| Legacy id | `legacyId` | Only `calendar.ics`, without a token. Only planners from before families have one: their old view id, so calendar subscriptions made back then keep working |
 
-`family.access` says which one opened the family (`edit`, `view` or `calendar` for the legacy
-id); a response only names the ids that link may know.
+The family's old edit and view links stopped granting access with accounts: `/f/<id>` still
+opens the family in the app, for its members. Calendar subscriptions made with the edit id (from
+before the feed id) need to be made again with the feed link.
+
+### Account and administration
+
+Signing in answers `{"token", "user", "families"}` like `GET /auth/me` plus a session token for
+the app. API tokens can only read `GET /auth/me`; the rest of `/auth` and all of `/admin` need
+a session.
+
+| Method & path | Description |
+| --- | --- |
+| `POST /auth/login` | `{"email", "password"}` |
+| `POST /auth/passkey/start` → `/auth/passkey/finish` | Passkey sign-in: options for `navigator.credentials.get`, then `{"challengeId", "response"}` |
+| `POST /auth/setup` | `{"token"}` from a setup link (`/setup/<token>`); works once |
+| `GET /auth/me` | `{"user": {"id", "email", "name", "isAdmin", "mustChangePassword", "hasPassword", "passkeys"}, "families": [{"id", "name", "role"}]}` |
+| `PATCH /auth/me` | `{"name", "email"}` |
+| `PUT /auth/password` | `{"password", "current"}` (`current` isn't needed without a password, or after a setup link); signs out the other sessions |
+| `DELETE /auth/password` | Passkeys only (needs one) |
+| `GET /auth/passkeys`, `POST /auth/passkeys/start` → `/auth/passkeys/finish`, `PATCH`/`DELETE /auth/passkeys/{id}` | List, add (`{"challengeId", "response", "name"}`), rename, delete (not the last way to sign in) |
+| `GET /auth/tokens`, `POST /auth/tokens`, `DELETE /auth/tokens/{id}` | API tokens; `POST {"name"}` answers the token once |
+| `POST /auth/logout` | Ends the session |
+| `GET /admin/users`, `POST /admin/users` | All users (with their families and how they sign in); `{"email", "name", "isAdmin"}` creates one and answers its `setupToken` |
+| `PATCH`/`DELETE /admin/users/{id}` | `{"email", "name", "isAdmin"}`; admins can't remove their own admin rights or account |
+| `POST /admin/users/{id}/setup` | A new setup link token (older ones stop working) |
+| `GET /admin/families`, `POST /admin/families` | All families with their members; `{"name", "lang", "members": [{"userId", "role"}]}` creates one |
+| `PATCH`/`DELETE /admin/families/{id}` | Rename `{"name"}`, or delete with everything in it |
+| `PUT`/`DELETE /admin/families/{id}/members/{userId}` | Add a member or change the role `{"role"}`, or remove them |
 
 ### Changing entries
 
 ```sh
 # Vacation from Aug 3 to Aug 14, weekdays only
-curl -X POST "$BASE/families/$FAMILY/entries" -H "content-type: application/json" \
+curl -X POST "$BASE/families/$FAMILY/entries" -H "authorization: Bearer $TOKEN" \
+  -H "content-type: application/json" \
   -d '{"action":"add","type":"vacation","from":"2026-08-03","to":"2026-08-14","skipWeekends":true}'
 
 # Several operations, applied in order
-curl -X POST "$BASE/families/$FAMILY/entries" -H "content-type: application/json" \
+curl -X POST "$BASE/families/$FAMILY/entries" -H "authorization: Bearer $TOKEN" \
+  -H "content-type: application/json" \
   -d '{"ops":[
         {"action":"remove","type":"vacation","dates":["2026-08-07"]},
         {"action":"set","types":["holiday"],"dates":["2026-12-24","2026-12-31"]},
@@ -350,7 +413,8 @@ Days are given as `dates` (array), `date`, and/or an inclusive `from`/`to` range
 
 ```sh
 # 🎄 Christmas on Dec 24–26, and clear a note
-curl -X POST "$BASE/families/$FAMILY/notes" -H "content-type: application/json" \
+curl -X POST "$BASE/families/$FAMILY/notes" -H "authorization: Bearer $TOKEN" \
+  -H "content-type: application/json" \
   -d '{"ops":[
         {"action":"set","icon":"🎄","comment":"Christmas","from":"2026-12-24","to":"2026-12-26"},
         {"action":"clear","dates":["2026-12-31"]}

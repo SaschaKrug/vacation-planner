@@ -63,17 +63,9 @@ const STRINGS: Record<Lang, Dict> = {
     "menu.redo_key": "Ctrl/⌘+Y",
 
     // landing
-    "landing.title": "Plan your family's year",
-    "landing.lead":
-      "One place for your family's plans: vacation, holidays and day-care closures in a shared year calendar, with a coverage check and iCloud subscriptions. Plus a transactions log for the family's finances and an AI assistant that researches and plans with you. No login – the link is the key.",
     "landing.create": "Create a family",
     "landing.config_warning":
       "The backend isn't configured yet. Add the Supabase secrets to the repository and re-run the deploy workflow (see README).",
-    "landing.recent": "Recently opened on this device",
-    "landing.view_only": " (view only)",
-    "landing.open_label": "Open an existing family",
-    "landing.open_placeholder": "Paste a link or id",
-    "landing.open": "Open",
 
     // vacation calendar
     "toolbar.label": "Entry types",
@@ -135,7 +127,7 @@ const STRINGS: Record<Lang, Dict> = {
     "sync.updating": "Updating…",
     "toast.save_failed": "Couldn't save: {msg}",
     "toast.load_failed": "Couldn't load: {msg}",
-    "toast.not_found": "This family doesn't exist (anymore). Check the link.",
+    "toast.not_found": "This family doesn't exist (anymore), or you're not a member of it.",
     "toast.nothing_undo": "Nothing to undo",
     "toast.nothing_redo": "Nothing to redo",
     "toast.select_first": "Select some days first",
@@ -153,7 +145,7 @@ const STRINGS: Record<Lang, Dict> = {
     "toast.rate_limited": "Too many requests – please try again later",
     "toast.wait_saving": "Changes are still being saved – try again in a moment",
     "clone.confirm":
-      "Create a copy of “{name}” with all years, types, entries and notes?\n\nThe copy gets its own new links; this family stays unchanged.",
+      "Create a copy of “{name}” with all years, types, entries, notes and finances?\n\nYou'll be the copy's editor and can add others; this family stays unchanged.",
     "clone.name": "{name} (copy)",
     "toast.export_failed": "Couldn't export the family: {msg}",
     "toast.import_invalid":
@@ -208,13 +200,8 @@ const STRINGS: Record<Lang, Dict> = {
     "note.save": "Save",
 
     // share dialog
-    "share.title": "Share & subscribe",
     "share.tab_links": "Links",
     "share.tab_calendar": "Calendar & iCloud",
-    "share.edit": "Edit link",
-    "share.edit_help":
-      "Anyone with this link can view and change everything. Bookmark it – it's the only key.",
-    "share.view": "View-only link",
     "share.icloud_help":
       "A read-only calendar feed. Apple Calendar checks it for changes regularly (choose “Every hour” or “Every 5 minutes” when subscribing on a Mac).",
     "share.include": "Include",
@@ -278,13 +265,8 @@ const STRINGS: Record<Lang, Dict> = {
     "nav.soon": "Soon",
     "nav.planning": "Planning",
     "family.switch": "Switch family",
-    "family.recent": "Opened on this device",
     "family.new": "New family",
-    "family.open": "Open a link…",
-    "family.open_title": "Open a family",
-    "family.open_help": "Paste a Family Planner link or id.",
     "family.view_only": "view only",
-    "family.calendar_only": "calendar only",
     "family.loading": "Loading…",
     "chat.title": "AI assistant",
     "chat.open": "AI assistant (Ctrl/⌘+J)",
@@ -294,7 +276,7 @@ const STRINGS: Record<Lang, Dict> = {
     "page.redo": "Redo (Ctrl/⌘+Y)",
     "settings.title": "Settings",
     "settings.general": "General",
-    "settings.sharing": "Sharing",
+    "settings.sharing": "Calendar feed",
     "settings.vacation": "Vacation",
     "settings.data": "Data",
     "settings.family_scope": "For the whole family",
@@ -307,38 +289,35 @@ const STRINGS: Record<Lang, Dict> = {
     "theme.system": "Like the system",
     "theme.light": "Light",
     "theme.dark": "Dark",
-    "settings.readonly": "This is a view-only link: you can look at everything, but not change it.",
+    "settings.readonly":
+      "You can view this family, but not change it: ask one of its editors to make you an editor.",
     "settings.calendar_view": "Calendar view",
     "settings.skip_weekends_title":
       "Weekends are left out when filling, pasting or toggling ranges",
-    "settings.types_readonly": "Entry types can only be changed with the edit link.",
+    "settings.types_readonly": "Only editors of the family can change entry types.",
     "settings.year": "Year",
-    "share.view_help": "Anyone with this link can see everything, but not change anything.",
     "share.rotate": "New link",
-    "share.rotate_view_confirm":
-      "Make a new view-only link? The current one stops working for everyone who has it.",
     "share.rotate_feed_confirm":
       "Make a new feed link? Calendar subscriptions with the current one stop updating and need to be added again.",
     "share.rotated": "New link made",
     "share.rotate_failed": "Couldn't make a new link: {msg}",
-    "share.legacy": "Old view-only link",
+    "share.legacy": "Old calendar link",
     "share.legacy_help":
-      "Shared before the rename to Family Planner. It still opens the calendar (read-only) and the calendar subscriptions made with it, but nothing else.",
+      "Shared before the rename to Family Planner. Calendar subscriptions made with it keep working; it doesn't open anything else any more.",
     "share.legacy_remove": "Remove",
     "share.legacy_confirm":
-      "Remove the old view-only link? Everyone who has it, and calendar subscriptions made with it, lose access.",
+      "Remove the old calendar link? Calendar subscriptions made with it stop updating.",
     "share.legacy_removed": "Old link removed",
     "share.feed": "Calendar subscription",
-    "share.feed_help": "This link only opens the calendar feed, nothing else.",
-    "data.export_help": "All years, types, entries and notes as a JSON file (without the links).",
+    "share.feed_help":
+      "The only link that works without signing in: it opens the calendar feed, nothing else.",
+    "data.export_help": "All years, types, entries, notes and finances as a JSON file.",
     "data.import_help":
-      "Replaces all years, types, entries and notes of this family with an exported file; the name and the links stay. Can't be undone.",
-    "data.clone_help": "A copy of this family with all its data and its own new links.",
+      "Replaces all years, types, entries and notes of this family (and its finances, if the file has them) with an exported file; the name and members stay. Can't be undone.",
+    "data.clone_help": "A copy of this family with all its data, with you as its editor.",
     "data.imported": "Imported",
     // ---- Finance
     "settings.finance": "Finance",
-    "finance.calendar_only":
-      "This link only opens the calendar. Ask for the view-only or edit link to see the finances.",
     "finance.transactions": "Transactions",
     "finance.overview": "Overview",
     "finance.add": "Add",
@@ -621,6 +600,147 @@ const STRINGS: Record<Lang, Dict> = {
       "The assistant may change the calendar and transactions (every change can be undone). Off: it can only read.",
     "ai_settings.privacy":
       "Your messages and the calendar and finance data the assistant looks at are sent to the AI API you set up above.",
+    // ---- Accounts
+    "nav.admin": "Administration",
+    "family.yours": "Your families",
+    "settings.members": "Members",
+    "user.menu": "Account menu",
+    "user.account": "Account",
+    "user.sign_out": "Sign out",
+    "auth.title": "Sign in",
+    "auth.lead":
+      "Plan your family's year: vacation, holidays, day-care closures and finances in one place.",
+    "auth.passkey": "Sign in with a passkey",
+    "auth.or_password": "or with your password",
+    "auth.email": "Email",
+    "auth.password": "Password",
+    "auth.sign_in": "Sign in",
+    "auth.wrong": "Wrong email or password.",
+    "auth.passkey_unknown":
+      "This passkey isn't known here. Sign in with your password, or ask an admin for a new setup link.",
+    "auth.failed": "Couldn't sign in: {msg}",
+    "auth.no_account":
+      "No account yet? Accounts are made by an admin of this Family Planner: ask them for a setup link.",
+    "auth.load_failed": "Couldn't load your account: {msg}",
+    "auth.retry": "Try again",
+    "setup.title": "Setting up your account",
+    "home.welcome": "Welcome, {name}",
+    "home.no_family":
+      "You aren't a member of a family yet. Ask someone who edits your family to add you (your account is {email}), or create a new family.",
+    "account.back": "Back to the planner",
+    "account.change_title": "Choose your own password",
+    "account.change_lead":
+      "You signed in with the initial password. Choose a new one before you continue: everyone knows the initial one.",
+    "account.setup_title": "Welcome, {name}",
+    "account.setup_lead":
+      "Choose how you'll sign in from now on ({email}): with a passkey (your fingerprint, face or device PIN – nothing to remember), or with a password.",
+    "account.reset_lead":
+      "Set a new way to sign in ({email}): add a passkey, or choose a new password.",
+    "account.passkey_title": "Passkey (recommended)",
+    "account.passkey_help":
+      "Signs you in with your fingerprint, face or device PIN. It's kept on this device or in your password manager, and works only for this site.",
+    "account.passkey_create": "Create a passkey",
+    "account.passkey_failed": "Couldn't add the passkey: {msg}",
+    "account.or_password": "Or set a password",
+    "account.password": "Password",
+    "account.current_password": "Current password",
+    "account.new_password": "New password",
+    "account.repeat_password": "Repeat the new password",
+    "account.password_help": "At least {n} characters.",
+    "account.password_short": "The password needs at least {n} characters.",
+    "account.password_mismatch": "The two passwords aren't the same.",
+    "account.current_wrong": "The current password is wrong.",
+    "account.password_saved": "Password saved. Your other devices are signed out.",
+    "account.save_password": "Save password",
+    "account.change_password": "Change password",
+    "account.password_set": "Changing it signs out your other devices.",
+    "account.password_none":
+      "You sign in with passkeys only. A password is a way in from devices without your passkeys.",
+    "account.password_remove": "Remove password (passkeys only)",
+    "account.password_remove_confirm":
+      "Remove your password? You'll only be able to sign in with your passkeys.",
+    "account.profile": "Profile",
+    "account.name": "Name",
+    "account.email_help": "What you sign in with, and how others add you to their family.",
+    "account.email_taken": "There is already an account with this email.",
+    "account.save": "Save",
+    "account.saved": "Saved",
+    "account.save_failed": "Couldn't save: {msg}",
+    "account.passkeys": "Passkeys",
+    "account.passkeys_help":
+      "Sign in with your fingerprint, face or device PIN. Add one on each device you use (or keep them in your password manager).",
+    "account.passkey_add": "Add a passkey",
+    "account.passkey_added": "Passkey added",
+    "account.passkey_unsupported": "This browser can't use passkeys.",
+    "account.passkey_delete_confirm":
+      "Delete the passkey “{name}”? It can't be used to sign in any more.",
+    "account.used": "Added {created} · last used {used}",
+    "account.delete": "Delete",
+    "account.tokens": "API tokens",
+    "account.tokens_help":
+      "For scripts and AI agents using the API: they act as you, in all your families. Send one as “Authorization: Bearer <token>” to",
+    "account.token_name": "Name, e.g. “Home Assistant”",
+    "account.token_create": "Create",
+    "account.token_created": "Your new API token",
+    "account.token_once":
+      "Copy it now: it's only shown this once. Anyone with it can do what you can in your families.",
+    "account.token_delete_confirm": "Delete the API token “{name}”? Scripts using it stop working.",
+    "account.done": "Done",
+    "admin.users": "Users",
+    "admin.families": "Families",
+    "admin.users_help":
+      "Everyone who can sign in. New people get a one-time link to set up their passkey or password.",
+    "admin.families_help":
+      "All families and their members. Being an admin doesn't open a family: add yourself as a member for that.",
+    "admin.user_new": "New user",
+    "admin.user_new_help":
+      "You'll get a link to send them: with it they set up a passkey or a password.",
+    "admin.user_edit": "Edit user",
+    "admin.email_help": "What they sign in with: an email address (or a simple name).",
+    "admin.admin": "Admin",
+    "admin.admin_help": "Admins manage users and families.",
+    "admin.you": "You",
+    "admin.create": "Create",
+    "admin.edit": "Edit",
+    "admin.setup_link": "New setup link",
+    "admin.actions": "Actions",
+    "admin.passkeys": ({ n }) => `${s(n, "Passkey", `${n} passkeys`)}`,
+    "admin.setup_pending": "Not set up yet (link sent)",
+    "admin.not_set_up": "Can't sign in: make a new setup link",
+    "admin.last_sign_in": "last signed in {date}",
+    "admin.link_title": "Setup link",
+    "admin.link_help":
+      "Send this link to {name}. It works once, for 7 days: opening it signs in and asks for a passkey or a password. Their current way to sign in keeps working.",
+    "admin.user_delete_confirm":
+      "Delete the account of {name}? They can't sign in any more and leave all their families. Their families and data stay.",
+    "admin.family_new_help":
+      "With the default entry types and finance categories. Choose who belongs to it.",
+    "admin.family_lang_help": "For the default entry types and categories.",
+    "admin.family_delete_confirm":
+      "Delete the family “{name}” with all its calendars, notes and finances? This can't be undone – export it first if you might need it.",
+    "admin.members_of": "Members of {name}",
+    "admin.no_members": "No members",
+    "admin.no_families": "No families yet.",
+    "admin.not_member": "Not a member",
+    "admin.pick_user": "Add a user…",
+    "admin.rename": "Rename",
+    "admin.open": "Open",
+    "admin.failed": "That didn't work: {msg}",
+    "members.title": "Members",
+    "members.roles_help": "Editors can change everything and add people; viewers can only look.",
+    "members.editor": "Editor",
+    "members.viewer": "Viewer",
+    "members.role": "Role",
+    "members.you": "(you)",
+    "members.email": "Email of their account",
+    "members.add": "Add",
+    "members.remove": "Remove",
+    "members.remove_confirm": "Remove {name} from this family?",
+    "members.leave": "Leave the family",
+    "members.leave_confirm":
+      "Leave “{name}”? You can only come back if one of its editors adds you again.",
+    "members.no_account": "There is no account with this email. Ask an admin to make one.",
+    "members.failed": "That didn't work: {msg}",
   },
 
   de: {
@@ -664,17 +784,9 @@ const STRINGS: Record<Lang, Dict> = {
     "menu.undo_key": "Strg/⌘+Z",
     "menu.redo_key": "Strg/⌘+Y",
 
-    "landing.title": "Das Jahr deiner Familie planen",
-    "landing.lead":
-      "Ein Ort für die Pläne deiner Familie: Urlaub, Feiertage und Kita-Schließtage in einem gemeinsamen Jahreskalender, mit Betreuungs-Check und iCloud-Abo. Dazu ein Haushaltsbuch für die Finanzen der Familie und ein KI-Assistent, der mit dir recherchiert und plant. Kein Login – der Link ist der Schlüssel.",
     "landing.create": "Familie erstellen",
     "landing.config_warning":
       "Das Backend ist noch nicht eingerichtet. Lege die Supabase-Secrets im Repository an und starte den Deploy-Workflow erneut (siehe README).",
-    "landing.recent": "Zuletzt auf diesem Gerät geöffnet",
-    "landing.view_only": " (nur ansehen)",
-    "landing.open_label": "Vorhandene Familie öffnen",
-    "landing.open_placeholder": "Link oder ID einfügen",
-    "landing.open": "Öffnen",
 
     "toolbar.label": "Eintragsarten",
     "toolbar.edit_types": "Arten bearbeiten",
@@ -739,7 +851,7 @@ const STRINGS: Record<Lang, Dict> = {
     "sync.updating": "Aktualisiert…",
     "toast.save_failed": "Speichern fehlgeschlagen: {msg}",
     "toast.load_failed": "Laden fehlgeschlagen: {msg}",
-    "toast.not_found": "Diese Familie gibt es nicht (mehr). Prüfe den Link.",
+    "toast.not_found": "Diese Familie gibt es nicht (mehr), oder du bist kein Mitglied.",
     "toast.nothing_undo": "Nichts zum Rückgängigmachen",
     "toast.nothing_redo": "Nichts zum Wiederholen",
     "toast.select_first": "Wähle zuerst Tage aus",
@@ -757,7 +869,7 @@ const STRINGS: Record<Lang, Dict> = {
     "toast.rate_limited": "Zu viele Anfragen – bitte später noch einmal versuchen",
     "toast.wait_saving": "Änderungen werden noch gespeichert – gleich noch einmal versuchen",
     "clone.confirm":
-      "Eine Kopie von „{name}“ mit allen Jahren, Typen, Einträgen und Notizen erstellen?\n\nDie Kopie bekommt eigene, neue Links; diese Familie bleibt unverändert.",
+      "Eine Kopie von „{name}“ mit allen Jahren, Typen, Einträgen, Notizen und Finanzen erstellen?\n\nDu bearbeitest die Kopie und kannst andere hinzufügen; diese Familie bleibt unverändert.",
     "clone.name": "{name} (Kopie)",
     "toast.export_failed": "Familie konnte nicht exportiert werden: {msg}",
     "toast.import_invalid":
@@ -812,13 +924,8 @@ const STRINGS: Record<Lang, Dict> = {
     "note.cancel": "Abbrechen",
     "note.save": "Speichern",
 
-    "share.title": "Teilen & abonnieren",
     "share.tab_links": "Links",
     "share.tab_calendar": "Kalender & iCloud",
-    "share.edit": "Bearbeitungslink",
-    "share.edit_help":
-      "Jeder mit diesem Link kann alles ansehen und ändern. Setz ein Lesezeichen – er ist der einzige Schlüssel.",
-    "share.view": "Nur-Lese-Link",
     "share.icloud_help":
       "Ein schreibgeschützter Kalender-Feed. Apple Kalender prüft ihn regelmäßig auf Änderungen (beim Abonnieren auf dem Mac „Jede Stunde“ oder „Alle 5 Minuten“ wählen).",
     "share.include": "Enthalten",
@@ -883,13 +990,8 @@ const STRINGS: Record<Lang, Dict> = {
     "nav.soon": "Bald",
     "nav.planning": "Planen",
     "family.switch": "Familie wechseln",
-    "family.recent": "Auf diesem Gerät geöffnet",
     "family.new": "Neue Familie",
-    "family.open": "Link öffnen…",
-    "family.open_title": "Familie öffnen",
-    "family.open_help": "Füge einen Link oder eine ID des Familienplaners ein.",
     "family.view_only": "nur lesen",
-    "family.calendar_only": "nur Kalender",
     "family.loading": "Wird geladen…",
     "chat.title": "KI-Assistent",
     "chat.open": "KI-Assistent (Strg/⌘+J)",
@@ -899,7 +1001,7 @@ const STRINGS: Record<Lang, Dict> = {
     "page.redo": "Wiederholen (Strg/⌘+Y)",
     "settings.title": "Einstellungen",
     "settings.general": "Allgemein",
-    "settings.sharing": "Teilen",
+    "settings.sharing": "Kalender-Abo",
     "settings.vacation": "Urlaub",
     "settings.data": "Daten",
     "settings.family_scope": "Für die ganze Familie",
@@ -912,38 +1014,34 @@ const STRINGS: Record<Lang, Dict> = {
     "theme.light": "Hell",
     "theme.dark": "Dunkel",
     "settings.readonly":
-      "Das ist ein Nur-Lese-Link: Du kannst dir alles ansehen, aber nichts ändern.",
+      "Du kannst diese Familie ansehen, aber nicht ändern: Bitte jemanden, der sie bearbeitet, dich zum Bearbeiter zu machen.",
     "settings.calendar_view": "Kalenderansicht",
     "settings.skip_weekends_title":
       "Wochenenden werden beim Füllen, Einfügen und Umschalten von Bereichen ausgelassen",
-    "settings.types_readonly": "Arten lassen sich nur mit dem Bearbeitungslink ändern.",
+    "settings.types_readonly": "Nur wer die Familie bearbeiten darf, kann die Arten ändern.",
     "settings.year": "Jahr",
-    "share.view_help": "Jeder mit diesem Link kann alles ansehen, aber nichts ändern.",
     "share.rotate": "Neuer Link",
-    "share.rotate_view_confirm":
-      "Einen neuen Nur-Lese-Link erstellen? Der bisherige funktioniert dann für niemanden mehr.",
     "share.rotate_feed_confirm":
       "Einen neuen Abo-Link erstellen? Kalender-Abos mit dem bisherigen werden nicht mehr aktualisiert und müssen neu hinzugefügt werden.",
     "share.rotated": "Neuer Link erstellt",
     "share.rotate_failed": "Neuer Link konnte nicht erstellt werden: {msg}",
-    "share.legacy": "Alter Nur-Lese-Link",
+    "share.legacy": "Alter Kalender-Link",
     "share.legacy_help":
-      "Vor der Umbenennung in Familienplaner geteilt. Er öffnet weiterhin den Kalender (nur lesen) und die damit angelegten Kalender-Abos, aber sonst nichts.",
+      "Vor der Umbenennung in Familienplaner geteilt. Damit angelegte Kalender-Abos funktionieren weiter; sonst öffnet er nichts mehr.",
     "share.legacy_remove": "Entfernen",
     "share.legacy_confirm":
-      "Den alten Nur-Lese-Link entfernen? Alle, die ihn haben, und damit angelegte Kalender-Abos verlieren den Zugriff.",
+      "Den alten Kalender-Link entfernen? Damit angelegte Kalender-Abos werden nicht mehr aktualisiert.",
     "share.legacy_removed": "Alter Link entfernt",
     "share.feed": "Kalender-Abo",
-    "share.feed_help": "Dieser Link öffnet nur das Kalender-Abo, sonst nichts.",
-    "data.export_help": "Alle Jahre, Arten, Einträge und Notizen als JSON-Datei (ohne die Links).",
+    "share.feed_help":
+      "Der einzige Link, der ohne Anmeldung funktioniert: Er öffnet nur das Kalender-Abo, sonst nichts.",
+    "data.export_help": "Alle Jahre, Arten, Einträge, Notizen und Finanzen als JSON-Datei.",
     "data.import_help":
-      "Ersetzt alle Jahre, Arten, Einträge und Notizen dieser Familie durch eine exportierte Datei; Name und Links bleiben. Lässt sich nicht rückgängig machen.",
-    "data.clone_help": "Eine Kopie dieser Familie mit allen Daten und eigenen, neuen Links.",
+      "Ersetzt alle Jahre, Arten, Einträge und Notizen dieser Familie (und die Finanzen, wenn die Datei sie enthält) durch eine exportierte Datei; Name und Mitglieder bleiben. Lässt sich nicht rückgängig machen.",
+    "data.clone_help": "Eine Kopie dieser Familie mit allen Daten, die du bearbeitest.",
     "data.imported": "Importiert",
     // ---- Finance
     "settings.finance": "Finanzen",
-    "finance.calendar_only":
-      "Dieser Link öffnet nur den Kalender. Frag nach dem Nur-Lese- oder Bearbeitungslink, um die Finanzen zu sehen.",
     "finance.transactions": "Buchungen",
     "finance.overview": "Übersicht",
     "finance.add": "Hinzufügen",
@@ -1236,6 +1334,151 @@ const STRINGS: Record<Lang, Dict> = {
       "Der Assistent darf Kalender und Buchungen ändern (jede Änderung lässt sich rückgängig machen). Aus: Er kann nur lesen.",
     "ai_settings.privacy":
       "Deine Nachrichten und die Kalender- und Finanzdaten, die der Assistent ansieht, gehen an die oben eingerichtete KI-API.",
+    // ---- Accounts
+    "nav.admin": "Verwaltung",
+    "family.yours": "Deine Familien",
+    "settings.members": "Mitglieder",
+    "user.menu": "Kontomenü",
+    "user.account": "Konto",
+    "user.sign_out": "Abmelden",
+    "auth.title": "Anmelden",
+    "auth.lead":
+      "Das Jahr deiner Familie planen: Urlaub, Feiertage, Kita-Schließtage und Finanzen an einem Ort.",
+    "auth.passkey": "Mit Passkey anmelden",
+    "auth.or_password": "oder mit deinem Passwort",
+    "auth.email": "E-Mail",
+    "auth.password": "Passwort",
+    "auth.sign_in": "Anmelden",
+    "auth.wrong": "E-Mail oder Passwort ist falsch.",
+    "auth.passkey_unknown":
+      "Dieser Passkey ist hier nicht bekannt. Melde dich mit deinem Passwort an oder bitte eine Admin-Person um einen neuen Einrichtungslink.",
+    "auth.failed": "Anmeldung fehlgeschlagen: {msg}",
+    "auth.no_account":
+      "Noch kein Konto? Konten legt eine Admin-Person dieses Familienplaners an: Bitte sie um einen Einrichtungslink.",
+    "auth.load_failed": "Dein Konto konnte nicht geladen werden: {msg}",
+    "auth.retry": "Erneut versuchen",
+    "setup.title": "Dein Konto wird eingerichtet",
+    "home.welcome": "Willkommen, {name}",
+    "home.no_family":
+      "Du bist noch in keiner Familie. Bitte jemanden, der deine Familie bearbeitet, dich hinzuzufügen (dein Konto ist {email}), oder erstelle eine neue Familie.",
+    "account.back": "Zurück zum Planer",
+    "account.change_title": "Wähle dein eigenes Passwort",
+    "account.change_lead":
+      "Du hast dich mit dem Anfangspasswort angemeldet. Wähle ein neues, bevor es weitergeht: Das Anfangspasswort kennt jeder.",
+    "account.setup_title": "Willkommen, {name}",
+    "account.setup_lead":
+      "Wähle, wie du dich künftig anmeldest ({email}): mit einem Passkey (Fingerabdruck, Gesicht oder Geräte-PIN – nichts zu merken) oder mit einem Passwort.",
+    "account.reset_lead":
+      "Richte einen neuen Weg zum Anmelden ein ({email}): Füge einen Passkey hinzu oder wähle ein neues Passwort.",
+    "account.passkey_title": "Passkey (empfohlen)",
+    "account.passkey_help":
+      "Meldet dich mit Fingerabdruck, Gesicht oder Geräte-PIN an. Er liegt auf diesem Gerät oder in deinem Passwortmanager und funktioniert nur für diese Seite.",
+    "account.passkey_create": "Passkey erstellen",
+    "account.passkey_failed": "Der Passkey konnte nicht hinzugefügt werden: {msg}",
+    "account.or_password": "Oder ein Passwort festlegen",
+    "account.password": "Passwort",
+    "account.current_password": "Aktuelles Passwort",
+    "account.new_password": "Neues Passwort",
+    "account.repeat_password": "Neues Passwort wiederholen",
+    "account.password_help": "Mindestens {n} Zeichen.",
+    "account.password_short": "Das Passwort braucht mindestens {n} Zeichen.",
+    "account.password_mismatch": "Die beiden Passwörter sind nicht gleich.",
+    "account.current_wrong": "Das aktuelle Passwort ist falsch.",
+    "account.password_saved": "Passwort gespeichert. Deine anderen Geräte sind abgemeldet.",
+    "account.save_password": "Passwort speichern",
+    "account.change_password": "Passwort ändern",
+    "account.password_set": "Eine Änderung meldet deine anderen Geräte ab.",
+    "account.password_none":
+      "Du meldest dich nur mit Passkeys an. Ein Passwort ist ein Weg hinein von Geräten ohne deine Passkeys.",
+    "account.password_remove": "Passwort entfernen (nur Passkeys)",
+    "account.password_remove_confirm":
+      "Dein Passwort entfernen? Du kannst dich dann nur noch mit deinen Passkeys anmelden.",
+    "account.profile": "Profil",
+    "account.name": "Name",
+    "account.email_help":
+      "Damit meldest du dich an, und damit fügen andere dich ihrer Familie hinzu.",
+    "account.email_taken": "Es gibt schon ein Konto mit dieser E-Mail.",
+    "account.save": "Speichern",
+    "account.saved": "Gespeichert",
+    "account.save_failed": "Speichern fehlgeschlagen: {msg}",
+    "account.passkeys": "Passkeys",
+    "account.passkeys_help":
+      "Anmelden mit Fingerabdruck, Gesicht oder Geräte-PIN. Füge auf jedem Gerät einen hinzu (oder bewahre sie in deinem Passwortmanager auf).",
+    "account.passkey_add": "Passkey hinzufügen",
+    "account.passkey_added": "Passkey hinzugefügt",
+    "account.passkey_unsupported": "Dieser Browser kann keine Passkeys verwenden.",
+    "account.passkey_delete_confirm":
+      "Den Passkey „{name}“ löschen? Damit kannst du dich dann nicht mehr anmelden.",
+    "account.used": "Hinzugefügt {created} · zuletzt benutzt {used}",
+    "account.delete": "Löschen",
+    "account.tokens": "API-Tokens",
+    "account.tokens_help":
+      "Für Skripte und KI-Agenten, die die API nutzen: Sie handeln als du, in all deinen Familien. Sende einen als „Authorization: Bearer <token>“ an",
+    "account.token_name": "Name, z. B. „Home Assistant“",
+    "account.token_create": "Erstellen",
+    "account.token_created": "Dein neues API-Token",
+    "account.token_once":
+      "Kopiere es jetzt: Es wird nur dieses eine Mal angezeigt. Wer es hat, kann in deinen Familien alles, was du kannst.",
+    "account.token_delete_confirm":
+      "Das API-Token „{name}“ löschen? Skripte, die es nutzen, funktionieren dann nicht mehr.",
+    "account.done": "Fertig",
+    "admin.users": "Benutzer",
+    "admin.families": "Familien",
+    "admin.users_help":
+      "Alle, die sich anmelden können. Neue Personen bekommen einen einmaligen Link, um ihren Passkey oder ihr Passwort einzurichten.",
+    "admin.families_help":
+      "Alle Familien und ihre Mitglieder. Als Admin öffnest du eine Familie nicht automatisch: Füge dich dafür als Mitglied hinzu.",
+    "admin.user_new": "Neuer Benutzer",
+    "admin.user_new_help":
+      "Du bekommst einen Link zum Weitergeben: Damit richtet die Person einen Passkey oder ein Passwort ein.",
+    "admin.user_edit": "Benutzer bearbeiten",
+    "admin.email_help":
+      "Damit meldet sich die Person an: eine E-Mail-Adresse (oder ein einfacher Name).",
+    "admin.admin": "Admin",
+    "admin.admin_help": "Admins verwalten Benutzer und Familien.",
+    "admin.you": "Du",
+    "admin.create": "Erstellen",
+    "admin.edit": "Bearbeiten",
+    "admin.setup_link": "Neuer Einrichtungslink",
+    "admin.actions": "Aktionen",
+    "admin.passkeys": ({ n }) => `${s(n, "Passkey", `${n} Passkeys`)}`,
+    "admin.setup_pending": "Noch nicht eingerichtet (Link verschickt)",
+    "admin.not_set_up": "Kann sich nicht anmelden: Erstelle einen neuen Einrichtungslink",
+    "admin.last_sign_in": "zuletzt angemeldet am {date}",
+    "admin.link_title": "Einrichtungslink",
+    "admin.link_help":
+      "Schicke diesen Link an {name}. Er funktioniert einmal, 7 Tage lang: Er meldet an und fragt nach einem Passkey oder Passwort. Der bisherige Weg zum Anmelden funktioniert weiter.",
+    "admin.user_delete_confirm":
+      "Das Konto von {name} löschen? Die Person kann sich nicht mehr anmelden und verlässt all ihre Familien. Die Familien und ihre Daten bleiben.",
+    "admin.family_new_help": "Mit den Standard-Arten und Finanzkategorien. Wähle, wer dazugehört.",
+    "admin.family_lang_help": "Für die Standard-Arten und Kategorien.",
+    "admin.family_delete_confirm":
+      "Die Familie „{name}“ mit allen Kalendern, Notizen und Finanzen löschen? Das lässt sich nicht rückgängig machen – exportiere sie vorher, falls du sie noch brauchst.",
+    "admin.members_of": "Mitglieder von {name}",
+    "admin.no_members": "Keine Mitglieder",
+    "admin.no_families": "Noch keine Familien.",
+    "admin.not_member": "Kein Mitglied",
+    "admin.pick_user": "Benutzer hinzufügen…",
+    "admin.rename": "Umbenennen",
+    "admin.open": "Öffnen",
+    "admin.failed": "Das hat nicht geklappt: {msg}",
+    "members.title": "Mitglieder",
+    "members.roles_help":
+      "Wer bearbeitet, kann alles ändern und Personen hinzufügen; wer nur ansieht, kann nichts ändern.",
+    "members.editor": "Bearbeiten",
+    "members.viewer": "Ansehen",
+    "members.role": "Rolle",
+    "members.you": "(du)",
+    "members.email": "E-Mail ihres Kontos",
+    "members.add": "Hinzufügen",
+    "members.remove": "Entfernen",
+    "members.remove_confirm": "{name} aus dieser Familie entfernen?",
+    "members.leave": "Familie verlassen",
+    "members.leave_confirm":
+      "„{name}“ verlassen? Du kommst nur zurück, wenn dich jemand, der sie bearbeitet, wieder hinzufügt.",
+    "members.no_account":
+      "Es gibt kein Konto mit dieser E-Mail. Bitte eine Admin-Person, eines anzulegen.",
+    "members.failed": "Das hat nicht geklappt: {msg}",
   },
 };
 

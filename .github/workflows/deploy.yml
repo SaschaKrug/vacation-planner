@@ -37,6 +37,9 @@ jobs:
       SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
       PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
       AI_CONFIG_KEY: ${{ secrets.AI_CONFIG_KEY }}
+      INITIAL_ADMIN_PASSWORD: ${{ secrets.INITIAL_ADMIN_PASSWORD }}
+      # Where the app runs (the custom domain below): only it may use passkeys.
+      APP_ORIGIN: https://family-planner.fa-krug.de
     steps:
       - uses: actions/checkout@v4
       - name: Check secrets
@@ -61,6 +64,14 @@ jobs:
       - name: Set the AI key secret
         if: steps.secrets.outputs.ok == 'true' && env.AI_CONFIG_KEY != ''
         run: supabase secrets set AI_CONFIG_KEY="$AI_CONFIG_KEY" --project-ref "$PROJECT_REF"
+      - name: Set the app origin (for passkeys)
+        if: steps.secrets.outputs.ok == 'true'
+        run: supabase secrets set APP_ORIGIN="$APP_ORIGIN" --project-ref "$PROJECT_REF"
+      - name: Set the initial admin password
+        if: steps.secrets.outputs.ok == 'true' && env.INITIAL_ADMIN_PASSWORD != ''
+        run: |
+          supabase secrets set INITIAL_ADMIN_PASSWORD="$INITIAL_ADMIN_PASSWORD" \
+            --project-ref "$PROJECT_REF"
       - name: Deploy the "api" Edge Function
         if: steps.secrets.outputs.ok == 'true'
         run: supabase functions deploy api --project-ref "$PROJECT_REF" --no-verify-jwt --use-api

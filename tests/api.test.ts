@@ -11,19 +11,31 @@ import {
 } from "../supabase/functions/_shared/rate_limit.ts";
 import { MemoryStore } from "../supabase/functions/_shared/store.ts";
 import { MAX_TOOL_RESULT, runTool, TOOLS } from "../supabase/functions/_shared/ai/tools.ts";
+import { addMember, addUser, TEST_ITERATIONS } from "./helpers.ts";
 
 const BASE = "http://localhost/functions/v1/api";
 
-function setup(options?: HandlerOptions) {
+type Call = (
+  method: string,
+  path: string,
+  body?: unknown,
+  ip?: string,
+) => Promise<{ status: number; data: any; headers: Headers }>;
+
+/** A handler on an empty store and `call`, signed in as an admin ("owner@test"). `as(token)`
+ *  calls as someone else (null: not signed in); `viewerOf(id)` as a new viewer of a family. */
+async function setup(options?: HandlerOptions) {
   const store = new MemoryStore();
-  const handler = createHandler(store, options);
-  const call = async (method: string, path: string, body?: unknown, ip = "203.0.113.7") => {
+  const handler = createHandler(store, { passwordIterations: TEST_ITERATIONS, ...options });
+  const owner = await addUser(store, "owner@test", { is_admin: true });
+  const as = (token: string | null): Call => async (method, path, body, ip = "203.0.113.7") => {
     const res = await handler(
       new Request(BASE + path, {
         method,
         headers: {
           "x-forwarded-for": ip,
           ...(body ? { "content-type": "application/json" } : {}),
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
         },
         body: body ? JSON.stringify(body) : undefined,
       }),
@@ -35,17 +47,26 @@ function setup(options?: HandlerOptions) {
     } catch { /* ics */ }
     return { status: res.status, data, headers: res.headers };
   };
-  return { call, store };
+  let viewers = 0;
+  const viewerOf = async (familyId: string) => {
+    const viewer = await addUser(store, `viewer${++viewers}@test`);
+    await addMember(store, familyId, viewer.user.id, "viewer");
+    return as(viewer.token);
+  };
+  const call = Object.assign(as(owner.token), { as, viewerOf });
+  return { call, store, handler, owner, as, viewerOf };
 }
 
-async function newFamily(call: ReturnType<typeof setup>["call"]) {
+/** A new family of the owner, and `view`: a call as a viewer of it. */
+async function newFamily(call: Awaited<ReturnType<typeof setup>>["call"]) {
   const res = await call("POST", "/families", { name: "Family", year: 2026 });
   assertEquals(res.status, 201);
-  return res.data.family as { id: string; readId: string; feedId: string };
+  const family = res.data.family as { id: string; feedId: string };
+  return { ...family, view: await call.viewerOf(family.id) };
 }
 
 Deno.test("creates a family with preset types", async () => {
-  const { call } = setup();
+  const { call } = await setup();
   const res = await call("POST", "/families", {});
   assertEquals(res.status, 201);
   assertEquals(res.data.types.map((t: any) => t.name), ["Holiday", "Vacation", "Sick"]);
@@ -55,11 +76,11 @@ Deno.test("creates a family with preset types", async () => {
   assertEquals(res.data.typeYears, [year]);
   assertEquals(res.data.family.readOnly, false);
   assertMatch(res.data.family.id, /^[A-Za-z0-9]{20}$/);
-  assert(res.data.family.id !== res.data.family.readId);
+  assert(res.data.family.id !== res.data.family.feedId);
 });
 
 Deno.test("creates a German family with localized presets", async () => {
-  const { call } = setup();
+  const { call } = await setup();
   const res = await call("POST", "/families", { lang: "de", year: 2026 });
   assertEquals(res.status, 201);
   assertEquals(res.data.family.name, "Familie");
@@ -88,7 +109,7 @@ Deno.test("creates a German family with localized presets", async () => {
 });
 
 Deno.test("rejects an unknown lang", async () => {
-  const { call } = setup();
+  const { call } = await setup();
   for (const lang of ["fr", "DE", 1, null]) {
     const res = await call("POST", "/families", { lang });
     assertEquals(res.status, 400);
@@ -97,7 +118,7 @@ Deno.test("rejects an unknown lang", async () => {
 });
 
 Deno.test("adds, removes, sets and clears entries", async () => {
-  const { call } = setup();
+  const { call } = await setup();
   const s = await newFamily(call);
   const post = (body: unknown) => call("POST", `/families/${s.id}/entries`, body);
 
@@ -125,7 +146,7 @@ Deno.test("adds, removes, sets and clears entries", async () => {
 });
 
 Deno.test("skipWeekends leaves Saturday and Sunday out", async () => {
-  const { call } = setup();
+  const { call } = await setup();
   const s = await newFamily(call);
   await call("POST", `/families/${s.id}/entries`, {
     action: "add",
@@ -138,22 +159,21 @@ Deno.test("skipWeekends leaves Saturday and Sunday out", async () => {
   assertEquals(Object.keys(entries).length, 10);
 });
 
-Deno.test("read-only id can read but not write", async () => {
-  const { call } = setup();
+Deno.test("a viewer can read but not write", async () => {
+  const { call } = await setup();
   const s = await newFamily(call);
   await call("POST", `/families/${s.id}/entries`, { type: "vacation", dates: ["2026-01-05"] });
   await call("POST", `/families/${s.id}/types`, { name: "Remote", color: "#123456", year: 2026 });
 
-  const state = (await call("GET", `/families/${s.readId}?year=2026`)).data;
+  const state = (await s.view("GET", `/families/${s.id}?year=2026`)).data;
   assertEquals(state.family.readOnly, true);
-  assertEquals(state.family.id, undefined);
-  assertEquals(state.family.readId, s.readId);
+  assertEquals(state.family.access, "view");
   assertEquals(state.types.map((t: any) => t.id), ["holiday", "vacation", "sick", "remote"]);
   assertEquals(state.entries, { "2026-01-05": ["vacation"] });
-  assertEquals((await call("GET", `/families/${s.readId}/entries`)).data, {
+  assertEquals((await s.view("GET", `/families/${s.id}/entries`)).data, {
     "2026-01-05": ["vacation"],
   });
-  assertEquals((await call("GET", `/families/${s.readId}/types?year=2026`)).data.length, 4);
+  assertEquals((await s.view("GET", `/families/${s.id}/types?year=2026`)).data.length, 4);
 
   const writes: [string, string, unknown?][] = [
     ["POST", "/entries", { type: "vacation", dates: ["2026-01-02"] }],
@@ -164,7 +184,9 @@ Deno.test("read-only id can read but not write", async () => {
     ["POST", "/types/copy", { from: 2026, to: 2027 }],
   ];
   for (const [method, path, body] of writes) {
-    assertEquals((await call(method, `/families/${s.readId}${path}`, body)).status, 403);
+    const res = await s.view(method, `/families/${s.id}${path}`, body);
+    assertEquals(res.status, 403);
+    assertEquals(res.data.error, "You can only view this family");
   }
   const after = (await call("GET", `/families/${s.id}?year=2026`)).data;
   assertEquals(after.family.name, "Family");
@@ -173,7 +195,7 @@ Deno.test("read-only id can read but not write", async () => {
 });
 
 Deno.test("rejects malformed tokens as not found", async () => {
-  const { call } = setup();
+  const { call } = await setup();
   const s = await newFamily(call);
   for (const token of ["abc,def.ghij", "aaaaaaaaaa)", `${s.id},read_id.eq.x`, "short"]) {
     const t = encodeURIComponent(token);
@@ -189,7 +211,7 @@ Deno.test("rejects malformed tokens as not found", async () => {
 });
 
 Deno.test("validates input", async () => {
-  const { call } = setup();
+  const { call } = await setup();
   const s = await newFamily(call);
   const post = (body: unknown) => call("POST", `/families/${s.id}/entries`, body);
   assertEquals((await post({ type: "vacation", dates: ["2026-02-30"] })).status, 400);
@@ -203,7 +225,7 @@ Deno.test("validates input", async () => {
 });
 
 Deno.test("manages entry types", async () => {
-  const { call } = setup();
+  const { call } = await setup();
   const s = await newFamily(call);
   const created = await call("POST", `/families/${s.id}/types?year=2026`, {
     name: "Day care closed",
@@ -233,7 +255,7 @@ Deno.test("manages entry types", async () => {
 });
 
 Deno.test("renames a family", async () => {
-  const { call } = setup();
+  const { call } = await setup();
   const s = await newFamily(call);
   const res = await call("PATCH", `/families/${s.id}`, { name: "Our family" });
   assertEquals(res.status, 200);
@@ -241,11 +263,11 @@ Deno.test("renames a family", async () => {
   assertEquals(res.data.family.id, s.id);
   assertEquals(res.data.family.readOnly, false);
   assertEquals(res.data.types.length, 3);
-  assertEquals((await call("GET", `/families/${s.readId}`)).data.family.name, "Our family");
+  assertEquals((await s.view("GET", `/families/${s.id}`)).data.family.name, "Our family");
 });
 
 Deno.test("serves an iCalendar feed with merged ranges and gaps", async () => {
-  const { call } = setup();
+  const { call } = await setup();
   const s = await newFamily(call);
   await call("POST", `/families/${s.id}/types`, {
     name: "Day care closed",
@@ -259,7 +281,7 @@ Deno.test("serves an iCalendar feed with merged ranges and gaps", async () => {
       { action: "add", type: "vacation", from: "2026-08-03", to: "2026-08-05" },
     ],
   });
-  const res = await call("GET", `/families/${s.readId}/calendar.ics?gaps=1`);
+  const res = await call("GET", `/families/${s.feedId}/calendar.ics?gaps=1`);
   assertEquals(res.status, 200);
   assertMatch(res.headers.get("content-type")!, /^text\/calendar/);
   const ics: string = res.data;
@@ -269,13 +291,13 @@ Deno.test("serves an iCalendar feed with merged ranges and gaps", async () => {
   assert(ics.includes("DTSTART;VALUE=DATE:20260806\r\nDTEND;VALUE=DATE:20260808"));
 
   const onlyVacation =
-    (await call("GET", `/families/${s.readId}/calendar.ics?types=vacation`)).data;
+    (await call("GET", `/families/${s.feedId}/calendar.ics?types=vacation`)).data;
   assert(!onlyVacation.includes("Day care closed"));
   assertEquals(onlyVacation.match(/BEGIN:VEVENT/g).length, 1);
 });
 
 Deno.test("serves a German iCalendar feed with ?lang=de", async () => {
-  const { call } = setup();
+  const { call } = await setup();
   const s = await newFamily(call);
   await call("POST", `/families/${s.id}/types`, {
     name: "Kita zu",
@@ -289,20 +311,20 @@ Deno.test("serves a German iCalendar feed with ?lang=de", async () => {
       { action: "add", type: "vacation", from: "2026-08-07", to: "2026-08-09" },
     ],
   });
-  const de: string = (await call("GET", `/families/${s.readId}/calendar.ics?gaps=1&lang=de`))
+  const de: string = (await call("GET", `/families/${s.feedId}/calendar.ics?gaps=1&lang=de`))
     .data;
   assert(de.includes("SUMMARY:⚠ Nicht abgedeckt: Kita zu\r\n"));
   assert(de.includes("DESCRIPTION:Vacation: 3 Tage (1 Arbeitstag)\r\n"));
 
   // Unknown languages fall back to English instead of breaking the feed.
-  const fallback = await call("GET", `/families/${s.readId}/calendar.ics?gaps=1&lang=xx`);
+  const fallback = await call("GET", `/families/${s.feedId}/calendar.ics?gaps=1&lang=xx`);
   assertEquals(fallback.status, 200);
   assert(fallback.data.includes("SUMMARY:⚠ Not covered: Kita zu\r\n"));
   assert(fallback.data.includes("DESCRIPTION:Vacation: 3 days (1 workdays)\r\n"));
 });
 
 Deno.test("sets, replaces and clears day notes", async () => {
-  const { call } = setup();
+  const { call } = await setup();
   const s = await newFamily(call);
   const post = (body: unknown) => call("POST", `/families/${s.id}/notes`, body);
 
@@ -341,7 +363,7 @@ Deno.test("sets, replaces and clears day notes", async () => {
 });
 
 Deno.test("note ops skip weekends like entry ops", async () => {
-  const { call } = setup();
+  const { call } = await setup();
   const s = await newFamily(call);
   const res = await call("POST", `/families/${s.id}/notes`, {
     icon: "🏖",
@@ -356,7 +378,7 @@ Deno.test("note ops skip weekends like entry ops", async () => {
 });
 
 Deno.test("family state includes notes for the requested range", async () => {
-  const { call } = setup();
+  const { call } = await setup();
   const s = await newFamily(call);
   await call("POST", `/families/${s.id}/notes`, {
     ops: [
@@ -366,18 +388,18 @@ Deno.test("family state includes notes for the requested range", async () => {
   });
   const state = (await call("GET", `/families/${s.id}?year=2026`)).data;
   assertEquals(state.notes, { "2026-12-25": { icon: "🎄", comment: "Christmas" } });
-  // The view-only id reads notes too.
-  const view = (await call("GET", `/families/${s.readId}?from=2025-12-01&to=2025-12-31`)).data;
+  // Viewers read notes too.
+  const view = (await s.view("GET", `/families/${s.id}?from=2025-12-01&to=2025-12-31`)).data;
   assertEquals(view.notes, { "2025-12-31": { icon: "🎆", comment: "" } });
   assertEquals(
-    Object.keys((await call("GET", `/families/${s.readId}/notes`)).data),
+    Object.keys((await s.view("GET", `/families/${s.id}/notes`)).data),
     ["2025-12-31", "2026-12-25"],
   );
   assertEquals((await call("POST", "/families", {})).data.notes, {});
 });
 
 Deno.test("notes and entries are independent", async () => {
-  const { call } = setup();
+  const { call } = await setup();
   const s = await newFamily(call);
   await call("POST", `/families/${s.id}/entries`, { type: "holiday", date: "2026-12-25" });
   await call("POST", `/families/${s.id}/notes`, { comment: "Christmas", date: "2026-12-25" });
@@ -394,19 +416,19 @@ Deno.test("notes and entries are independent", async () => {
   assertEquals(state.notes, {});
 });
 
-Deno.test("read-only id cannot change notes", async () => {
-  const { call } = setup();
+Deno.test("a viewer cannot change notes", async () => {
+  const { call } = await setup();
   const s = await newFamily(call);
-  const res = await call("POST", `/families/${s.readId}/notes`, {
+  const res = await s.view("POST", `/families/${s.id}/notes`, {
     icon: "🎄",
     date: "2026-12-25",
   });
   assertEquals(res.status, 403);
-  assertEquals(res.data.error, "This is a read-only link");
+  assertEquals(res.data.error, "You can only view this family");
 });
 
 Deno.test("validates note ops", async () => {
-  const { call } = setup();
+  const { call } = await setup();
   const s = await newFamily(call);
   const post = (body: unknown) => call("POST", `/families/${s.id}/notes`, body);
   const cases: [unknown, string][] = [
@@ -445,7 +467,7 @@ Deno.test("validates note ops", async () => {
 });
 
 Deno.test("adds notes to the iCalendar feed only with ?notes=1", async () => {
-  const { call } = setup();
+  const { call } = await setup();
   const s = await newFamily(call);
   await call("POST", `/families/${s.id}/entries`, { type: "holiday", date: "2026-12-25" });
   await call("POST", `/families/${s.id}/notes`, {
@@ -454,11 +476,11 @@ Deno.test("adds notes to the iCalendar feed only with ?notes=1", async () => {
       { icon: "🎆", comment: "New Year's Eve, party", date: "2026-12-31" },
     ],
   });
-  const plain: string = (await call("GET", `/families/${s.readId}/calendar.ics`)).data;
+  const plain: string = (await call("GET", `/families/${s.feedId}/calendar.ics`)).data;
   assertEquals(plain.match(/BEGIN:VEVENT/g)!.length, 1);
   assert(!plain.includes("Christmas"));
 
-  const ics: string = (await call("GET", `/families/${s.readId}/calendar.ics?notes=1`)).data;
+  const ics: string = (await call("GET", `/families/${s.feedId}/calendar.ics?notes=1`)).data;
   assertEquals(ics.match(/BEGIN:VEVENT/g)!.length, 3);
   assert(ics.includes("SUMMARY:🎄 Christmas\r\n"));
   assert(ics.includes("DTSTART;VALUE=DATE:20261224\r\nDTEND;VALUE=DATE:20261227"));
@@ -466,12 +488,12 @@ Deno.test("adds notes to the iCalendar feed only with ?notes=1", async () => {
   assert(ics.includes("SUMMARY:🎆 New Year's Eve\\, party\r\n"));
   // Type filters don't hide notes.
   const filtered: string =
-    (await call("GET", `/families/${s.readId}/calendar.ics?types=sick&notes=1`)).data;
+    (await call("GET", `/families/${s.feedId}/calendar.ics?types=sick&notes=1`)).data;
   assertEquals(filtered.match(/BEGIN:VEVENT/g)!.length, 2);
 });
 
 Deno.test("every year has its own entry types", async () => {
-  const { call } = setup();
+  const { call } = await setup();
   const s = await newFamily(call);
   const types = `/families/${s.id}/types`;
   const state = (year: number) => call("GET", `/families/${s.id}?year=${year}`);
@@ -542,7 +564,7 @@ Deno.test("every year has its own entry types", async () => {
 });
 
 Deno.test("resolves type references per year of each day", async () => {
-  const { call } = setup();
+  const { call } = await setup();
   const s = await newFamily(call);
   await call("POST", `/families/${s.id}/types`, { name: "Urlaub", color: "#22c55e", year: 2027 });
   // "Urlaub" is "vacation" in 2026 (renamed) and "urlaub" in 2027.
@@ -569,7 +591,7 @@ Deno.test("resolves type references per year of each day", async () => {
 });
 
 Deno.test("the iCalendar feed uses each year's types", async () => {
-  const { call } = setup();
+  const { call } = await setup();
   const s = await newFamily(call);
   await call("POST", `/families/${s.id}/types/copy`, { from: 2026, to: 2027 });
   await call("PATCH", `/families/${s.id}/types/vacation?year=2027`, {
@@ -582,7 +604,7 @@ Deno.test("the iCalendar feed uses each year's types", async () => {
       { type: "vacation", date: "2027-08-02" },
     ],
   });
-  const ics: string = (await call("GET", `/families/${s.readId}/calendar.ics?gaps=1`)).data;
+  const ics: string = (await call("GET", `/families/${s.feedId}/calendar.ics?gaps=1`)).data;
   assert(ics.includes("SUMMARY:Vacation\r\nDESCRIPTION:Vacation\r\n"));
   assert(ics.includes(`UID:${s.feedId}-vacation-2027-08-02@vacation-planner`));
   assert(ics.includes("SUMMARY:Day care closed\r\n"));
@@ -596,12 +618,12 @@ Deno.test("the iCalendar feed uses each year's types", async () => {
 
   // A filter matches by id or name in every year.
   const byName: string =
-    (await call("GET", `/families/${s.readId}/calendar.ics?types=day%20care%20closed`)).data;
+    (await call("GET", `/families/${s.feedId}/calendar.ics?types=day%20care%20closed`)).data;
   assertEquals(byName.match(/BEGIN:VEVENT/g)!.length, 1);
-  const byId: string = (await call("GET", `/families/${s.readId}/calendar.ics?types=vacation`))
+  const byId: string = (await call("GET", `/families/${s.feedId}/calendar.ics?types=vacation`))
     .data;
   assertEquals(byId.match(/BEGIN:VEVENT/g)!.length, 2);
-  assertEquals((await call("GET", `/families/${s.readId}/calendar.ics?types=nope`)).status, 404);
+  assertEquals((await call("GET", `/families/${s.feedId}/calendar.ics?types=nope`)).status, 404);
 });
 
 Deno.test("answers CORS preflight", async () => {
@@ -612,7 +634,7 @@ Deno.test("answers CORS preflight", async () => {
 });
 
 Deno.test("agent page describes the planner with ready-to-use URLs", async () => {
-  const { call } = setup();
+  const { call } = await setup();
   // Types only in 2025: the examples use that year instead of the current one.
   const created = await call("POST", "/families", { name: "Family", year: 2025 });
   const s = created.data.family;
@@ -634,18 +656,18 @@ Deno.test("agent page describes the planner with ready-to-use URLs", async () =>
   assert(entries.data["2025-08-04"].includes("vacation"));
 });
 
-Deno.test("agent page for a read-only id has no edit id or write requests", async () => {
-  const { call } = setup();
+Deno.test("agent page for a viewer has no write requests", async () => {
+  const { call } = await setup();
   const s = await newFamily(call);
-  const res = await call("GET", `/families/${s.readId}/agent`);
+  const res = await s.view("GET", `/families/${s.id}/agent`);
   assertEquals(res.status, 200);
-  assert(res.data.includes("read-only"));
-  assert(!res.data.includes(s.id));
+  assert(res.data.includes("can only **view**"));
+  assert(res.data.includes("Authorization: Bearer"));
   assert(!res.data.includes("POST"));
 });
 
 Deno.test("agent page only answers GET and doesn't run requests", async () => {
-  const { call } = setup();
+  const { call } = await setup();
   const s = await newFamily(call);
   let res = await call("POST", `/families/${s.id}/agent`, {});
   assertEquals(res.status, 405);
@@ -662,7 +684,7 @@ Deno.test("agent page only answers GET and doesn't run requests", async () => {
 });
 
 Deno.test("clones a planner with all years, types, entries and notes", async () => {
-  const { call } = setup();
+  const { call } = await setup();
   const s = await newFamily(call);
   await call("POST", `/families/${s.id}/types/copy`, { from: 2026, to: 2027 });
   await call("POST", `/families/${s.id}/entries`, {
@@ -678,7 +700,7 @@ Deno.test("clones a planner with all years, types, entries and notes", async () 
   const copy = res.data.family;
   assertEquals(copy.name, "Family (copy)");
   assertEquals(copy.readOnly, false);
-  assert(![s.id, s.readId].includes(copy.id) && ![s.id, s.readId].includes(copy.readId));
+  assert(copy.id !== s.id && copy.feedId !== s.feedId);
   assertEquals(res.data.typeYears, [2026, 2027]);
 
   const all = (await call("GET", `/families/${copy.id}`)).data;
@@ -693,15 +715,16 @@ Deno.test("clones a planner with all years, types, entries and notes", async () 
   assertEquals(original.types.find((t: any) => t.id === "sick").name, "Sick");
 });
 
-Deno.test("a view-only id can clone, and the copy is editable", async () => {
-  const { call } = setup();
+Deno.test("a viewer can clone, and the copy is theirs to edit", async () => {
+  const { call } = await setup();
   const s = await newFamily(call);
   await call("POST", `/families/${s.id}/entries`, { type: "vacation", date: "2026-05-04" });
-  const res = await call("POST", `/families/${s.readId}/clone`, { name: "Mine" });
+  const res = await s.view("POST", `/families/${s.id}/clone`, { name: "Mine" });
   assertEquals(res.status, 201);
   assertEquals(res.data.family.name, "Mine");
   assertEquals(res.data.entries, { "2026-05-04": ["vacation"] });
-  const edit = await call("POST", `/families/${res.data.family.id}/entries`, {
+  assertEquals(res.data.family.access, "edit");
+  const edit = await s.view("POST", `/families/${res.data.family.id}/entries`, {
     type: "sick",
     date: "2026-05-05",
   });
@@ -709,7 +732,7 @@ Deno.test("a view-only id can clone, and the copy is editable", async () => {
 });
 
 Deno.test("clone validates its input", async () => {
-  const { call } = setup();
+  const { call } = await setup();
   const s = await newFamily(call);
   assertEquals((await call("POST", "/families/unknownToken123/clone", {})).status, 404);
   assertEquals((await call("GET", `/families/${s.id}/clone`)).status, 405);
@@ -721,7 +744,7 @@ Deno.test("clone validates its input", async () => {
 });
 
 Deno.test("exports a planner and imports the file over another one", async () => {
-  const { call } = setup();
+  const { call } = await setup();
   const s = await newFamily(call);
   await call("POST", `/families/${s.id}/types/copy`, { from: 2026, to: 2027 });
   await call("PATCH", `/families/${s.id}/types/sick?year=2027`, { name: "Ill", position: 7 });
@@ -738,7 +761,7 @@ Deno.test("exports a planner and imports the file over another one", async () =>
   });
 
   // The view-only id may export; the file never contains the planner's ids.
-  const res = await call("GET", `/families/${s.readId}/export`);
+  const res = await s.view("GET", `/families/${s.id}/export`);
   assertEquals(res.status, 200);
   assertEquals(res.headers.get("content-disposition"), 'attachment; filename="family.json"');
   const file = res.data;
@@ -749,7 +772,7 @@ Deno.test("exports a planner and imports the file over another one", async () =>
   assertEquals(file.entries, { "2026-08-03": ["vacation", "sick"], "2027-01-01": ["holiday"] });
   assertEquals(file.notes, { "2026-12-25": { icon: "🎄", comment: "Xmas" } });
   const text = JSON.stringify(file);
-  assert(!text.includes(s.id) && !text.includes(s.readId));
+  assert(!text.includes(s.id) && !text.includes(s.feedId));
 
   // Importing replaces everything of the target, but keeps its name and links.
   const target = (await call("POST", "/families", { name: "Other", year: 2028 })).data.family;
@@ -772,14 +795,14 @@ Deno.test("exports a planner and imports the file over another one", async () =>
 });
 
 Deno.test("import needs the edit id and validates the file", async () => {
-  const { call } = setup();
+  const { call } = await setup();
   const s = await newFamily(call);
   const type = { year: 2026, id: "vacation", name: "Vacation", color: "#22c55e", role: "covers" };
   const file = { format: "vacation-planner", version: 1, name: "Imported", types: [type] };
   const path = `/families/${s.id}/import`;
   const status = async (body: unknown) => (await call("POST", path, body)).status;
 
-  assertEquals((await call("POST", `/families/${s.readId}/import`, file)).status, 403);
+  assertEquals((await s.view("POST", `/families/${s.id}/import`, file)).status, 403);
   assertEquals((await call("POST", "/families/unknownToken123/import", file)).status, 404);
   assertEquals((await call("GET", path)).status, 405);
   assertEquals(await status({ ...file, format: "other" }), 400);
@@ -822,10 +845,12 @@ const SMALL_LIMITS = {
   write: { max: 3, seconds: 3600 },
   ai: { max: 100, seconds: 3600 },
   aiFamily: { max: 100, seconds: 3600 },
+  login: { max: 100, seconds: 3600 },
+  loginAccount: { max: 100, seconds: 3600 },
 };
 
 Deno.test("limits how many planners one client creates", async () => {
-  const { call } = setup({ rateLimiter: new MemoryRateLimiter(), limits: SMALL_LIMITS });
+  const { call } = await setup({ rateLimiter: new MemoryRateLimiter(), limits: SMALL_LIMITS });
   const s = await newFamily(call);
   // Cloning counts as creating.
   assertEquals((await call("POST", `/families/${s.id}/clone`, {})).status, 201);
@@ -842,7 +867,7 @@ Deno.test("limits how many planners one client creates", async () => {
 });
 
 Deno.test("limits planners of all clients together", async () => {
-  const { call } = setup({ rateLimiter: new MemoryRateLimiter(), limits: SMALL_LIMITS });
+  const { call } = await setup({ rateLimiter: new MemoryRateLimiter(), limits: SMALL_LIMITS });
   for (let i = 0; i < 5; i++) {
     assertEquals((await call("POST", "/families", {}, `198.51.100.${i}`)).status, 201);
   }
@@ -851,7 +876,7 @@ Deno.test("limits planners of all clients together", async () => {
 
 Deno.test("limits writes per client, but not reads", async () => {
   const limiter = new MemoryRateLimiter();
-  const { call } = setup({ rateLimiter: limiter, limits: SMALL_LIMITS });
+  const { call } = await setup({ rateLimiter: limiter, limits: SMALL_LIMITS });
   const s = await newFamily(call);
   const write = (ip?: string) =>
     call("POST", `/families/${s.id}/entries`, { type: "vacation", date: "2026-03-02" }, ip);
@@ -860,13 +885,13 @@ Deno.test("limits writes per client, but not reads", async () => {
   assertEquals((await call("PATCH", `/families/${s.id}`, { name: "x" })).status, 429);
   assertEquals((await write("198.51.100.1")).status, 200);
   for (let i = 0; i < 10; i++) {
-    assertEquals((await call("GET", `/families/${s.id}/calendar.ics`)).status, 200);
+    assertEquals((await call("GET", `/families/${s.feedId}/calendar.ics`)).status, 200);
   }
 });
 
 Deno.test("the write window resets", async () => {
   let now = Date.UTC(2026, 0, 1);
-  const { call } = setup({
+  const { call } = await setup({
     rateLimiter: new MemoryRateLimiter(() => now),
     limits: { ...SMALL_LIMITS, write: { max: 1, seconds: 60 } },
   });
@@ -880,7 +905,7 @@ Deno.test("the write window resets", async () => {
 
 Deno.test("a failing rate limiter lets requests through", async () => {
   const broken: RateLimiter = { hit: () => Promise.reject(new Error("db down")) };
-  const { call } = setup({ rateLimiter: broken, limits: SMALL_LIMITS });
+  const { call } = await setup({ rateLimiter: broken, limits: SMALL_LIMITS });
   const error = console.error;
   console.error = () => {};
   try {
@@ -910,13 +935,15 @@ Deno.test("clientAddress keys IPv4 by address and IPv6 by /64 network", () => {
 });
 
 Deno.test("a memory store snapshot restores families, types, entries and notes", async () => {
-  const store = new MemoryStore();
-  const handler = createHandler(store);
+  const { store, handler, owner } = await setup();
   const call = async (method: string, path: string, body?: unknown, h = handler) => {
     const res = await h(
       new Request(BASE + path, {
         method,
-        headers: body ? { "content-type": "application/json" } : {},
+        headers: {
+          authorization: `Bearer ${owner.token}`,
+          ...(body ? { "content-type": "application/json" } : {}),
+        },
         body: body ? JSON.stringify(body) : undefined,
       }),
     );
@@ -945,7 +972,7 @@ Deno.test("a memory store snapshot restores families, types, entries and notes",
 });
 
 Deno.test("/sessions stays an alias of /families", async () => {
-  const { call } = setup();
+  const { call } = await setup();
   const res = await call("POST", "/sessions", { name: "Old script", year: 2026 });
   assertEquals(res.status, 201);
   // Scripts from before families read "session".
@@ -958,89 +985,93 @@ Deno.test("/sessions stays an alias of /families", async () => {
   assertEquals(add.status, 200);
   const read = await call("GET", `/families/${id}/entries?year=2026`);
   assertEquals(read.data, { "2026-08-03": ["vacation"] });
-  const feed = await call("GET", `/sessions/${res.data.family.readId}/calendar.ics`);
+  const feed = await call("GET", `/sessions/${res.data.family.feedId}/calendar.ics`);
   assertEquals(feed.status, 200);
 });
 
-Deno.test("each link only shows what it may", async () => {
-  const { call } = setup();
+Deno.test("each member only gets what their role allows", async () => {
+  const { call } = await setup();
   const s = await newFamily(call);
-  for (const token of [s.id, s.readId, s.feedId]) assertMatch(token, /^[A-Za-z0-9]{20}$/);
-  assertEquals(new Set([s.id, s.readId, s.feedId]).size, 3);
+  for (const token of [s.id, s.feedId]) assertMatch(token, /^[A-Za-z0-9]{20}$/);
+  assert(s.id !== s.feedId);
 
   const edit = (await call("GET", `/families/${s.id}`)).data.family;
   assertEquals(edit.access, "edit");
-  assertEquals([edit.id, edit.readId, edit.feedId], [s.id, s.readId, s.feedId]);
+  assertEquals([edit.id, edit.feedId], [s.id, s.feedId]);
 
-  const view = (await call("GET", `/families/${s.readId}`)).data.family;
+  const view = (await s.view("GET", `/families/${s.id}`)).data.family;
   assertEquals(view.access, "view");
   assertEquals(view.readOnly, true);
-  assertEquals(view.id, undefined);
-  assertEquals([view.readId, view.feedId], [s.readId, s.feedId]);
+  assertEquals([view.id, view.feedId], [s.id, s.feedId]);
 
-  // The feed id opens the calendar feed and nothing else.
-  assertEquals((await call("GET", `/families/${s.feedId}/calendar.ics`)).status, 200);
+  // The feed id opens the calendar feed and nothing else, signed in or not.
+  assertEquals((await call.as(null)("GET", `/families/${s.feedId}/calendar.ics`)).status, 200);
   for (const path of ["", "/entries", "/notes", "/types", "/agent", "/export"]) {
-    const res = await call("GET", `/families/${s.feedId}${path}`);
-    assertEquals(res.status, 403, path);
-    assertEquals(res.data.error, "This link only opens the calendar feed");
+    assertEquals((await call("GET", `/families/${s.feedId}${path}`)).status, 404, path);
   }
-  assertEquals((await call("POST", `/families/${s.feedId}/clone`)).status, 403);
-  assertEquals(
-    (await call("POST", `/families/${s.feedId}/entries`, { type: "vacation", date: "2026-01-05" }))
-      .status,
-    403,
-  );
+  assertEquals((await call("POST", `/families/${s.feedId}/clone`)).status, 404);
 });
 
-Deno.test("the view id of a planner from before families keeps its calendar", async () => {
-  const { call, store } = setup();
+Deno.test("everything but the calendar feed needs signing in", async () => {
+  const { call, as } = await setup();
+  const s = await newFamily(call);
+  const anon = as(null);
+  for (const path of ["", "/entries", "/types", "/agent", "/export", "/finance", "/members"]) {
+    const res = await anon("GET", `/families/${s.id}${path}`);
+    assertEquals(res.status, 401, path);
+    assertEquals(res.data.error, "Sign in first");
+  }
+  assertEquals((await anon("POST", "/families", {})).status, 401);
+  assertEquals((await anon("POST", `/families/${s.id}/entries`, { type: "x" })).status, 401);
+  // The edit id of old is no calendar feed any more: it's in every URL of the app.
+  assertEquals((await anon("GET", `/families/${s.id}/calendar.ics`)).status, 404);
+  // A wrong or ended session says so.
+  const bad = await as("fps_nonsense")("GET", `/families/${s.id}`);
+  assertEquals(bad.status, 401);
+  assertEquals(bad.data.error, "Your session has ended, sign in again");
+});
+
+Deno.test("families of others look like no family at all", async () => {
+  const { call, store, as } = await setup();
+  const s = await newFamily(call);
+  const other = as((await addUser(store, "other@test")).token);
+  assertEquals((await other("GET", `/families/${s.id}`)).status, 404);
+  assertEquals((await other("POST", `/families/${s.id}/clone`, {})).status, 404);
+  assertEquals((await other("PATCH", `/families/${s.id}`, { name: "Mine" })).status, 404);
+  // Admins too: being an admin doesn't open families.
+  const admin = as((await addUser(store, "admin2@test", { is_admin: true })).token);
+  assertEquals((await admin("GET", `/families/${s.id}/finance`)).status, 404);
+});
+
+Deno.test("the view id of a planner from before families keeps its calendar feed", async () => {
+  const { call, store, as } = await setup();
   const s = await newFamily(call);
   // What the migration does: the old view id becomes the legacy id.
   await store.updateFamily(s.id, { legacy_id: "OldViewId1234567890" });
   await call("POST", `/families/${s.id}/entries`, { type: "vacation", date: "2026-08-03" });
 
-  const res = await call("GET", "/sessions/OldViewId1234567890?year=2026");
-  assertEquals(res.status, 200);
-  assertEquals(res.data.family.access, "calendar");
-  assertEquals(res.data.family.readOnly, true);
-  // It must not learn the new view link, which will show more than the calendar.
-  assertEquals(res.data.family.id, undefined);
-  assertEquals(res.data.family.readId, undefined);
-  assertEquals(res.data.entries, { "2026-08-03": ["vacation"] });
-  assertEquals(
-    (await call("POST", "/sessions/OldViewId1234567890/entries", {
-      type: "sick",
-      date: "2026-08-04",
-    }))
-      .status,
-    403,
-  );
+  // It opens nothing but the feed now.
+  assertEquals((await call("GET", "/sessions/OldViewId1234567890?year=2026")).status, 404);
   // Old subscriptions keep their URL and their event ids.
-  const ics: string = (await call("GET", "/sessions/OldViewId1234567890/calendar.ics")).data;
+  const ics: string = (await as(null)("GET", "/sessions/OldViewId1234567890/calendar.ics")).data;
   assert(ics.includes("UID:OldViewId1234567890-vacation-2026-08-03@vacation-planner"));
   const viaFeed: string = (await call("GET", `/families/${s.feedId}/calendar.ics`)).data;
   assert(viaFeed.includes("UID:OldViewId1234567890-vacation-2026-08-03@vacation-planner"));
-  // The edit link sees it, so the app can offer to remove it.
+  // Editors see it, so the app can offer to remove it; viewers don't.
   assertEquals(
     (await call("GET", `/families/${s.id}`)).data.family.legacyId,
     "OldViewId1234567890",
   );
+  assertEquals((await s.view("GET", `/families/${s.id}`)).data.family.legacyId, undefined);
 });
 
-Deno.test("rotates the view and feed links and removes the legacy link", async () => {
-  const { call, store } = setup();
+Deno.test("rotates the feed link and removes the legacy link", async () => {
+  const { call, store } = await setup();
   const s = await newFamily(call);
   await store.updateFamily(s.id, { legacy_id: "OldViewId1234567890" });
 
-  const view = await call("POST", `/families/${s.id}/links`, { link: "view" });
-  assertEquals(view.status, 200);
-  const readId = view.data.family.readId;
-  assert(readId !== s.readId);
-  assertEquals((await call("GET", `/families/${s.readId}`)).status, 404);
-  assertEquals((await call("GET", `/families/${readId}`)).data.family.access, "view");
-
   const feed = await call("POST", `/families/${s.id}/links`, { link: "feed" });
+  assertEquals(feed.status, 200);
   const feedId = feed.data.family.feedId;
   assert(feedId !== s.feedId);
   assertEquals((await call("GET", `/families/${s.feedId}/calendar.ics`)).status, 404);
@@ -1048,10 +1079,11 @@ Deno.test("rotates the view and feed links and removes the legacy link", async (
 
   const legacy = await call("POST", `/families/${s.id}/links`, { link: "legacy" });
   assertEquals(legacy.data.family.legacyId, undefined);
-  assertEquals((await call("GET", "/families/OldViewId1234567890")).status, 404);
+  assertEquals((await call("GET", "/families/OldViewId1234567890/calendar.ics")).status, 404);
 
+  assertEquals((await call("POST", `/families/${s.id}/links`, { link: "view" })).status, 400);
   assertEquals((await call("POST", `/families/${s.id}/links`, { link: "edit" })).status, 400);
-  assertEquals((await call("POST", `/families/${readId}/links`, { link: "view" })).status, 403);
+  assertEquals((await s.view("POST", `/families/${s.id}/links`, { link: "feed" })).status, 403);
   assertEquals((await call("GET", `/families/${s.id}/links`)).status, 405);
 });
 
@@ -1080,7 +1112,7 @@ Deno.test("a memory store snapshot from before families gets a legacy id", () =>
   }])));
   const family = store.families.get("EditId123456")!;
   assertEquals(family.legacy_id, "ViewId123456");
-  assert(family.read_id !== "ViewId123456");
+  assertEquals("read_id" in family, false);
   assertMatch(family.feed_id, /^[A-Za-z0-9]{32}$/);
   assertEquals(store.types.get("EditId123456")![0].family_id, "EditId123456");
 });
@@ -1088,10 +1120,10 @@ Deno.test("a memory store snapshot from before families gets a legacy id", () =>
 // ------------------------------------------------------------------ finance
 
 async function financeFamily() {
-  const { call, store } = setup();
+  const { call, store, owner } = await setup();
   const s = await newFamily(call);
   const f = `/families/${s.id}/finance`;
-  return { call, store, s, f };
+  return { call, store, owner, s, f };
 }
 
 Deno.test("new families get default finance categories", async () => {
@@ -1134,7 +1166,7 @@ Deno.test("manages finance categories and settings", async () => {
   assertEquals(settings.data.currency, "CHF");
   assertEquals(settings.data.csvMappings, [{ signature: "a;b", date: 0 }]);
   assertEquals((await call("PATCH", `${f}/settings`, { currency: "euro" })).status, 400);
-  assertEquals((await call("PATCH", `/families/${s.readId}/finance/settings`, {})).status, 403);
+  assertEquals((await s.view("PATCH", `/families/${s.id}/finance/settings`, {})).status, 403);
 
   assertEquals((await call("DELETE", `${f}/categories/pets`)).status, 200);
   assertEquals((await call("DELETE", `${f}/categories/pets`)).status, 404);
@@ -1201,7 +1233,7 @@ Deno.test("deletes all finance data", async () => {
   await call("POST", `${o}/accounts`, { name: "Cash", color: "#22c55e" });
 
   // Only the edit link may.
-  assertEquals((await call("DELETE", `/families/${s.readId}/finance`)).status, 403);
+  assertEquals((await s.view("DELETE", `/families/${s.id}/finance`)).status, 403);
   const res = await call("DELETE", f);
   assertEquals(res.status, 200);
   assertEquals(res.data, { currency: "EUR", csvMappings: [], accounts: [], categories: [] });
@@ -1223,9 +1255,9 @@ Deno.test("validates transaction ops", async () => {
   assertEquals(await status({ action: "update", id: crypto.randomUUID(), payee: "x" }), 404);
   assertEquals(await status({ action: "fly" }), 400);
   // Reading needs the view link, writing the edit link.
-  assertEquals((await call("GET", `/families/${s.readId}/finance/transactions`)).status, 200);
+  assertEquals((await s.view("GET", `/families/${s.id}/finance/transactions`)).status, 200);
   assertEquals(
-    (await call("POST", `/families/${s.readId}/finance/transactions`, {
+    (await s.view("POST", `/families/${s.id}/finance/transactions`, {
       date: "2026-02-01",
       amountCents: 1,
     })).status,
@@ -1242,19 +1274,14 @@ Deno.test("the legacy and feed links never see finances", async () => {
   });
   await store.updateFamily(s.id, { legacy_id: "OldViewId1234567890" });
   for (const token of ["OldViewId1234567890", s.feedId]) {
-    for (const path of ["/finance", "/finance/transactions", "/finance/summary"]) {
-      assertEquals((await call("GET", `/families/${token}${path}`)).status, 403, token + path);
+    for (const path of ["/finance", "/finance/transactions", "/finance/summary", "/export"]) {
+      assertEquals((await call("GET", `/families/${token}${path}`)).status, 404, token + path);
     }
   }
-  // The legacy link exports and clones the calendar only.
-  const file = (await call("GET", "/families/OldViewId1234567890/export")).data;
-  assertEquals(file.finance, undefined);
-  assert(!JSON.stringify(file).includes("Secret"));
-  const copy = (await call("POST", "/families/OldViewId1234567890/clone", {})).data.family;
-  assertEquals((await call("GET", `/families/${copy.id}/finance/transactions`)).data.total, 0);
-  // The view link clones the finances too.
-  const full = (await call("POST", `/families/${s.readId}/clone`, {})).data.family;
-  assertEquals((await call("GET", `/families/${full.id}/finance/transactions`)).data.total, 1);
+  // A viewer clones the finances too, into a family of their own.
+  const full = (await s.view("POST", `/families/${s.id}/clone`, {})).data.family;
+  assertEquals((await s.view("GET", `/families/${full.id}/finance/transactions`)).data.total, 1);
+  assertEquals((await call("GET", `/families/${full.id}`)).status, 404);
 });
 
 Deno.test("imports statement rows once, keeping identical rows apart", async () => {
@@ -1345,16 +1372,13 @@ Deno.test("exports and imports the finances", async () => {
   assertEquals((await call("POST", `/families/${target.id}/import`, bad)).status, 400);
 });
 
-Deno.test("the agent page explains the finances to links that may see them", async () => {
-  const { call, store, s } = await financeFamily();
+Deno.test("the agent page explains the finances, and to viewers only reading", async () => {
+  const { call, s } = await financeFamily();
   const edit: string = (await call("GET", `/families/${s.id}/agent`)).data;
   assert(edit.includes("## Finances"));
   assert(edit.includes(`POST ${BASE}/families/${s.id}/finance/transactions`));
-  const view: string = (await call("GET", `/families/${s.readId}/agent`)).data;
+  const view: string = (await s.view("GET", `/families/${s.id}/agent`)).data;
   assert(view.includes("## Finances") && !view.includes("finance/transactions` with"));
-  await store.updateFamily(s.id, { legacy_id: "OldViewId1234567890" });
-  const legacy: string = (await call("GET", "/families/OldViewId1234567890/agent")).data;
-  assert(!legacy.includes("Finances"));
 });
 
 // ------------------------------------------------------------------ accounts and transfers
@@ -1401,9 +1425,9 @@ Deno.test("tells the account balances at the end of a day", async () => {
   assertEquals(await at("2026-04-02"), ["2026-04-02", 500, 5000]);
   assertEquals(await at(), [null, 500, 5000]);
   assertEquals((await call("GET", `${f}/accounts?at=2026-13-01`)).status, 400);
-  // Reading needs the view link only.
-  const view = `/families/${s.readId}/finance/accounts?at=2026-03-01`;
-  assertEquals((await call("GET", view)).data.accounts.length, 2);
+  // Viewers can read it.
+  const view = `/families/${s.id}/finance/accounts?at=2026-03-01`;
+  assertEquals((await s.view("GET", view)).data.accounts.length, 2);
 });
 
 Deno.test("manages finance accounts with balances", async () => {
@@ -1468,15 +1492,15 @@ Deno.test("manages finance accounts with balances", async () => {
   });
   assertEquals(bad.status, 404);
 
-  // Reading needs the view link, changing the edit link.
-  const view = `/families/${s.readId}/finance`;
-  assertEquals((await call("GET", view)).data.accounts.length, 3);
+  // Viewers read, editors change.
+  const view = `/families/${s.id}/finance`;
+  assertEquals((await s.view("GET", view)).data.accounts.length, 3);
   assertEquals(
-    (await call("POST", `${view}/accounts`, { name: "A", color: "#000000" })).status,
+    (await s.view("POST", `${view}/accounts`, { name: "A", color: "#000000" })).status,
     403,
   );
-  assertEquals((await call("PATCH", `${view}/accounts/cash`, { name: "B" })).status, 403);
-  assertEquals((await call("DELETE", `${view}/accounts/cash`)).status, 403);
+  assertEquals((await s.view("PATCH", `${view}/accounts/cash`, { name: "B" })).status, 403);
+  assertEquals((await s.view("DELETE", `${view}/accounts/cash`)).status, 403);
 
   // Deleting an account deletes its transactions too.
   assertEquals((await call("DELETE", `${f}/accounts/savings`)).data, {
@@ -1658,7 +1682,7 @@ Deno.test("suggests transfers between accounts", async () => {
     { date: "2026-06-11", amountCents: -800 },
     { date: "2026-06-11", amountCents: 800 }, // both without an account
   );
-  const res = await call("GET", `/families/${s.readId}/finance/transfers/suggestions`);
+  const res = await s.view("GET", `/families/${s.id}/finance/transfers/suggestions`);
   assertEquals(res.status, 200);
   // Closest days first: out2 and in2 on the same day, then out1 with in1. Newest first.
   assertEquals(res.data.pairs.map((p: any) => [p.out.id, p.in.id]), [[out1, in1], [out2, in2]]);
@@ -1683,7 +1707,7 @@ Deno.test("auto-combines transfers, and the inverse splits them again", async ()
     { date: "2026-08-01", amountCents: 100, accountId: "checking" },
   );
   assertEquals(
-    (await call("POST", `/families/${s.readId}/finance/transfers/auto`, {})).status,
+    (await s.view("POST", `/families/${s.id}/finance/transfers/auto`, {})).status,
     403,
   );
   assertEquals((await call("POST", `${f}/transfers/auto`, { from: "nope" })).status, 400);
@@ -1803,7 +1827,7 @@ Deno.test("exports, imports and clones accounts and transfers", async () => {
   assertEquals((await call("POST", `/families/${target.id}/import`, bad)).status, 400);
 
   // Clones copy the accounts and the transfers (with their own transfer id).
-  const copy = (await call("POST", `/families/${s.readId}/clone`, {})).data.family;
+  const copy = (await call("POST", `/families/${s.id}/clone`, {})).data.family;
   const c = `/families/${copy.id}/finance`;
   assertEquals((await call("GET", c)).data.accounts.map((x: any) => x.id), [
     "checking",
@@ -1816,7 +1840,7 @@ Deno.test("exports, imports and clones accounts and transfers", async () => {
 });
 
 Deno.test("a memory store snapshot keeps accounts and transfers", async () => {
-  const { store, s, f, add, ops } = await accountsFamily();
+  const { store, owner, s, f, add, ops } = await accountsFamily();
   const [a, b] = await add(
     { date: "2026-03-01", amountCents: -500, accountId: "checking" },
     { date: "2026-03-01", amountCents: 500, accountId: "savings" },
@@ -1825,11 +1849,14 @@ Deno.test("a memory store snapshot keeps accounts and transfers", async () => {
   const restored = new MemoryStore();
   restored.restore(JSON.parse(JSON.stringify(store.snapshot())));
   const handler = createHandler(restored);
-  const get = async (path: string) => await (await handler(new Request(BASE + path))).json();
+  // Accounts, sessions and memberships are in the snapshot too.
+  const headers = { authorization: `Bearer ${owner.token}` };
+  const get = async (path: string) =>
+    await (await handler(new Request(BASE + path, { headers }))).json();
   assertEquals((await get(f)).accounts.map((x: any) => x.balanceCents), [500, 500]);
   assertEquals((await get(`${f}/transactions?kind=transfer`)).total, 2);
   // Snapshots from before accounts have neither.
-  const old = store.snapshot().map(({ accounts: _, ...item }) => ({
+  const old = store.snapshot().families.map(({ accounts: _, ...item }) => ({
     ...item,
     transactions: item.transactions?.map(({ account_id: _, transfer_id: __, ...t }) => t),
   }));
@@ -2273,7 +2300,7 @@ Deno.test("exports, imports, clones and snapshots keep split bookings", async ()
   };
   assertEquals((await call("POST", `/families/${target.id}/import`, broken)).status, 400);
 
-  const copy = (await call("POST", `/families/${s.readId}/clone`, {})).data.family;
+  const copy = (await call("POST", `/families/${s.id}/clone`, {})).data.family;
   await check(copy.id);
   const copied = (await call("GET", `/families/${copy.id}/finance/transactions`)).data;
   assert(copied.transactions.every((t: any) => t.splitOf !== booking));

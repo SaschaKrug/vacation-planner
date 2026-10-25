@@ -2,16 +2,25 @@ import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import type {
   AccountRow,
   AiSettingsRow,
+  AuthTokenRow,
   CategoryRow,
+  ChallengeRow,
   EntryRow,
   FamilyPatch,
   FamilyRow,
   FinanceContents,
   FinanceSettingsRow,
+  MemberRole,
+  MemberRow,
   NoteRow,
+  PasskeyRow,
   Store,
+  TokenKind,
+  TokenPatch,
   TransactionRow,
   TypeRow,
+  UserPatch,
+  UserRow,
 } from "./store.ts";
 
 const PAGE = 1000; // PostgREST default max rows per request
@@ -41,16 +50,27 @@ export class SupabaseStore implements Store {
     if (types.length) check(await this.db.from("entry_types").insert(types));
   }
 
-  async findFamily(token: string) {
+  async findFeed(token: string) {
     // The token goes into the filter string unescaped. That is only safe because
     // tokens are alphanumeric: the handler validates them, and so does this check.
     if (!/^[A-Za-z0-9]+$/.test(token)) return null;
     const rows = check(
       await this.db.from("families").select("*")
-        .or(`id.eq.${token},read_id.eq.${token},feed_id.eq.${token},legacy_id.eq.${token}`)
-        .limit(2),
+        .or(`feed_id.eq.${token},legacy_id.eq.${token}`).limit(1),
     ) as FamilyRow[] | null;
-    return rows?.find((r) => r.id === token) ?? rows?.[0] ?? null;
+    return rows?.[0] ?? null;
+  }
+
+  async listFamilies(ids?: string[]) {
+    if (ids) {
+      const out: FamilyRow[] = [];
+      for (const part of chunks(ids, CHUNK)) {
+        const rows = check(await this.db.from("families").select("*").in("id", part));
+        out.push(...(rows ?? []) as FamilyRow[]);
+      }
+      return out.sort((a, b) => a.name.localeCompare(b.name));
+    }
+    return await this.all<FamilyRow>("families", "name");
   }
 
   async updateFamily(id: string, patch: FamilyPatch) {
@@ -58,6 +78,174 @@ export class SupabaseStore implements Store {
       await this.db.from("families")
         .update({ ...patch, updated_at: new Date().toISOString() })
         .eq("id", id),
+    );
+  }
+
+  async deleteFamily(id: string) {
+    // Everything of the family goes with it (ON DELETE CASCADE).
+    check(await this.db.from("families").delete().eq("id", id));
+  }
+
+  /** All rows of a small table, page by page. */
+  private async all<T>(table: string, order: string): Promise<T[]> {
+    const out: T[] = [];
+    for (let offset = 0;; offset += PAGE) {
+      const rows = check(
+        await this.db.from(table).select("*").order(order).range(offset, offset + PAGE - 1),
+      ) as T[];
+      out.push(...rows);
+      if (rows.length < PAGE) return out;
+    }
+  }
+
+  async countUsers() {
+    const res = await this.db.from("users").select("id", { count: "exact", head: true });
+    if (res.error) throw new Error(res.error.message);
+    return res.count ?? 0;
+  }
+
+  async listUsers() {
+    return await this.all<UserRow>("users", "email");
+  }
+
+  async getUser(id: string) {
+    const rows = check(await this.db.from("users").select("*").eq("id", id).limit(1));
+    return (rows?.[0] as UserRow | undefined) ?? null;
+  }
+
+  async findUserByEmail(email: string) {
+    const rows = check(await this.db.from("users").select("*").eq("email", email).limit(1));
+    return (rows?.[0] as UserRow | undefined) ?? null;
+  }
+
+  async createUser(row: UserRow) {
+    check(await this.db.from("users").insert(row));
+  }
+
+  async updateUser(id: string, patch: UserPatch) {
+    check(
+      await this.db.from("users").update({ ...patch, updated_at: new Date().toISOString() })
+        .eq("id", id),
+    );
+  }
+
+  async deleteUser(id: string) {
+    // Tokens, passkeys and memberships go with it (ON DELETE CASCADE).
+    check(await this.db.from("users").delete().eq("id", id));
+  }
+
+  async createToken(row: AuthTokenRow) {
+    check(await this.db.from("auth_tokens").insert(row));
+  }
+
+  async findToken(hash: string) {
+    const rows = check(
+      await this.db.from("auth_tokens").select("*, users(*)").eq("hash", hash).limit(1),
+    ) as (AuthTokenRow & { users: UserRow | null })[] | null;
+    const row = rows?.[0];
+    if (!row?.users) return null;
+    const { users: user, ...token } = row;
+    return { token, user };
+  }
+
+  async updateToken(id: string, patch: TokenPatch) {
+    check(await this.db.from("auth_tokens").update(patch).eq("id", id));
+  }
+
+  async listTokens(userId: string, kind: TokenKind) {
+    return check(
+      await this.db.from("auth_tokens").select("*").eq("user_id", userId).eq("kind", kind)
+        .order("created_at", { ascending: false }),
+    ) as AuthTokenRow[];
+  }
+
+  async deleteTokens(
+    userId: string,
+    which: { id: string } | { kinds: TokenKind[]; exceptId?: string },
+  ) {
+    let q = this.db.from("auth_tokens").delete().eq("user_id", userId);
+    if ("id" in which) q = q.eq("id", which.id);
+    else {
+      q = q.in("kind", which.kinds);
+      if (which.exceptId) q = q.neq("id", which.exceptId);
+    }
+    check(await q);
+  }
+
+  async listPasskeys(userId: string) {
+    const rows = check(
+      await this.db.from("passkeys").select("*").eq("user_id", userId).order("created_at"),
+    ) as PasskeyRow[];
+    return rows.map((r) => ({ ...r, counter: Number(r.counter) }));
+  }
+
+  async getPasskey(id: string) {
+    const rows = check(
+      await this.db.from("passkeys").select("*").eq("id", id).limit(1),
+    ) as PasskeyRow[] | null;
+    const row = rows?.[0];
+    return row ? { ...row, counter: Number(row.counter) } : null;
+  }
+
+  async savePasskey(row: PasskeyRow) {
+    check(await this.db.from("passkeys").upsert(row, { onConflict: "id" }));
+  }
+
+  async deletePasskey(userId: string, id: string) {
+    check(await this.db.from("passkeys").delete().eq("user_id", userId).eq("id", id));
+  }
+
+  async saveChallenge(row: ChallengeRow) {
+    check(
+      await this.db.from("auth_challenges").delete().lt("expires_at", new Date().toISOString()),
+    );
+    check(await this.db.from("auth_challenges").insert(row));
+  }
+
+  async takeChallenge(id: string) {
+    // Deleting it is what makes it single-use, also between two requests at once.
+    const rows = check(
+      await this.db.from("auth_challenges").delete().eq("id", id).select("*"),
+    ) as ChallengeRow[] | null;
+    return rows?.[0] ?? null;
+  }
+
+  async findMembership(familyId: string, userId: string) {
+    const rows = check(
+      await this.db.from("family_members").select("role, families(*)")
+        .eq("family_id", familyId).eq("user_id", userId).limit(1),
+    ) as unknown as { role: MemberRole; families: FamilyRow | null }[] | null;
+    const row = rows?.[0];
+    return row?.families ? { family: row.families, role: row.role } : null;
+  }
+
+  async listMembers(filter: { familyId?: string; userId?: string }) {
+    const out: MemberRow[] = [];
+    for (let offset = 0;; offset += PAGE) {
+      let q = this.db.from("family_members").select("*");
+      if (filter.familyId) q = q.eq("family_id", filter.familyId);
+      if (filter.userId) q = q.eq("user_id", filter.userId);
+      const rows = check(
+        await q.order("created_at").order("family_id").order("user_id")
+          .range(offset, offset + PAGE - 1),
+      ) as MemberRow[];
+      out.push(...rows);
+      if (rows.length < PAGE) return out;
+    }
+  }
+
+  async setMember(row: MemberRow) {
+    // The role changes; created_at stays as it was.
+    const { created_at: _, ...rest } = row;
+    check(
+      await this.db.from("family_members").upsert(rest, { onConflict: "family_id,user_id" }),
+    );
+  }
+
+  async removeMember(familyId: string, userId: string) {
+    check(
+      await this.db.from("family_members").delete().eq("family_id", familyId)
+        .eq("user_id", userId),
     );
   }
 

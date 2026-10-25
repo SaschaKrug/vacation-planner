@@ -391,7 +391,7 @@ async function calendarFeed({ store, url, load }: Ctx): Promise<Response> {
 async function types({ store, req, url, method, rest, loadWith }: Ctx): Promise<Response> {
   const write = !(rest.length === 1 && method === "GET");
   const [{ family }, all] = await loadWith(
-    write ? "edit" : "calendar",
+    write ? "edit" : "view",
     (id) => store.listTypes(id),
   );
   const body = write ? await readBody(req) : {};
@@ -459,7 +459,7 @@ async function types({ store, req, url, method, rest, loadWith }: Ctx): Promise<
 async function entries({ store, req, url, method, loadWith }: Ctx): Promise<Response> {
   if (method === "GET") {
     const { from, to } = rangeFromQuery(url);
-    const [, rows] = await loadWith("calendar", (id) => store.listEntries(id, from, to));
+    const [, rows] = await loadWith("view", (id) => store.listEntries(id, from, to));
     return json(groupEntries(rows));
   }
   if (method !== "POST") throw new HttpError(405, "Method not allowed");
@@ -516,7 +516,7 @@ export async function applyNoteOps(
 async function notes({ store, req, url, method, load, loadWith }: Ctx): Promise<Response> {
   if (method === "GET") {
     const { from, to } = rangeFromQuery(url);
-    const [, rows] = await loadWith("calendar", (id) => store.listNotes(id, from, to));
+    const [, rows] = await loadWith("view", (id) => store.listNotes(id, from, to));
     return json(notesMap(rows));
   }
   if (method !== "POST") throw new HttpError(405, "Method not allowed");

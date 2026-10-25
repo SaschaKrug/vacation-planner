@@ -8,6 +8,7 @@ import { createHandler, type HandlerOptions } from "../supabase/functions/_share
 import { MemoryRateLimiter } from "../supabase/functions/_shared/rate_limit.ts";
 import { devSecret } from "../supabase/functions/_shared/secrets.ts";
 import { MemoryStore } from "../supabase/functions/_shared/store.ts";
+import { addMember, addUser, TEST_ITERATIONS } from "./helpers.ts";
 
 const BASE = "http://localhost/functions/v1/api";
 const AI = "https://mock.test/v1";
@@ -62,19 +63,25 @@ const fakeFetch = ((input: string | URL | Request, init?: RequestInit) => {
   return Promise.resolve(new Response("not found", { status: 404 }));
 }) as typeof fetch;
 
-function setup(options: HandlerOptions = {}) {
+/** `call` is signed in as the family's editor; `as(token)` calls as someone else. */
+async function setup(options: HandlerOptions = {}) {
   const store = new MemoryStore();
   const handler = createHandler(store, {
     aiSecret: devSecret(),
     fetch: fakeFetch,
     resolve: () => Promise.resolve(["93.184.216.34"]),
+    passwordIterations: TEST_ITERATIONS,
     ...options,
   });
-  const call = async (method: string, path: string, body?: unknown) => {
+  const as = (token: string) => async (method: string, path: string, body?: unknown) => {
     const res = await handler(
       new Request(BASE + path, {
         method,
-        headers: { "x-forwarded-for": "203.0.113.9", "content-type": "application/json" },
+        headers: {
+          "x-forwarded-for": "203.0.113.9",
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
         body: body ? JSON.stringify(body) : undefined,
       }),
     );
@@ -85,14 +92,18 @@ function setup(options: HandlerOptions = {}) {
     } catch { /* sse */ }
     return { status: res.status, data, headers: res.headers };
   };
-  return { call, store };
+  const { token } = await addUser(store, "editor@test");
+  return { call: as(token), as, store };
 }
 
+/** A family, and `view`: a call as a viewer of it. */
 async function family(options: HandlerOptions = {}) {
-  const t = setup(options);
+  const t = await setup(options);
   const res = await t.call("POST", "/families", { year: 2026 });
-  const f = res.data.family as { id: string; readId: string };
-  return { ...t, f, ai: `/families/${f.id}/ai` };
+  const f = res.data.family as { id: string };
+  const viewer = await addUser(t.store, "viewer@test");
+  await addMember(t.store, f.id, viewer.user.id, "viewer");
+  return { ...t, f, view: t.as(viewer.token), ai: `/families/${f.id}/ai` };
 }
 
 async function configured(options: HandlerOptions = {}, settings: Record<string, unknown> = {}) {
@@ -168,7 +179,7 @@ Deno.test("stores the AI settings with the keys encrypted and never returns them
   const cleared = await t.call("PUT", `${t.ai}/settings`, { apiKey: "" });
   assertEquals([cleared.data.hasKey, cleared.data.model], [false, "mock-large"]);
 
-  assertEquals((await t.call("GET", `/families/${t.f.readId}/ai/settings`)).status, 403);
+  assertEquals((await t.view("GET", `/families/${t.f.id}/ai/settings`)).status, 403);
   assertEquals((await t.call("PUT", `${t.ai}/settings`, { searchProvider: "bing" })).status, 400);
   assertEquals((await t.call("PUT", `${t.ai}/settings`, { apiKey: "has space" })).status, 400);
 });
@@ -659,7 +670,7 @@ Deno.test("looks up unknown payees on the web when search is set up", async () =
 
 Deno.test("categorizing needs the edit link and valid input", async () => {
   const t = await family();
-  assertEquals((await t.call("POST", `/families/${t.f.readId}/ai/categorize`, {})).status, 403);
+  assertEquals((await t.view("POST", `/families/${t.f.id}/ai/categorize`, {})).status, 403);
   assertEquals((await t.call("POST", `${t.ai}/categorize`, { ids: ["x"] })).status, 400);
   assertEquals((await t.call("POST", `${t.ai}/categorize`, { from: "March" })).status, 400);
   assertEquals((await t.call("POST", `${t.ai}/categorize`, { skip: -1 })).status, 400);
@@ -683,7 +694,7 @@ Deno.test("chat needs settings, the edit link and a clean history", async () => 
   const msg = { messages: [{ role: "user", content: "hi" }] };
   assertEquals((await t.call("POST", `${t.ai}/chat`, msg)).status, 400); // not set up
   await t.call("PUT", `${t.ai}/settings`, { baseUrl: AI, model: "mock-large" });
-  assertEquals((await t.call("POST", `/families/${t.f.readId}/ai/chat`, msg)).status, 403);
+  assertEquals((await t.view("POST", `/families/${t.f.id}/ai/chat`, msg)).status, 403);
   assertEquals((await t.call("POST", `${t.ai}/chat`, { messages: [] })).status, 400);
   assertEquals(
     (await t.call("POST", `${t.ai}/chat`, { messages: [{ role: "system", content: "x" }] })).status,
@@ -765,6 +776,8 @@ Deno.test("limits AI requests per client", async () => {
       write: { max: 99, seconds: 60 },
       ai: { max: 2, seconds: 60 },
       aiFamily: { max: 99, seconds: 60 },
+      login: { max: 99, seconds: 60 },
+      loginAccount: { max: 99, seconds: 60 },
     },
   });
   const ok = await t.call("POST", `${t.ai}/test`);

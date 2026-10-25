@@ -4,7 +4,7 @@
 // family's own accounts: totals count such a group once, by its net. A transaction can also be
 // a part of another one, its booking (a split booking, like an Amazon "Splitbuchung" whose order
 // lines the bank lists too): totals count the parts and what is left of the booking (see
-// netItems). Reading needs the view link, changing the edit link.
+// netItems). Viewers and editors read, editors change.
 
 import type { Ctx } from "./context.ts";
 import { addDays, diffDays, isValidDate } from "./dates.ts";

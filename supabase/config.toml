@@ -3,6 +3,7 @@
 project_id = "family-planner"
 
 [functions.api]
-# The calendar feed and the API are protected by unguessable session ids,
-# so the function must be reachable without a Supabase JWT (iCloud can't send one).
+# The API checks its own tokens (sign-in sessions and API tokens), and the calendar
+# feed has an unguessable id, so the function must be reachable without a Supabase
+# JWT (iCloud can't send one).
 verify_jwt = false

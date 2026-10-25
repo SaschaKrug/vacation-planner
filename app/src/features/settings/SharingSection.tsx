@@ -8,12 +8,10 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { usePlanner } from "@/features/family/context";
 import { api } from "@/lib/api";
 import { getLang, t } from "@/lib/i18n";
-import { Field, SettingsCard } from "./SettingsPage";
+import { SettingsCard } from "./SettingsPage";
 
-export function familyUrl(token: string) {
-  return `${location.origin}/f/${token}/vacation`;
-}
-
+/** The calendar subscription (the one thing that works without signing in) and, for families
+ *  from before accounts, their old calendar link. Who can open the family is in Members. */
 export function SharingSection() {
   const store = usePlanner();
   const family = store.family;
@@ -21,7 +19,7 @@ export function SharingSection() {
   const edit = !store.readOnly;
 
   async function rotate(
-    link: "view" | "feed" | "legacy",
+    link: "feed" | "legacy",
     message: string,
     action: string,
   ) {
@@ -36,64 +34,36 @@ export function SharingSection() {
 
   return (
     <>
-      <SettingsCard title={t("share.title")} scope="family">
-        {edit && family.id && (
-          <Field label={t("share.edit")} help={t("share.edit_help")}>
-            <CopyField value={familyUrl(family.id)} label={t("share.edit")} />
-          </Field>
-        )}
-        <Field label={t("share.view")} help={t("share.view_help")}>
-          {
-            /* The view id of a planner from before families only opens the calendar, so it
-              doesn't get to see the new view id: it shares itself. */
-          }
-          <CopyField
-            value={familyUrl(family.readId ?? store.token)}
-            label={t("share.view")}
-          />
-          {edit && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="justify-self-start"
-              onClick={() =>
-                rotate(
-                  "view",
-                  t("share.rotate_view_confirm"),
-                  t("share.rotate"),
-                )}
-            >
-              <RefreshCw /> {t("share.rotate")}
-            </Button>
-          )}
-        </Field>
-        {edit && family.legacyId && (
-          <Field label={t("share.legacy")} help={t("share.legacy_help")}>
-            <CopyField
-              value={familyUrl(family.legacyId)}
-              label={t("share.legacy")}
-            />
-            <Button
-              variant="outline"
-              size="sm"
-              className="justify-self-start"
-              onClick={() =>
-                rotate(
-                  "legacy",
-                  t("share.legacy_confirm"),
-                  t("share.legacy_remove"),
-                )}
-            >
-              <Trash2 /> {t("share.legacy_remove")}
-            </Button>
-          </Field>
-        )}
-      </SettingsCard>
       <FeedCard
         rotate={edit
           ? () => rotate("feed", t("share.rotate_feed_confirm"), t("share.rotate"))
           : undefined}
       />
+      {edit && family.legacyId && (
+        <SettingsCard
+          title={t("share.legacy")}
+          scope="family"
+          description={t("share.legacy_help")}
+        >
+          <CopyField
+            value={api.calendarUrl(family.legacyId)}
+            label={t("share.legacy")}
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            className="justify-self-start"
+            onClick={() =>
+              rotate(
+                "legacy",
+                t("share.legacy_confirm"),
+                t("share.legacy_remove"),
+              )}
+          >
+            <Trash2 /> {t("share.legacy_remove")}
+          </Button>
+        </SettingsCard>
+      )}
     </>
   );
 }

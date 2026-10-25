@@ -5,6 +5,7 @@ import type { NetOptions } from "../supabase/functions/_shared/ai/net.ts";
 import { runTool, type ToolContext, TOOLS } from "../supabase/functions/_shared/ai/tools.ts";
 import { createHandler } from "../supabase/functions/_shared/handler.ts";
 import { MemoryStore } from "../supabase/functions/_shared/store.ts";
+import { addUser, TEST_ITERATIONS } from "./helpers.ts";
 
 const BASE = "http://localhost/functions/v1/api";
 
@@ -105,15 +106,20 @@ Deno.test("ISO weeks start on Monday and belong to the year of their Thursday", 
   assertEquals(isoWeek("2026-03-10"), "2026-W11");
 });
 
-/** A family with the default types and categories, via the API. */
+/** A family with the default types and categories, via the API (as its editor). */
 async function family() {
   const store = new MemoryStore();
-  const handler = createHandler(store, {});
+  const handler = createHandler(store, { passwordIterations: TEST_ITERATIONS });
+  const { token } = await addUser(store, "editor@test");
   const call = async (method: string, path: string, body?: unknown) => {
     const res = await handler(
       new Request(BASE + path, {
         method,
-        headers: { "x-forwarded-for": "203.0.113.9", "content-type": "application/json" },
+        headers: {
+          "x-forwarded-for": "203.0.113.9",
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
         body: body ? JSON.stringify(body) : undefined,
       }),
     );

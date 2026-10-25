@@ -8,6 +8,12 @@
 //                                (with --seed) uses it, so the chat works without a key
 // The AI assistant may reach localhost here (e.g. Ollama at http://localhost:11434/v1).
 import { parseArgs } from "jsr:@std/cli@1/parse-args";
+import {
+  ADMIN_EMAIL,
+  authEnv,
+  ensureAdmin,
+  issueToken,
+} from "../supabase/functions/_shared/auth.ts";
 import { createHandler, type RateLimits } from "../supabase/functions/_shared/handler.ts";
 import { MemoryRateLimiter } from "../supabase/functions/_shared/rate_limit.ts";
 import { devSecret } from "../supabase/functions/_shared/secrets.ts";
@@ -37,6 +43,8 @@ const DEV_LIMITS: RateLimits = {
   write: { max: 30, seconds: 60 },
   ai: { max: 10, seconds: 60 },
   aiFamily: { max: 30, seconds: 60 },
+  login: { max: 10, seconds: 60 },
+  loginAccount: { max: 10, seconds: 60 },
 };
 
 const store = new MemoryStore();
@@ -83,13 +91,29 @@ async function handleApi(req: Request) {
   return res;
 }
 
-/** Fills a demo family through the API, so it is built exactly like one made in the app. */
+// The admin of a new installation (admin/admin), as the API would make it on the first
+// request; old snapshots' families go to it.
+await ensureAdmin(store, authEnv({}));
+if (args.persist) save();
+
+/** Fills a demo family through the API, so it is built exactly like one made in the app. The
+ *  admin makes it, and is its editor. */
 async function seed() {
+  const admin = await store.findUserByEmail(ADMIN_EMAIL);
+  if (!admin) throw new Error(`Seeding needs the "${ADMIN_EMAIL}" account`);
+  const { token, row } = await issueToken(store, admin.id, "session");
+  // The admin may still have to change the initial password; the seed doesn't wait for that.
+  const mustChange = admin.must_change_password;
+  await store.updateUser(admin.id, { must_change_password: false });
   const call = async (method: string, path: string, body: unknown) => {
     const res = await handleApi(
       new Request(`${origin}/api${path}`, {
         method,
-        headers: { "content-type": "application/json", "x-forwarded-for": "seed" },
+        headers: {
+          "content-type": "application/json",
+          "x-forwarded-for": "seed",
+          authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify(body),
       }),
     );
@@ -206,6 +230,8 @@ async function seed() {
     ops: ops.filter((o) => (o.date as string) <= new Date().toISOString().slice(0, 10))
       .map((o) => ({ accountId: "checking", ...o })),
   });
+  await store.deleteTokens(admin.id, { id: row.id });
+  await store.updateUser(admin.id, { must_change_password: mustChange });
 }
 
 if (args.seed && store.families.size === 0) await seed();
@@ -213,14 +239,18 @@ if (args["mock-ai"]) {
   // Point every family without AI settings at the mock.
   for (const f of store.families.values()) {
     if (await store.getAiSettings(f.id)) continue;
-    await handleApi(
-      new Request(`${origin}/api/families/${f.id}/ai/settings`, {
-        method: "PUT",
-        headers: { "content-type": "application/json", "x-forwarded-for": "seed" },
-        body: JSON.stringify({ baseUrl: `${origin}/mock-ai/v1`, model: "mock-large" }),
-      }),
-    );
+    await store.saveAiSettings({
+      family_id: f.id,
+      base_url: `${origin}/mock-ai/v1`,
+      model: "mock-large",
+      api_key_enc: "",
+      search_provider: "none",
+      search_key_enc: "",
+      allow_writes: true,
+      updated_at: new Date().toISOString(),
+    });
   }
+  if (args.persist) save();
 }
 
 Deno.serve({ port, onListen: () => listFamilies() }, async (req) => {
@@ -255,7 +285,9 @@ function listFamilies() {
     args["mock-ai"] && "mock AI at /mock-ai/v1",
   ].filter(Boolean);
   console.log(`Family Planner on ${origin}${flags.length ? ` (${flags.join(", ")})` : ""}`);
-  for (const f of store.families.values()) {
-    console.log(`  ${f.name}: edit ${origin}/f/${f.id}  view ${origin}/f/${f.read_id}`);
+  for (const f of store.families.values()) console.log(`  ${f.name}: ${origin}/f/${f.id}`);
+  const admin = [...store.users.values()].find((u) => u.email === ADMIN_EMAIL);
+  if (admin?.must_change_password) {
+    console.log(`Sign in as "${ADMIN_EMAIL}" with the password "admin" (to be changed then).`);
   }
 }

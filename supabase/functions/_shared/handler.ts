@@ -2,12 +2,25 @@
 // (https://<project>.supabase.co/functions/v1/api/...) and reused by the local dev server
 // with an in-memory store.
 //
-// Routes are /families/{token}/...; /sessions/{token}/... is the name from before families
-// and stays as an alias (calendar subscriptions and scripts point there).
+// Routes are /families/{id}/...; /sessions/{id}/... is the name from before families and
+// stays as an alias (calendar subscriptions and scripts point there). Everything needs a
+// signed-in user (a bearer token, see auth.ts), except signing in and the calendar feed;
+// /auth/... is the user's account, /admin/... the administration.
 
+import { handleAdmin } from "./admin.ts";
 import { type AiEnv, handleAi } from "./ai.ts";
 import type { Fetch } from "./ai/net.ts";
+import {
+  API_TOKEN_AUTH,
+  authenticate,
+  authEnv,
+  BEFORE_PASSWORD_CHANGE,
+  ensureAdmin,
+  handleAuth,
+  type Principal,
+} from "./auth.ts";
 import { type Access, ACCESS_RANK, accessOf, type Ctx, type Loaded } from "./context.ts";
+import { hashToken } from "./passwords.ts";
 import { createFamily, handleFamily } from "./families.ts";
 import { handleFinance } from "./finance.ts";
 import { CORS, HttpError, json } from "./http.ts";
@@ -19,7 +32,7 @@ import { handleVacation } from "./vacation.ts";
 export { HttpError, randomToken } from "./http.ts";
 export { PRESET_TYPES } from "./vacation.ts";
 
-// Tokens come from randomToken() (or the migration); the Supabase store relies on them being
+// Ids come from randomToken() (or the migration); the Supabase store relies on them being
 // alphanumeric.
 const TOKEN_RE = /^[A-Za-z0-9]{10,64}$/;
 const COLLECTIONS = ["families", "sessions"];
@@ -38,14 +51,19 @@ export const RATE_LIMITS = {
    *  tokens and run outgoing requests). */
   ai: { max: 60, seconds: 300 },
   aiFamily: { max: 300, seconds: 3600 },
+  /** Sign-in attempts (password, passkey, setup link) per client. */
+  login: { max: 30, seconds: 300 },
+  /** Password attempts per account, from all clients together. */
+  loginAccount: { max: 50, seconds: 3600 },
 };
 export type RateLimits = typeof RATE_LIMITS;
 
 const DENIED: Partial<Record<Access, string>> = {
-  view: "This is a read-only link",
-  calendar: "This is a read-only link",
-  feed: "This link only opens the calendar feed",
+  view: "You can only view this family",
 };
+
+/** /auth routes that work without signing in. */
+const PUBLIC_AUTH = ["POST login", "POST passkey/start", "POST passkey/finish", "POST setup"];
 
 export interface HandlerOptions {
   /** Public API base for absolute links, e.g. https://<project>.supabase.co/functions/v1/api.
@@ -68,6 +86,13 @@ export interface HandlerOptions {
   aiHandOffMs?: number;
   /** When an AI chat request cuts off a model call that still runs (tests). Default: 130 s. */
   aiDeadlineMs?: number;
+  /** PBKDF2 iterations for new password hashes. Default: 600 000 (tests use few). */
+  passwordIterations?: number;
+  /** The app's origins (e.g. https://family-planner.example) that may use passkeys. Default:
+   *  whichever the request comes from; passkeys stay bound to that host either way. */
+  appOrigins?: string[];
+  /** The password of the admin created when there are no users. Default: "admin". */
+  initialAdminPassword?: string;
 }
 
 export function createHandler(store: Store, options: HandlerOptions = {}) {
@@ -83,6 +108,16 @@ export function createHandler(store: Store, options: HandlerOptions = {}) {
     handOffMs: options.aiHandOffMs,
     deadlineMs: options.aiDeadlineMs,
   };
+  const auth = authEnv(options);
+  // Once per instance: the admin of a new installation (tried again if it failed).
+  let bootstrap: Promise<void> | null = null;
+  function ready(): Promise<void> {
+    bootstrap ??= ensureAdmin(store, auth).catch((err) => {
+      bootstrap = null;
+      throw err;
+    });
+    return bootstrap;
+  }
 
   /** Counts the request against a limit; 429 once the window's limit is used up. */
   async function limit(name: keyof RateLimits, key: string) {
@@ -108,30 +143,41 @@ export function createHandler(store: Store, options: HandlerOptions = {}) {
     if (!TOKEN_RE.test(token)) throw new HttpError(404, "Family not found");
   }
 
-  async function load(token: string, need: Access): Promise<Loaded> {
-    checkToken(token);
-    const family = await store.findFamily(token);
-    if (!family) throw new HttpError(404, "Family not found");
-    const access = accessOf(family, token);
-    if (ACCESS_RANK[access] < ACCESS_RANK[need]) throw new HttpError(403, DENIED[access]!);
-    return { family, access };
+  function requireUser(principal: Principal | null): Principal {
+    if (!principal) throw new HttpError(401, "Sign in first");
+    return principal;
   }
 
-  /**
-   * Loads the family and runs `query` for its id. The query starts alongside the lookup on
-   * the guess that the token is the edit id (always true for writes); for any other token
-   * the guess is dropped and the query runs again with the real id.
-   */
+  /** The calendar feed needs its feed (or legacy) id; everything else a member. */
+  async function load(token: string, need: Access, principal: Principal | null): Promise<Loaded> {
+    checkToken(token);
+    if (need === "feed") {
+      const family = await store.findFeed(token);
+      if (!family) throw new HttpError(404, "Family not found");
+      return { family, access: "feed" };
+    }
+    const { user } = requireUser(principal);
+    // Not a member reads the same as no such family: ids don't reveal anything.
+    const member = await store.findMembership(token, user.id);
+    if (!member) throw new HttpError(404, "Family not found");
+    const access = accessOf(member.role);
+    if (ACCESS_RANK[access] < ACCESS_RANK[need]) throw new HttpError(403, DENIED[access]!);
+    return { family: member.family, access };
+  }
+
+  /** Loads the family and runs `query` for its id alongside the lookup; the result is only
+   *  used if the user may see it. */
   async function loadWith<T>(
     token: string,
     need: Access,
+    principal: Principal | null,
     query: (familyId: string) => Promise<T>,
   ): Promise<[Loaded, T]> {
     checkToken(token);
-    const guess = query(token);
-    guess.catch(() => {}); // a dropped guess must not end up as an unhandled rejection
-    const loaded = await load(token, need);
-    return [loaded, loaded.family.id === token ? await guess : await query(loaded.family.id)];
+    const result = query(token);
+    result.catch(() => {}); // a dropped result must not end up as an unhandled rejection
+    const loaded = await load(token, need, principal);
+    return [loaded, await result];
   }
 
   function publicBase(url: URL): string {
@@ -154,41 +200,96 @@ export function createHandler(store: Store, options: HandlerOptions = {}) {
         docs: "https://github.com/SaschaKrug/family-planner#api",
       });
     }
-    if (!COLLECTIONS.includes(parts[0])) throw new HttpError(404, "Not found");
+    const area = parts[0] === "auth" || parts[0] === "admin" ? parts[0] : "families";
+    if (area === "families" && !COLLECTIONS.includes(parts[0])) {
+      throw new HttpError(404, "Not found");
+    }
+    const route = `${method} ${parts.slice(1).join("/")}`;
+    const isFeed = area === "families" && parts[2] === "calendar.ics" && parts.length === 3 &&
+      method === "GET";
 
     if (method !== "GET") {
       const client = await clientKey(req);
-      if (parts.length === 1 || parts[2] === "clone") {
+      if (area === "auth" && PUBLIC_AUTH.includes(route)) await limit("login", client);
+      else if (area === "families" && (parts.length === 1 || parts[2] === "clone")) {
         await limit("create", client);
         await limit("createAll", "all");
       } else await limit("write", client);
-      if (parts[2] === "ai" && parts[3] !== "settings") {
+      if (area === "families" && parts[2] === "ai" && parts[3] !== "settings") {
         await limit("ai", client);
         await limit("aiFamily", parts[1]);
       }
     }
 
-    if (parts.length === 1) {
-      if (method !== "POST") throw new HttpError(405, "Method not allowed");
-      return createFamily(store, req, url);
+    // The calendar feed is public and never sends a token: no account lookups for it.
+    if (isFeed) {
+      return await handleVacation(familyCtx(req, url, parts, null))!;
+    }
+    await ready();
+    // Signing in ignores an old session the device may still send.
+    const signingIn = area === "auth" && PUBLIC_AUTH.includes(route);
+    const principal = signingIn ? null : await authenticate(store, req);
+    if (principal) {
+      const allowed = area === "auth" && BEFORE_PASSWORD_CHANGE.includes(route);
+      if (principal.user.must_change_password && !allowed) {
+        throw new HttpError(403, "Change your password first");
+      }
+      if (
+        principal.token.kind === "api" &&
+        (area === "admin" || (area === "auth" && !API_TOKEN_AUTH.includes(route)))
+      ) {
+        throw new HttpError(403, "API tokens can't do this: sign in to the app");
+      }
     }
 
-    const token = parts[1];
-    const ctx: Ctx = {
-      store,
-      req,
-      url,
-      method,
-      token,
-      rest: parts.slice(2),
-      publicBase: publicBase(url),
-      load: (need) => load(token, need),
-      loadWith: (need, query) => loadWith(token, need, query),
-    };
+    if (area === "auth") {
+      return await handleAuth({
+        store,
+        req,
+        method,
+        rest: parts.slice(1),
+        principal,
+        env: auth,
+        // Hashed, so the counters don't keep the emails people tried.
+        limitAccount: async (email) => limit("loginAccount", `email:${await hashToken(email)}`),
+      });
+    }
+    if (area === "admin") {
+      return await handleAdmin({
+        store,
+        req,
+        method,
+        rest: parts.slice(1),
+        principal: requireUser(principal),
+      });
+    }
+
+    const ctx = familyCtx(req, url, parts, principal);
+    if (parts.length === 1) {
+      if (method !== "POST") throw new HttpError(405, "Method not allowed");
+      return createFamily(ctx);
+    }
     const res = handleFamily(ctx) ?? handleVacation(ctx) ?? handleFinance(ctx) ??
       handleAi(ctx, ai);
     if (!res) throw new HttpError(404, "Not found");
     return await res;
+  }
+
+  function familyCtx(req: Request, url: URL, parts: string[], principal: Principal | null): Ctx {
+    const token = parts[1] ?? "";
+    return {
+      store,
+      req,
+      url,
+      method: req.method,
+      token,
+      rest: parts.slice(2),
+      publicBase: publicBase(url),
+      principal,
+      requireUser: () => requireUser(principal),
+      load: (need) => load(token, need, principal),
+      loadWith: (need, query) => loadWith(token, need, principal, query),
+    };
   }
 
   return async function handler(req: Request): Promise<Response> {

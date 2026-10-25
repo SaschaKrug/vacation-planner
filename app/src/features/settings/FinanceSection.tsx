@@ -37,19 +37,12 @@ const KINDS: CategoryKind[] = ["expense", "income", "both"];
 export function FinanceSection() {
   const planner = usePlanner();
   const finance = useFinance();
-  const sees = planner.family && planner.family.access !== "calendar";
+  const sees = !!planner.family;
   useEffect(() => {
     if (sees) finance.open();
   }, [sees, finance]);
 
   if (!planner.family) return null;
-  if (!sees) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        {t("finance.calendar_only")}
-      </p>
-    );
-  }
   const edit = !planner.readOnly;
   const cats = finance.categories;
   const accounts = finance.accounts;

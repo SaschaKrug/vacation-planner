@@ -5,9 +5,8 @@ export type Role = "none" | "needs_cover" | "covers" | "day_off";
 export const ROLES: Role[] = ["none", "needs_cover", "covers", "day_off"];
 
 export interface FamilyRow {
-  id: string; // secret edit token (in the share URL)
-  read_id: string; // view token: everything, read-only
-  feed_id: string; // calendar feed token: only calendar.ics
+  id: string; // the family's id (in the app's URLs); access comes from membership
+  feed_id: string; // calendar feed token: only calendar.ics, without signing in
   /** The view token of a planner from before families: the read-only calendar and its feed. */
   legacy_id: string | null;
   name: string;
@@ -111,13 +110,133 @@ export interface FinanceContents {
   currency: string;
 }
 
-export type FamilyPatch = Partial<Pick<FamilyRow, "name" | "read_id" | "feed_id" | "legacy_id">>;
+export type FamilyPatch = Partial<Pick<FamilyRow, "name" | "feed_id" | "legacy_id">>;
+
+export interface UserRow {
+  id: string;
+  /** The sign-in name: an email address, or a plain name like "admin"; lowercase. */
+  email: string;
+  name: string;
+  /** See passwords.ts; null: no password (passkeys only). */
+  password_hash: string | null;
+  is_admin: boolean;
+  /** Set for the initial admin/admin: nothing works until the password is changed. */
+  must_change_password: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type UserPatch = Partial<
+  Pick<UserRow, "email" | "name" | "password_hash" | "is_admin" | "must_change_password">
+>;
+
+/** A session of the app, a personal API token, or a one-time setup link. */
+export type TokenKind = "session" | "api" | "setup";
+
+export interface AuthTokenRow {
+  id: string;
+  /** SHA-256 of the token (hex); the token itself is never stored. */
+  hash: string;
+  user_id: string;
+  kind: TokenKind;
+  name: string;
+  /** A session opened with a setup link: may set a new password without the current one. */
+  can_reset: boolean;
+  created_at: string;
+  last_used_at: string | null;
+  expires_at: string | null;
+}
+
+export type TokenPatch = Partial<Pick<AuthTokenRow, "last_used_at" | "expires_at" | "name">>;
+
+export interface PasskeyRow {
+  id: string; // the credential id, base64url
+  user_id: string;
+  public_key: string; // COSE key, base64url
+  counter: number;
+  transports: string[];
+  /** The host the passkey was made for (the app's domain). */
+  rp_id: string;
+  name: string;
+  created_at: string;
+  last_used_at: string | null;
+}
+
+/** A WebAuthn challenge, used once. user_id: whose passkey is being added (none: sign-in). */
+export interface ChallengeRow {
+  id: string;
+  challenge: string;
+  user_id: string | null;
+  rp_id: string;
+  origin: string;
+  expires_at: string;
+}
+
+export type MemberRole = "editor" | "viewer";
+export const MEMBER_ROLES: MemberRole[] = ["editor", "viewer"];
+
+export interface MemberRow {
+  family_id: string;
+  user_id: string;
+  role: MemberRole;
+  created_at: string;
+}
 
 export interface Store {
   createFamily(family: FamilyRow, types: TypeRow[]): Promise<void>;
-  /** Looks a family up by any of its tokens: edit, view, feed or legacy id. */
-  findFamily(token: string): Promise<FamilyRow | null>;
+  /** Looks a family up by its calendar tokens: the feed or legacy id. */
+  findFeed(token: string): Promise<FamilyRow | null>;
+  /** The families with these ids (all without), by name. */
+  listFamilies(ids?: string[]): Promise<FamilyRow[]>;
   updateFamily(id: string, patch: FamilyPatch): Promise<void>;
+  /** Deletes the family with everything in it. */
+  deleteFamily(id: string): Promise<void>;
+
+  countUsers(): Promise<number>;
+  /** All users, by email. */
+  listUsers(): Promise<UserRow[]>;
+  getUser(id: string): Promise<UserRow | null>;
+  findUserByEmail(email: string): Promise<UserRow | null>;
+  /** Fails if the email is taken. */
+  createUser(row: UserRow): Promise<void>;
+  updateUser(id: string, patch: UserPatch): Promise<void>;
+  /** Deletes the user, their tokens, passkeys and memberships. */
+  deleteUser(id: string): Promise<void>;
+
+  createToken(row: AuthTokenRow): Promise<void>;
+  /** The token with this hash and its user. */
+  findToken(hash: string): Promise<{ token: AuthTokenRow; user: UserRow } | null>;
+  updateToken(id: string, patch: TokenPatch): Promise<void>;
+  /** A user's tokens of one kind, newest first. */
+  listTokens(userId: string, kind: TokenKind): Promise<AuthTokenRow[]>;
+  /** Deletes a user's tokens: one (`id`), or all of the kinds except `exceptId`. */
+  deleteTokens(
+    userId: string,
+    which: { id: string } | { kinds: TokenKind[]; exceptId?: string },
+  ): Promise<void>;
+
+  listPasskeys(userId: string): Promise<PasskeyRow[]>;
+  getPasskey(id: string): Promise<PasskeyRow | null>;
+  /** Inserts or replaces the passkey (by id). */
+  savePasskey(row: PasskeyRow): Promise<void>;
+  deletePasskey(userId: string, id: string): Promise<void>;
+
+  /** Saves a challenge (and drops expired ones). */
+  saveChallenge(row: ChallengeRow): Promise<void>;
+  /** Returns the challenge and deletes it: each one is used once. */
+  takeChallenge(id: string): Promise<ChallengeRow | null>;
+
+  /** The family if the user is a member, with their role. */
+  findMembership(
+    familyId: string,
+    userId: string,
+  ): Promise<{ family: FamilyRow; role: MemberRole } | null>;
+  /** Members of a family, families of a user, or all memberships. */
+  listMembers(filter: { familyId?: string; userId?: string }): Promise<MemberRow[]>;
+  /** Adds the member or changes their role. */
+  setMember(row: MemberRow): Promise<void>;
+  removeMember(familyId: string, userId: string): Promise<void>;
+
   /** Types of all years, ordered by year and position. */
   listTypes(familyId: string): Promise<TypeRow[]>;
   upsertTypes(types: TypeRow[]): Promise<void>;
@@ -187,6 +306,11 @@ export class MemoryStore implements Store {
   accounts = new Map<string, AccountRow[]>();
   transactions = new Map<string, Map<string, TransactionRow>>(); // familyId -> id -> row
   aiSettings = new Map<string, AiSettingsRow>();
+  users = new Map<string, UserRow>();
+  tokens = new Map<string, AuthTokenRow>(); // id -> row
+  passkeys = new Map<string, PasskeyRow>();
+  challenges = new Map<string, ChallengeRow>();
+  members = new Map<string, MemberRow>(); // "family|user" -> row
 
   createFamily(family: FamilyRow, types: TypeRow[]) {
     this.families.set(family.id, { ...family });
@@ -196,18 +320,201 @@ export class MemoryStore implements Store {
     return Promise.resolve();
   }
 
-  findFamily(token: string) {
-    const direct = this.families.get(token);
-    if (direct) return Promise.resolve({ ...direct });
+  findFeed(token: string) {
     for (const f of this.families.values()) {
-      if ([f.read_id, f.feed_id, f.legacy_id].includes(token)) return Promise.resolve({ ...f });
+      if (f.feed_id === token || f.legacy_id === token) return Promise.resolve({ ...f });
     }
     return Promise.resolve(null);
+  }
+
+  listFamilies(ids?: string[]) {
+    const list = ids
+      ? ids.map((id) => this.families.get(id)).filter((f): f is FamilyRow => !!f)
+      : [...this.families.values()];
+    return Promise.resolve(
+      list.map((f) => ({ ...f })).sort((a, b) => a.name.localeCompare(b.name)),
+    );
   }
 
   updateFamily(id: string, patch: FamilyPatch) {
     const f = this.families.get(id);
     if (f) Object.assign(f, patch, { updated_at: new Date().toISOString() });
+    return Promise.resolve();
+  }
+
+  deleteFamily(id: string) {
+    this.families.delete(id);
+    for (
+      const map of [
+        this.types,
+        this.entries,
+        this.notes,
+        this.financeSettings,
+        this.categories,
+        this.accounts,
+        this.transactions,
+        this.aiSettings,
+      ] as Map<string, unknown>[]
+    ) map.delete(id);
+    for (const [key, m] of this.members) if (m.family_id === id) this.members.delete(key);
+    return Promise.resolve();
+  }
+
+  countUsers() {
+    return Promise.resolve(this.users.size);
+  }
+
+  listUsers() {
+    return Promise.resolve(
+      [...this.users.values()].map((u) => ({ ...u })).sort((a, b) =>
+        a.email.localeCompare(b.email)
+      ),
+    );
+  }
+
+  getUser(id: string) {
+    const u = this.users.get(id);
+    return Promise.resolve(u ? { ...u } : null);
+  }
+
+  findUserByEmail(email: string) {
+    for (const u of this.users.values()) if (u.email === email) return Promise.resolve({ ...u });
+    return Promise.resolve(null);
+  }
+
+  createUser(row: UserRow) {
+    for (const u of this.users.values()) {
+      if (u.email === row.email) return Promise.reject(new Error("email taken"));
+    }
+    this.users.set(row.id, { ...row });
+    return Promise.resolve();
+  }
+
+  updateUser(id: string, patch: UserPatch) {
+    const u = this.users.get(id);
+    if (u) {
+      if (patch.email !== undefined) {
+        for (const other of this.users.values()) {
+          if (other.id !== id && other.email === patch.email) {
+            return Promise.reject(new Error("email taken"));
+          }
+        }
+      }
+      Object.assign(u, patch, { updated_at: new Date().toISOString() });
+    }
+    return Promise.resolve();
+  }
+
+  deleteUser(id: string) {
+    this.users.delete(id);
+    for (const [key, t] of this.tokens) if (t.user_id === id) this.tokens.delete(key);
+    for (const [key, p] of this.passkeys) if (p.user_id === id) this.passkeys.delete(key);
+    for (const [key, c] of this.challenges) if (c.user_id === id) this.challenges.delete(key);
+    for (const [key, m] of this.members) if (m.user_id === id) this.members.delete(key);
+    return Promise.resolve();
+  }
+
+  createToken(row: AuthTokenRow) {
+    this.tokens.set(row.id, { ...row });
+    return Promise.resolve();
+  }
+
+  findToken(hash: string) {
+    for (const t of this.tokens.values()) {
+      if (t.hash !== hash) continue;
+      const user = this.users.get(t.user_id);
+      return Promise.resolve(user ? { token: { ...t }, user: { ...user } } : null);
+    }
+    return Promise.resolve(null);
+  }
+
+  updateToken(id: string, patch: TokenPatch) {
+    const t = this.tokens.get(id);
+    if (t) Object.assign(t, patch);
+    return Promise.resolve();
+  }
+
+  listTokens(userId: string, kind: TokenKind) {
+    return Promise.resolve(
+      [...this.tokens.values()].filter((t) => t.user_id === userId && t.kind === kind)
+        .map((t) => ({ ...t })).sort((a, b) => b.created_at.localeCompare(a.created_at)),
+    );
+  }
+
+  deleteTokens(
+    userId: string,
+    which: { id: string } | { kinds: TokenKind[]; exceptId?: string },
+  ) {
+    for (const [key, t] of this.tokens) {
+      if (t.user_id !== userId) continue;
+      const hit = "id" in which
+        ? t.id === which.id
+        : which.kinds.includes(t.kind) && t.id !== which.exceptId;
+      if (hit) this.tokens.delete(key);
+    }
+    return Promise.resolve();
+  }
+
+  listPasskeys(userId: string) {
+    return Promise.resolve(
+      [...this.passkeys.values()].filter((p) => p.user_id === userId)
+        .map((p) => ({ ...p, transports: [...p.transports] }))
+        .sort((a, b) => a.created_at.localeCompare(b.created_at)),
+    );
+  }
+
+  getPasskey(id: string) {
+    const p = this.passkeys.get(id);
+    return Promise.resolve(p ? { ...p, transports: [...p.transports] } : null);
+  }
+
+  savePasskey(row: PasskeyRow) {
+    this.passkeys.set(row.id, { ...row, transports: [...row.transports] });
+    return Promise.resolve();
+  }
+
+  deletePasskey(userId: string, id: string) {
+    if (this.passkeys.get(id)?.user_id === userId) this.passkeys.delete(id);
+    return Promise.resolve();
+  }
+
+  saveChallenge(row: ChallengeRow) {
+    const now = new Date().toISOString();
+    for (const [key, c] of this.challenges) if (c.expires_at < now) this.challenges.delete(key);
+    this.challenges.set(row.id, { ...row });
+    return Promise.resolve();
+  }
+
+  takeChallenge(id: string) {
+    const c = this.challenges.get(id);
+    this.challenges.delete(id);
+    return Promise.resolve(c ? { ...c } : null);
+  }
+
+  findMembership(familyId: string, userId: string) {
+    const m = this.members.get(`${familyId}|${userId}`);
+    const family = m && this.families.get(familyId);
+    return Promise.resolve(family ? { family: { ...family }, role: m.role } : null);
+  }
+
+  listMembers(filter: { familyId?: string; userId?: string }) {
+    return Promise.resolve(
+      [...this.members.values()].filter((m) =>
+        (!filter.familyId || m.family_id === filter.familyId) &&
+        (!filter.userId || m.user_id === filter.userId)
+      ).map((m) => ({ ...m })).sort((a, b) => a.created_at.localeCompare(b.created_at)),
+    );
+  }
+
+  setMember(row: MemberRow) {
+    const key = `${row.family_id}|${row.user_id}`;
+    const old = this.members.get(key);
+    this.members.set(key, { ...row, created_at: old?.created_at ?? row.created_at });
+    return Promise.resolve();
+  }
+
+  removeMember(familyId: string, userId: string) {
+    this.members.delete(`${familyId}|${userId}`);
     return Promise.resolve();
   }
 
@@ -470,7 +777,7 @@ export class MemoryStore implements Store {
 
   /** Plain-JSON copy of all data, so the dev server can keep it across restarts. */
   snapshot(): MemorySnapshot {
-    return [...this.families.values()].map((family) => ({
+    const families = [...this.families.values()].map((family) => ({
       family,
       types: this.types.get(family.id) ?? [],
       entries: [...(this.entries.get(family.id) ?? [])],
@@ -481,16 +788,30 @@ export class MemoryStore implements Store {
       transactions: [...(this.transactions.get(family.id)?.values() ?? [])],
       aiSettings: this.aiSettings.get(family.id) ?? null,
     }));
+    return {
+      families,
+      users: [...this.users.values()],
+      tokens: [...this.tokens.values()],
+      passkeys: [...this.passkeys.values()],
+      members: [...this.members.values()],
+    };
   }
 
-  restore(snapshot: MemorySnapshot) {
-    for (const item of snapshot) {
+  restore(snapshot: MemorySnapshot | MemorySnapshot["families"]) {
+    // Snapshots from before accounts are only the list of families (nobody is a member yet:
+    // the handler gives them to the admin it creates, like on the database).
+    const all = Array.isArray(snapshot) ? { families: snapshot } : snapshot;
+    for (const u of all.users ?? []) this.users.set(u.id, { ...u });
+    for (const t of all.tokens ?? []) this.tokens.set(t.id, { ...t });
+    for (const p of all.passkeys ?? []) this.passkeys.set(p.id, { ...p });
+    for (const m of all.members ?? []) this.members.set(`${m.family_id}|${m.user_id}`, { ...m });
+    for (const item of all.families) {
       const { types, entries, notes } = item;
       // Snapshots from before families hold a "session": its view id becomes the legacy id,
-      // like the database migration does it.
-      const old = (item as { session?: FamilyRow }).session;
-      const family = item.family ??
-        { ...old!, legacy_id: old!.read_id, read_id: randomId(), feed_id: randomId() };
+      // like the database migration does it. The view id is gone since accounts.
+      const old = (item as { session?: FamilyRow & { read_id: string } }).session;
+      const { read_id: _, ...family } = (item.family as FamilyRow & { read_id?: string }) ??
+        { ...old!, legacy_id: old!.read_id, feed_id: randomId() };
       this.families.set(family.id, { ...family });
       this.types.set(family.id, types.map((t) => ({ ...t, family_id: family.id })));
       this.entries.set(family.id, new Set(entries));
@@ -516,7 +837,15 @@ export class MemoryStore implements Store {
   }
 }
 
-export type MemorySnapshot = {
+export interface MemorySnapshot {
+  families: FamilySnapshot[];
+  users?: UserRow[];
+  tokens?: AuthTokenRow[];
+  passkeys?: PasskeyRow[];
+  members?: MemberRow[];
+}
+
+type FamilySnapshot = {
   family: FamilyRow;
   types: TypeRow[];
   entries: string[]; // "day|type"
@@ -527,7 +856,7 @@ export type MemorySnapshot = {
   accounts?: AccountRow[]; // not in snapshots from before accounts
   transactions?: TransactionRow[];
   aiSettings?: AiSettingsRow | null;
-}[];
+};
 
 /** A 32-character alphanumeric id, like the database migration makes them. */
 function randomId(): string {

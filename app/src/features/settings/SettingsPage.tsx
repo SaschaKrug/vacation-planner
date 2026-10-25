@@ -1,4 +1,13 @@
-import { Database, Laptop, Palette, Share2, Sparkles, Users, Wallet } from "lucide-react";
+import {
+  CalendarPlus,
+  Database,
+  Laptop,
+  Palette,
+  Sparkles,
+  Users,
+  UsersRound,
+  Wallet,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { Navigate, NavLink, useParams } from "react-router";
 import { usePlanner } from "@/features/family/context";
@@ -9,12 +18,14 @@ import { AiSection } from "./AiSection";
 import { DataSection } from "./DataSection";
 import { FinanceSection } from "./FinanceSection";
 import { GeneralSection } from "./GeneralSection";
+import { MembersSection } from "./MembersSection";
 import { SharingSection } from "./SharingSection";
 import { VacationSection } from "./VacationSection";
 
 const SECTIONS = [
   { id: "general", icon: Palette, Component: GeneralSection },
-  { id: "sharing", icon: Share2, Component: SharingSection },
+  { id: "members", icon: UsersRound, Component: MembersSection },
+  { id: "sharing", icon: CalendarPlus, Component: SharingSection },
   { id: "vacation", icon: Users, Component: VacationSection },
   { id: "finance", icon: Wallet, Component: FinanceSection },
   { id: "ai", icon: Sparkles, Component: AiSection },

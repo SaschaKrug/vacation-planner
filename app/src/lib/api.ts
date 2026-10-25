@@ -1,5 +1,6 @@
 // Thin client for the Family Planner API (Supabase Edge Function "api").
 
+import { clearSession, type Me, type MemberRole, sessionToken, type User } from "./auth";
 import type { EntryOp, EntryType, NoteOp, Role } from "./core";
 
 declare global {
@@ -8,11 +9,10 @@ declare global {
   }
 }
 
-export type Access = "edit" | "view" | "calendar";
+export type Access = "edit" | "view";
 
 export interface Family {
-  id?: string;
-  readId?: string;
+  id: string;
   feedId: string;
   legacyId?: string;
   name: string;
@@ -199,6 +199,52 @@ export type ChatEvent =
   | { event: "continue"; data: { retry?: boolean; message?: string } }
   | { event: "error"; data: { message: string } };
 
+/** A member of a family, as its members see them. */
+export interface Member {
+  userId: string;
+  email: string;
+  name: string;
+  role: MemberRole;
+  you?: boolean;
+}
+
+export interface Passkey {
+  id: string;
+  name: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+}
+
+export interface ApiToken {
+  id: string;
+  name: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+}
+
+/** A user in the administration. */
+export interface AdminUser extends Omit<User, "passkeys"> {
+  passkeys: number;
+  setupPending: boolean;
+  lastSignIn: string | null;
+  createdAt: string;
+  families: { id: string; name: string; role: MemberRole }[];
+}
+
+export interface AdminFamily {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  members: Member[];
+}
+
+/** Options for the browser's passkey dialog, and the id to answer them with. */
+export interface PasskeyOptions {
+  challengeId: string;
+  options: any;
+}
+
 export class ApiError extends Error {
   constructor(message: string, public status?: number) {
     super(message);
@@ -215,16 +261,30 @@ export function isConfigured(): boolean {
   return !!window.FP_CONFIG?.apiBase;
 }
 
+function headers(json: boolean): Record<string, string> {
+  const token = sessionToken();
+  return {
+    ...(json ? { "content-type": "application/json" } : {}),
+    ...(token ? { authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+/** A 401 with a session means it ended: sign out, which shows the sign-in page. */
+function checkSession(res: Response, sent: string | null) {
+  if (res.status === 401 && sent && sent === sessionToken()) clearSession();
+}
+
 async function request<T>(
   method: string,
   path: string,
   body?: unknown,
 ): Promise<T> {
   let res: Response;
+  const sent = sessionToken();
   try {
     res = await fetch(apiBase() + path, {
       method,
-      headers: body ? { "content-type": "application/json" } : {},
+      headers: headers(!!body),
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch (err) {
@@ -232,6 +292,7 @@ async function request<T>(
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
+    checkSession(res, sent);
     throw new ApiError(data.error || `HTTP ${res.status}`, res.status);
   }
   return data as T;
@@ -240,14 +301,100 @@ async function request<T>(
 const enc = encodeURIComponent;
 const fam = (token: string) => `/families/${enc(token)}`;
 
+const admin = "/admin";
+
 export const api = {
+  // ---------------------------------------------------------------- account
+  login: (email: string, password: string) =>
+    request<Me & { token: string }>("POST", "/auth/login", { email, password }),
+  passkeyLoginOptions: () => request<PasskeyOptions>("POST", "/auth/passkey/start"),
+  passkeyLogin: (challengeId: string, response: unknown) =>
+    request<Me & { token: string }>("POST", "/auth/passkey/finish", {
+      challengeId,
+      response,
+    }),
+  openSetupLink: (token: string) =>
+    request<Me & { token: string }>("POST", "/auth/setup", { token }),
+  me: () => request<Me>("GET", "/auth/me"),
+  updateMe: (patch: { name?: string; email?: string }) => request<Me>("PATCH", "/auth/me", patch),
+  logout: () => request<unknown>("POST", "/auth/logout"),
+  setPassword: (password: string, current?: string) =>
+    request<Me>("PUT", "/auth/password", {
+      password,
+      ...(current ? { current } : {}),
+    }),
+  removePassword: () => request<Me>("DELETE", "/auth/password"),
+  passkeys: () => request<Passkey[]>("GET", "/auth/passkeys"),
+  passkeyOptions: () => request<PasskeyOptions>("POST", "/auth/passkeys/start"),
+  addPasskey: (challengeId: string, response: unknown, name: string) =>
+    request<Passkey>("POST", "/auth/passkeys/finish", {
+      challengeId,
+      response,
+      name,
+    }),
+  renamePasskey: (id: string, name: string) =>
+    request<Passkey>("PATCH", `/auth/passkeys/${enc(id)}`, { name }),
+  deletePasskey: (id: string) => request<unknown>("DELETE", `/auth/passkeys/${enc(id)}`),
+  apiTokens: () => request<ApiToken[]>("GET", "/auth/tokens"),
+  createApiToken: (name: string) =>
+    request<ApiToken & { token: string }>("POST", "/auth/tokens", { name }),
+  deleteApiToken: (id: string) => request<unknown>("DELETE", `/auth/tokens/${enc(id)}`),
+
+  // ---------------------------------------------------------------- administration
+  adminUsers: () => request<AdminUser[]>("GET", `${admin}/users`),
+  adminCreateUser: (body: { email: string; name: string; isAdmin: boolean }) =>
+    request<{ user: AdminUser; setupToken: string }>(
+      "POST",
+      `${admin}/users`,
+      body,
+    ),
+  adminUpdateUser: (
+    id: string,
+    patch: { email?: string; name?: string; isAdmin?: boolean },
+  ) => request<AdminUser>("PATCH", `${admin}/users/${enc(id)}`, patch),
+  adminDeleteUser: (id: string) => request<unknown>("DELETE", `${admin}/users/${enc(id)}`),
+  adminSetupLink: (id: string) =>
+    request<{ setupToken: string }>("POST", `${admin}/users/${enc(id)}/setup`),
+  adminFamilies: () => request<AdminFamily[]>("GET", `${admin}/families`),
+  adminCreateFamily: (
+    body: {
+      name: string;
+      lang: string;
+      members: { userId: string; role: MemberRole }[];
+    },
+  ) => request<AdminFamily>("POST", `${admin}/families`, body),
+  adminRenameFamily: (id: string, name: string) =>
+    request<AdminFamily>("PATCH", `${admin}/families/${enc(id)}`, { name }),
+  adminDeleteFamily: (id: string) => request<unknown>("DELETE", `${admin}/families/${enc(id)}`),
+  adminSetMember: (id: string, userId: string, role: MemberRole) =>
+    request<AdminFamily>(
+      "PUT",
+      `${admin}/families/${enc(id)}/members/${enc(userId)}`,
+      { role },
+    ),
+  adminRemoveMember: (id: string, userId: string) =>
+    request<AdminFamily>(
+      "DELETE",
+      `${admin}/families/${enc(id)}/members/${enc(userId)}`,
+    ),
+
+  // ---------------------------------------------------------------- families
+  members: (token: string) => request<Member[]>("GET", `${fam(token)}/members`),
+  addMember: (token: string, email: string, role: MemberRole) =>
+    request<Member[]>("POST", `${fam(token)}/members`, { email, role }),
+  setMemberRole: (token: string, userId: string, role: MemberRole) =>
+    request<Member[]>("PATCH", `${fam(token)}/members/${enc(userId)}`, {
+      role,
+    }),
+  removeMember: (token: string, userId: string) =>
+    request<Member[]>("DELETE", `${fam(token)}/members/${enc(userId)}`),
   createFamily: (body: { name?: string; lang?: string; year?: number } = {}) =>
     request<FamilyState>("POST", "/families", body),
   getFamily: (token: string, year: number) =>
     request<FamilyState>("GET", `${fam(token)}?year=${year}`),
   renameFamily: (token: string, name: string) =>
     request<FamilyState>("PATCH", fam(token), { name }),
-  rotateLink: (token: string, link: "view" | "feed" | "legacy", year: number) =>
+  rotateLink: (token: string, link: "feed" | "legacy", year: number) =>
     request<FamilyState>("POST", `${fam(token)}/links?year=${year}`, { link }),
   cloneFamily: (token: string, name: string) =>
     request<FamilyState>("POST", `${fam(token)}/clone`, { name }),
@@ -280,16 +427,24 @@ export const api = {
     request<unknown>("POST", `${fam(token)}/notes`, { ops }),
   finance: (token: string) => request<FinanceOverview>("GET", `${fam(token)}/finance`),
   clearFinance: (token: string) => request<FinanceOverview>("DELETE", `${fam(token)}/finance`),
-  financeSettings: (token: string, patch: { currency?: string; csvMappings?: unknown[] }) =>
-    request<FinanceOverview>("PATCH", `${fam(token)}/finance/settings`, patch),
+  financeSettings: (
+    token: string,
+    patch: { currency?: string; csvMappings?: unknown[] },
+  ) => request<FinanceOverview>("PATCH", `${fam(token)}/finance/settings`, patch),
   addCategory: (token: string, c: Omit<Category, "id" | "position">) =>
     request<Category>("POST", `${fam(token)}/finance/categories`, c),
   updateCategory: (token: string, id: string, patch: Partial<Category>) =>
-    request<Category>("PATCH", `${fam(token)}/finance/categories/${enc(id)}`, patch),
+    request<Category>(
+      "PATCH",
+      `${fam(token)}/finance/categories/${enc(id)}`,
+      patch,
+    ),
   deleteCategory: (token: string, id: string) =>
     request<unknown>("DELETE", `${fam(token)}/finance/categories/${enc(id)}`),
   defaultCategories: (token: string, lang: string) =>
-    request<Category[]>("POST", `${fam(token)}/finance/categories/defaults`, { lang }),
+    request<Category[]>("POST", `${fam(token)}/finance/categories/defaults`, {
+      lang,
+    }),
   addAccount: (
     token: string,
     a: { name: string; color: string; icon?: string; openingCents?: number },
@@ -306,17 +461,27 @@ export const api = {
       `${fam(token)}/finance/accounts?${new URLSearchParams({ at })}`,
     ),
   deleteAccount: (token: string, id: string) =>
-    request<{ deleted: string }>("DELETE", `${fam(token)}/finance/accounts/${enc(id)}`),
+    request<{ deleted: string }>(
+      "DELETE",
+      `${fam(token)}/finance/accounts/${enc(id)}`,
+    ),
   transactions: (token: string, query: Record<string, string>) =>
     request<TransactionList>(
       "GET",
       `${fam(token)}/finance/transactions?${new URLSearchParams(query)}`,
     ),
   changeTransactions: (token: string, ops: TransactionOp[]) =>
-    request<TransactionResult>("POST", `${fam(token)}/finance/transactions`, { ops }),
+    request<TransactionResult>("POST", `${fam(token)}/finance/transactions`, {
+      ops,
+    }),
   importTransactions: (
     token: string,
-    rows: { date: string; amountCents: number; payee: string; description: string }[],
+    rows: {
+      date: string;
+      amountCents: number;
+      payee: string;
+      description: string;
+    }[],
     dryRun = false,
     accountId?: string,
     autoTransfers = false,
@@ -340,7 +505,9 @@ export const api = {
   transferSuggestions: (token: string, query: Record<string, string>) =>
     request<{ pairs: TransferPair[] }>(
       "GET",
-      `${fam(token)}/finance/transfers/suggestions?${new URLSearchParams(query)}`,
+      `${fam(token)}/finance/transfers/suggestions?${new URLSearchParams(
+        query,
+      )}`,
     ),
   /** Combines the split bookings in the range (all time without one) with their parts, then
    *  every likely transfer into its own group. */
@@ -351,23 +518,38 @@ export const api = {
       range,
     ),
   financeSummary: (token: string, query: Record<string, string>) =>
-    request<FinanceSummary>("GET", `${fam(token)}/finance/summary?${new URLSearchParams(query)}`),
+    request<FinanceSummary>(
+      "GET",
+      `${fam(token)}/finance/summary?${new URLSearchParams(query)}`,
+    ),
   aiSettings: (token: string) => request<AiSettings>("GET", `${fam(token)}/ai/settings`),
   saveAiSettings: (token: string, patch: AiSettingsPatch) =>
     request<AiSettings>("PUT", `${fam(token)}/ai/settings`, patch),
   aiModels: (token: string, body: { baseUrl?: string; apiKey?: string } = {}) =>
     request<{ models: string[] }>("POST", `${fam(token)}/ai/models`, body),
   aiTest: (token: string) =>
-    request<{ ok: boolean; model: string; reply: string }>("POST", `${fam(token)}/ai/test`, {}),
+    request<{ ok: boolean; model: string; reply: string }>(
+      "POST",
+      `${fam(token)}/ai/test`,
+      {},
+    ),
   /** Sorts uncategorized transactions (the given ids, or those of a range) like similar ones,
    *  and the rest with the AI if it is set up. */
   categorize: (
     token: string,
-    body: { ids?: string[]; from?: string; to?: string; skip?: number; lang?: "en" | "de" },
+    body: {
+      ids?: string[];
+      from?: string;
+      to?: string;
+      skip?: number;
+      lang?: "en" | "de";
+    },
   ) => request<CategorizeResult>("POST", `${fam(token)}/ai/categorize`, body),
   /** Runs undo steps in order (they are relative to the family). */
   undo: async (token: string, steps: UndoStep[]) => {
-    for (const step of steps) await request(step.method, fam(token) + step.path, step.body);
+    for (const step of steps) {
+      await request(step.method, fam(token) + step.path, step.body);
+    }
   },
   /** Sends a chat turn and calls `onEvent` for every server-sent event until the end. */
   chat: async (
@@ -377,10 +559,11 @@ export const api = {
     signal?: AbortSignal,
   ) => {
     let res: Response;
+    const sent = sessionToken();
     try {
       res = await fetch(`${apiBase()}${fam(token)}/ai/chat`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: headers(true),
         body: JSON.stringify(body),
         signal,
       });
@@ -389,6 +572,7 @@ export const api = {
       throw new ApiError((err as Error).message);
     }
     if (!res.ok || !res.body) {
+      checkSession(res, sent);
       const data = await res.json().catch(() => ({}));
       throw new ApiError(data.error || `HTTP ${res.status}`, res.status);
     }
