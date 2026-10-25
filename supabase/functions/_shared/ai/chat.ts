@@ -10,7 +10,7 @@ import {
   streamChat,
   type ToolCall,
 } from "./provider.ts";
-import { MAX_TOOL_RESULT, runTool, type ToolContext, toolsFor } from "./tools.ts";
+import { MAX_TOOL_RESULT, type Question, runTool, type ToolContext, toolsFor } from "./tools.ts";
 
 /** Model calls per answer (across hand-offs); the last one gets no tools, so the model answers
  *  with what it has. */
@@ -127,6 +127,8 @@ ${
       ? "- For facts from the web (school and public holidays, opening times, prices), search, read the best sources with fetch_page, and name them."
       : "- Web search isn't set up; you can still read pages with fetch_page when the user gives a URL."
   }
+- When you need the user's decision or a detail you can't look up, ask with ask_user (answers
+  to pick, one or several) instead of guessing, and wait for the answer.
 - Call tools that don't depend on each other together, and put many changes into one call's
   ops: an answer can only take a limited number of steps.
 - Dates are YYYY-MM-DD. Keep answers short; use Markdown lists only where they help.`;
@@ -223,9 +225,11 @@ function cleanParts(raw: unknown[]): ContentPart[] {
 /**
  * Runs the tool loop and emits: "text" {delta}, "tool" {id, name, args}, "tool_result"
  * {id, name, ok, summary}, "change" {id, kind, summary, undo}, "messages" {messages} (what the
- * app appends to its history, after every step) and "done" or "continue" {retry?, message?}:
- * time is nearly up, or a model call failed (`retry`, with the reason), so the app sends the
- * history again and the turn goes on there.
+ * app appends to its history, after every step), "question" {id, question, options, multiple}
+ * (the model asked the user: the turn ends without the call's result, which the app adds with
+ * the answer and then continues) and "done" or "continue" {retry?, message?}: time is nearly
+ * up, or a model call failed (`retry`, with the reason), so the app sends the history again and
+ * the turn goes on there.
  */
 export async function runChat(opts: {
   provider: Provider;
@@ -261,8 +265,11 @@ export async function runChat(opts: {
     if (added.length > sent) emit("messages", { messages: added.slice(sent) });
     sent = added.length;
   };
-  // Steps count across requests: the tool rounds since the user's message.
-  const turn = opts.history.findLastIndex((m) => m.role === "user");
+  // Steps count across requests: the tool rounds since the user's message, or since the
+  // question they answered.
+  const turn = opts.history.findLastIndex((m) =>
+    m.role === "user" || m.tool_calls?.some((c) => c.function.name === "ask_user")
+  );
   const used = opts.history.slice(turn + 1).filter((m) => m.tool_calls?.length).length;
   let nudges = 0;
 
@@ -321,15 +328,32 @@ export async function runChat(opts: {
         break;
       }
       push({ role: "assistant", content: content || null, tool_calls: calls });
+      // A question waits for the user: its result is their answer, added by the app.
+      let question: ({ id: string } & Question) | null = null;
       for (const call of calls) {
+        if (call.function.name === "ask_user" && question) {
+          push({
+            role: "tool",
+            tool_call_id: call.id,
+            content: JSON.stringify({ error: "Ask one question at a time" }),
+          });
+          continue;
+        }
         let args: unknown = {};
         try {
           args = JSON.parse(call.function.arguments || "{}");
         } catch {
           args = call.function.arguments;
         }
-        emit("tool", { id: call.id, name: call.function.name, args });
+        // A question shows up as the question itself (not as a tool call), once it's valid.
+        const ask = call.function.name === "ask_user";
+        if (!ask) emit("tool", { id: call.id, name: call.function.name, args });
         const res = await runTool(call.function.name, call.function.arguments, ctx, allowed);
+        if (res.question) {
+          question = { id: call.id, ...res.question };
+          continue;
+        }
+        if (ask) emit("tool", { id: call.id, name: call.function.name, args });
         emit("tool_result", {
           id: call.id,
           name: call.function.name,
@@ -344,6 +368,11 @@ export async function runChat(opts: {
         push({ role: "tool", tool_call_id: call.id, content });
       }
       flush();
+      if (question) {
+        emit("question", question);
+        emit("done", {});
+        return;
+      }
     }
     flush();
     emit("done", {});

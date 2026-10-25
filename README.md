@@ -102,6 +102,10 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   vacation days on public holidays. *Calculate* evaluates expressions (no code is run):
   arithmetic, lists, percentiles, trends and forecasts, and loans and savings like a
   spreadsheet (`pmt`, `fv`, `pv`, `nper`, `npv`, `irr`, `cagr`).
+- **Questions:** when it needs a decision or a detail it can't look up, the assistant asks with
+  answers to pick (one, or several), and you can always write your own answer instead or as
+  well. It goes on with the answer; writing a new message instead leaves the question
+  unanswered.
 - **Attach** images (screenshots, photos) and text files (e.g. CSV) to a message; images need a
   model with vision support.
 - **Auto-categorize** on the finance page sorts the period's uncategorized transactions into

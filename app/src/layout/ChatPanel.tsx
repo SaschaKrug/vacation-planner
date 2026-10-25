@@ -25,6 +25,7 @@ import { toast } from "sonner";
 import { copyText } from "@/components/CopyField";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -45,7 +46,7 @@ import {
   MAX_ATTACHMENTS,
   readAttachment,
 } from "@/features/chat/attachments";
-import type { Item, ItemAttachment } from "@/features/chat/store";
+import type { Item, ItemAttachment, QuestionItem } from "@/features/chat/store";
 import { toolDetail, toolLabel } from "@/features/chat/tools";
 import { transcript } from "@/features/chat/transcript";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -635,6 +636,7 @@ function ItemView(
     );
   }
   if (item.kind === "assistant") return <Markdown text={item.text} />;
+  if (item.kind === "question") return <QuestionCard item={item} />;
   if (item.kind === "error") {
     return (
       <p className="flex items-start gap-2 rounded-lg border border-gap/30 bg-gap/10 px-3 py-2 text-gap">
@@ -689,6 +691,98 @@ function ItemView(
             <Undo2 /> {t("finance.undo")}
           </Button>
         )}
+    </div>
+  );
+}
+
+/** A question of the assistant: a click on an option answers it (or, with several to pick,
+ *  ticks it), and an own answer can be written instead or as well. Once answered, it shows
+ *  what was picked. */
+function QuestionCard({ item }: { item: QuestionItem }) {
+  const chat = useChat();
+  const [picked, setPicked] = useState<string[]>([]);
+  const [text, setText] = useState("");
+  const open = chat.openQuestion()?.id === item.id;
+  const active = open && !chat.busy;
+  const chosen = item.answer?.selected ?? picked;
+  const submit = (selected: string[]) => chat.answer(selected, text);
+  const toggle = (o: string) =>
+    setPicked((p) => (p.includes(o) ? p.filter((x) => x !== o) : [...p, o]));
+  return (
+    <div className="rounded-xl border bg-card p-3">
+      <p className="font-medium whitespace-pre-wrap">{item.question}</p>
+      {open && (
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          {t(item.multiple ? "chat.question.pick_several" : "chat.question.pick_one")}
+        </p>
+      )}
+      <div className="mt-2 space-y-1.5" role="group" aria-label={item.question}>
+        {item.options.map((o) => {
+          const on = chosen.includes(o);
+          return (
+            <button
+              key={o}
+              type="button"
+              disabled={!active}
+              aria-pressed={item.multiple ? on : undefined}
+              className={cn(
+                "flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left enabled:hover:bg-accent disabled:cursor-default",
+                on && "border-primary bg-primary/10",
+                !open && !on && "opacity-60",
+              )}
+              onClick={() => (item.multiple ? toggle(o) : submit([o]))}
+            >
+              <span
+                className={cn(
+                  "flex size-4 shrink-0 items-center justify-center border",
+                  item.multiple ? "rounded-sm" : "rounded-full",
+                  on && "border-primary bg-primary text-primary-foreground",
+                )}
+              >
+                {on && <Check className="size-3" />}
+              </span>
+              <span className="min-w-0 flex-1">{o}</span>
+            </button>
+          );
+        })}
+      </div>
+      {open && (
+        <form
+          className="mt-2 flex gap-1.5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            submit(item.multiple ? picked : []);
+          }}
+        >
+          <Input
+            value={text}
+            disabled={!active}
+            placeholder={t("chat.question.own")}
+            aria-label={t("chat.question.own")}
+            className="h-8"
+            onChange={(e) => setText(e.target.value)}
+          />
+          <Button
+            type="submit"
+            size="sm"
+            className="h-8"
+            disabled={!active ||
+              (!text.trim() && !(item.multiple && picked.length))}
+          >
+            {t("chat.question.send")}
+          </Button>
+        </form>
+      )}
+      {item.answer?.text && (
+        <div className="mt-2 ml-8 rounded-2xl rounded-br-md bg-primary px-3 py-2 whitespace-pre-wrap text-primary-foreground">
+          {item.answer.text}
+        </div>
+      )}
+      {item.skipped && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          {t("chat.question.skipped")}
+        </p>
+      )}
     </div>
   );
 }

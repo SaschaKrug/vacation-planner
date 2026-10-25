@@ -56,10 +56,19 @@ export interface Change {
   undo: UndoStep[];
 }
 
+/** A question for the user (ask_user): the turn stops until they answer. */
+export interface Question {
+  question: string;
+  options: string[];
+  /** Several options can be picked (else one); the user can always write their own answer. */
+  multiple: boolean;
+}
+
 export interface ToolResult {
   result: unknown;
   summary: string;
   change?: Change;
+  question?: Question;
 }
 
 export interface ToolContext {
@@ -123,6 +132,10 @@ const MAX_GROUPS = 1000;
 const DEFAULT_GROUPS = 100;
 /** analyze_calendar: days per call at most (about ten years). */
 const MAX_ANALYZE_DAYS = 3700;
+/** ask_user: options per question, and characters of the question and of an option. */
+const MAX_OPTIONS = 8;
+const MAX_QUESTION = 500;
+const MAX_OPTION = 150;
 const TX_COLUMNS = [
   "id",
   "date",
@@ -938,6 +951,45 @@ export const TOOLS: Record<string, Tool> = {
         summary: results.length === 1 && last.value !== undefined && !Array.isArray(last.value)
           ? `${last.expression.slice(0, 60)} = ${last.value}`
           : `${results.length} ${results.length === 1 ? "result" : "results"}`,
+      });
+    },
+  },
+
+  ask_user: {
+    spec: {
+      name: "ask_user",
+      description:
+        'Asks the user a question with answers to pick from, when you need their decision or a detail to go on (which of several matches, which option they prefer, their OK for a bigger change). Give 2 to 8 short, distinct options; multiple: true lets them pick several. They can always write their own answer instead, so don\'t add an "Other" option. The answer comes back as this tool\'s result: {"selected": [...]} and/or {"ownAnswer": "..."}, or {"skipped": true} when they wrote a new message instead. Ask one question at a time; call no other tools after it in the same step.',
+      parameters: {
+        type: "object",
+        properties: {
+          question: { type: "string" },
+          options: { type: "array", items: { type: "string" } },
+          multiple: { type: "boolean", description: "Several answers can be picked" },
+        },
+        required: ["question", "options"],
+      },
+    },
+    run(args) {
+      const question = String(args.question ?? "").trim();
+      if (!question) throw new HttpError(400, "question is required");
+      if (question.length > MAX_QUESTION) {
+        throw new HttpError(400, `question takes at most ${MAX_QUESTION} characters`);
+      }
+      if (!Array.isArray(args.options)) throw new HttpError(400, "options must be a list");
+      const options = [...new Set(args.options.map((o) => String(o ?? "").trim()))]
+        .filter(Boolean);
+      if (options.length < 2 || options.length > MAX_OPTIONS) {
+        throw new HttpError(400, `Give 2 to ${MAX_OPTIONS} different options`);
+      }
+      if (options.some((o) => o.length > MAX_OPTION)) {
+        throw new HttpError(400, `An option takes at most ${MAX_OPTION} characters`);
+      }
+      const multiple = args.multiple === true;
+      return Promise.resolve({
+        result: { asked: true },
+        summary: question,
+        question: { question, options, multiple },
       });
     },
   },

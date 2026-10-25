@@ -45,6 +45,16 @@ export function transcript(items: Item[], result: (id: string) => string | undef
       }
       case "change":
         return `✅ ${item.summary}${item.undone ? ` (${t("chat.undone")})` : ""}`;
+      case "question": {
+        const picked = item.answer?.selected ?? [];
+        const lines = item.options.map((o) => `- [${picked.includes(o) ? "x" : " "}] ${o}`);
+        const answer = item.answer?.text
+          ? `**${t("chat.copy.you")}:** ${item.answer.text}`
+          : item.skipped
+          ? `(${t("chat.question.skipped")})`
+          : "";
+        return [`**❓ ${item.question}**`, ...lines, answer].filter(Boolean).join("\n");
+      }
       case "error":
         return `⚠️ ${item.text}`;
     }

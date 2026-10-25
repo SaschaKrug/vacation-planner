@@ -170,6 +170,14 @@ export interface UndoStep {
   body?: unknown;
 }
 
+/** A question of the assistant: pick one option (or several) or write an own answer. */
+export interface ChatQuestion {
+  id: string;
+  question: string;
+  options: string[];
+  multiple: boolean;
+}
+
 export type ChatEvent =
   | { event: "text"; data: { delta: string } }
   | { event: "tool"; data: { id: string; name: string; args: Record<string, unknown> } }
@@ -184,6 +192,8 @@ export type ChatEvent =
     };
   }
   | { event: "messages"; data: { messages: ChatMessage[] } }
+  /** The assistant asks the user; `id` is the tool call the answer goes to. The turn ends. */
+  | { event: "question"; data: ChatQuestion }
   | { event: "done"; data: Record<string, never> }
   /** The server ran out of time, or a model call failed (`retry`): send the next request. */
   | { event: "continue"; data: { retry?: boolean; message?: string } }
