@@ -10,6 +10,7 @@
 //   "calculate <expression>"              -> calculate
 //   "analyze <dimension>"                 -> analyze_transactions grouped by it, this year
 //   a URL                                 -> fetch_page
+//   "ask" / "ask several"                 -> ask_user: where to go (pick one / several)
 //   "keep looking"                        -> get_calendar again and again, until tools are off
 //   "say nothing"                         -> get_calendar, then no words until tools are off
 //   "stay silent"                         -> no words at all
@@ -165,7 +166,13 @@ export async function mockAi(req: Request): Promise<Response> {
   if (last.role === "tool") {
     const result = JSON.parse(textOf(last.content) || "{}");
     if (result.error) return reply(stream, `That didn't work: ${result.error}`);
-    const text = result.changed !== undefined
+    const text = result.skipped
+      ? "You skipped my question."
+      : result.selected || result.ownAnswer
+      ? `You answered: ${
+        [...(result.selected ?? []), result.ownAnswer].filter(Boolean).join(", ")
+      }.`
+      : result.changed !== undefined
       ? `Done: ${result.changed} days changed.`
       : result.results?.[0]?.expression !== undefined
       ? result.results.map((r: any) => `${r.expression} = ${r.value ?? r.error}`).join("; ")
@@ -241,6 +248,16 @@ export async function mockAi(req: Request): Promise<Response> {
     });
   }
   if (url) return reply(stream, "", { name: "fetch_page", args: { url } });
+  if (/^(ask|frag)\b/.test(lower)) {
+    return reply(stream, "Let me ask first.", {
+      name: "ask_user",
+      args: {
+        question: "Where would you like to go?",
+        options: ["Beach", "Mountains", "City"],
+        multiple: /several|mehrere/.test(lower),
+      },
+    });
+  }
   if (/^(search|suche)\b/.test(lower) && tools.has("web_search")) {
     return reply(stream, "", { name: "web_search", args: { query: text.replace(/^\S+\s*/, "") } });
   }

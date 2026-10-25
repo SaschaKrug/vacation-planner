@@ -9,6 +9,7 @@ import {
   ApiError,
   type ChatEvent,
   type ChatMessage,
+  type ChatQuestion,
   type UndoStep,
 } from "@/lib/api";
 import { getLang, t } from "@/lib/i18n";
@@ -43,7 +44,15 @@ export type Item =
     undo: UndoStep[];
     undone?: boolean;
   }
+  | (ChatQuestion & {
+    kind: "question";
+    /** What the user picked and wrote; `skipped` when they wrote a new message instead. */
+    answer?: { selected: string[]; text?: string };
+    skipped?: boolean;
+  })
   | { kind: "error"; text: string };
+
+export type QuestionItem = Item & { kind: "question" };
 
 /** What a running turn is doing right now, for the status line under the chat. */
 export type Activity =
@@ -66,6 +75,11 @@ const MAX_IMAGES = 8;
 const MAX_TOOL_RESULT = 2000;
 /** Times a turn is tried again after a request failed or broke off, before the chat says so. */
 const MAX_RETRIES = 5;
+/** What the model learns about a question the user didn't answer. */
+const SKIPPED = JSON.stringify({
+  skipped: true,
+  note: "The user didn't pick an answer and wrote a new message instead, which may answer it.",
+});
 /** What the model learns about a tool that was running when a request broke off. */
 const INTERRUPTED = JSON.stringify({
   error: "Interrupted: this may or may not have been done. Check before doing it again.",
@@ -247,11 +261,50 @@ export class ChatStore {
           : { kind: a.kind, name: a.name }
       );
     }
+    // A new message instead of an answer: the question stays unanswered.
+    const open = this.openQuestion(c);
+    if (open) this.closeQuestion(c, open);
     c.items = [...c.items, item];
     c.history = [...c.history, {
       role: "user",
       content: attachments.length ? toParts(message, attachments) : message,
     }];
+    await this.run(c);
+  }
+
+  /** The chat's question that still waits for an answer (the turn goes on with it). */
+  openQuestion(chat = this.current): QuestionItem | undefined {
+    const q = chat?.items.findLast((it) => it.kind === "question");
+    if (!chat || q?.kind !== "question" || q.answer || q.skipped) return undefined;
+    return chat.history.some((m) => m.role === "tool" && m.tool_call_id === q.id) ? undefined : q;
+  }
+
+  /** Answers the open question of the current chat, and the assistant goes on. */
+  async answer(selected: string[], text: string) {
+    const c = this.current;
+    const q = this.openQuestion(c);
+    const own = text.trim();
+    if (!c || !q || this.busy || (!selected.length && !own)) return;
+    this.closeQuestion(c, q, { selected, ...(own ? { text: own } : {}) });
+    await this.run(c);
+  }
+
+  /** Gives a question its answer (or none: skipped), in the chat and in the history. */
+  private closeQuestion(c: Chat, q: QuestionItem, answer?: QuestionItem["answer"]) {
+    c.items = c.items.map((
+      it,
+    ) => (it === q ? { ...q, ...(answer ? { answer } : { skipped: true }) } : it));
+    const content = answer
+      ? JSON.stringify({
+        ...(answer.selected.length ? { selected: answer.selected } : {}),
+        ...(answer.text ? { ownAnswer: answer.text } : {}),
+      })
+      : SKIPPED;
+    c.history = [...c.history, { role: "tool", tool_call_id: q.id, content }];
+  }
+
+  /** Runs the turn: sends the history and shows the streamed answer, until it is complete. */
+  private async run(c: Chat) {
     c.updatedAt = Date.now();
     this.busy = true;
     this.activity = { kind: "thinking", at: Date.now() };
@@ -328,6 +381,12 @@ export class ChatStore {
             undo: e.data.undo,
           }]);
           this.onChange(e.data.kind);
+          break;
+        case "question":
+          // The turn waits for the user's answer ("done" follows).
+          ended = true;
+          answer = null;
+          update((items) => [...items, { kind: "question", ...e.data }]);
           break;
         case "messages":
           doing("thinking");
@@ -437,7 +496,7 @@ export class ChatStore {
       doing("thinking");
     }
     const last = c.history.at(-1);
-    if (last && (last.role !== "assistant" || last.tool_calls?.length)) {
+    if (last && (last.role !== "assistant" || last.tool_calls?.length) && !this.openQuestion(c)) {
       // Stopped before the answer: keep the history valid for the next turn.
       c.history = [...c.history, { role: "assistant", content: "(stopped)" }];
     }
@@ -472,6 +531,8 @@ export class ChatStore {
       chat.items = chat.items.map((
         it,
       ) => (it === item ? { ...item, undone: true } : it));
+      const open = this.openQuestion(chat);
+      if (open) this.closeQuestion(chat, open);
       // Tell the assistant, so it doesn't assume the change is still there.
       chat.history = [
         ...chat.history,

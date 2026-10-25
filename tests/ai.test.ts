@@ -2,6 +2,7 @@ import { assert, assertEquals, assertMatch } from "jsr:@std/assert@1";
 import { mockAi } from "../dev/mock_ai.ts";
 import { parseAnswer } from "../supabase/functions/_shared/ai/categorize.ts";
 import { htmlToText, isPrivateAddress } from "../supabase/functions/_shared/ai/net.ts";
+import { runTool } from "../supabase/functions/_shared/ai/tools.ts";
 import { similarKey } from "../supabase/functions/_shared/finance.ts";
 import { createHandler, type HandlerOptions } from "../supabase/functions/_shared/handler.ts";
 import { MemoryRateLimiter } from "../supabase/functions/_shared/rate_limit.ts";
@@ -285,6 +286,67 @@ Deno.test("big changes need the user's confirmation first", async () => {
   assertMatch(result.summary, /Ask the user to confirm/);
   assert(!ev.some((e) => e.event === "change"));
   assertEquals((await t.call("GET", `/families/${t.f.id}/entries?year=2026`)).data, {});
+});
+
+Deno.test("the assistant asks a question and goes on with the answer", async () => {
+  const t = await configured({}, { allowWrites: false });
+  const user = { role: "user", content: "ask several" };
+  const ev = await chat(t, user.content);
+  // The model is told to ask rather than guess.
+  assertMatch(aiBody.messages[0].content, /## Ask instead of guessing/);
+  // The question ends the turn, without the call's result: that is the user's answer.
+  assertEquals(ev.map((e) => e.event).filter((n) => n !== "text"), [
+    "messages",
+    "question",
+    "done",
+  ]);
+  const added = addedOf(ev);
+  assertEquals(added.length, 1);
+  const call = added[0].tool_calls[0];
+  assertEquals(call.function.name, "ask_user");
+  assertEquals(ev.find((e) => e.event === "question")!.data, {
+    id: call.id,
+    question: "Where would you like to go?",
+    options: ["Beach", "Mountains", "City"],
+    multiple: true,
+  });
+
+  // The app adds the answer as the result and continues the turn.
+  const answer = { selected: ["Beach", "City"], ownAnswer: "A lake" };
+  const history = [user, ...added, {
+    role: "tool",
+    tool_call_id: call.id,
+    content: JSON.stringify(answer),
+  }];
+  const res = await t.call("POST", `${t.ai}/chat`, { messages: history, continue: true });
+  assertEquals(res.status, 200, res.data);
+  const next = events(res.data);
+  assert(next.some((e) => e.event === "done"));
+  assertEquals(
+    next.filter((e) => e.event === "text").map((e) => e.data.delta).join(""),
+    "You answered: Beach, City, A lake.",
+  );
+});
+
+Deno.test("questions need a text and 2 to 8 different options", async () => {
+  const ask = (args: unknown) =>
+    runTool("ask_user", JSON.stringify(args), {} as any, new Set(["ask_user"]));
+  const ok = await ask({ question: " Which one? ", options: ["A", " B", "A", ""] });
+  assertEquals(ok.ok, true);
+  assertEquals(ok.question, { question: "Which one?", options: ["A", "B"], multiple: false });
+  for (
+    const bad of [
+      { question: "", options: ["A", "B"] },
+      { question: "Which?", options: ["A", "A"] },
+      { question: "Which?", options: "A, B" },
+      { question: "Which?", options: ["1", "2", "3", "4", "5", "6", "7", "8", "9"] },
+      { question: "Which?", options: ["A", "B".repeat(151)] },
+    ]
+  ) {
+    const res = await ask(bad);
+    assertEquals(res.ok, false, JSON.stringify(bad));
+    assertEquals(res.question, undefined);
+  }
 });
 
 Deno.test("with changes switched off, the assistant only gets read tools", async () => {
