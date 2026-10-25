@@ -254,7 +254,7 @@ changing the edit id.
 | `DELETE /families/{id}/finance` | Delete all transactions, accounts, categories, saved CSV mappings and the currency; returns the (empty) overview |
 | `PATCH /families/{id}/finance/settings` | `{"currency": "EUR"}` (ISO 4217) and/or `{"csvMappings": [...]}` |
 | `POST /families/{id}/finance/accounts` | Add `{"name", "color", "icon", "openingCents"}` |
-| `PATCH` / `DELETE /families/{id}/finance/accounts/{account}` | Change or delete (its transactions keep their rows, without an account); by id or name |
+| `PATCH` / `DELETE /families/{id}/finance/accounts/{account}` | Change or delete (deletes its transactions too; the response has their count); by id or name |
 | `POST /families/{id}/finance/categories` | Add `{"name", "color", "icon", "kind": "income" \| "expense" \| "both"}` |
 | `PATCH` / `DELETE /families/{id}/finance/categories/{category}` | Change or delete (its transactions become uncategorized); by id or name |
 | `POST /families/{id}/finance/categories/defaults` | Add the default categories the family doesn't have: `{"lang": "de"}` |

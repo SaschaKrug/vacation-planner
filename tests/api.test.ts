@@ -1452,13 +1452,28 @@ Deno.test("manages finance accounts with balances", async () => {
   assertEquals((await call("PATCH", `${view}/accounts/cash`, { name: "B" })).status, 403);
   assertEquals((await call("DELETE", `${view}/accounts/cash`)).status, 403);
 
-  // Deleting an account keeps its transactions, without an account.
-  assertEquals((await call("DELETE", `${f}/accounts/savings`)).data, { deleted: "savings" });
+  // Deleting an account deletes its transactions too.
+  assertEquals((await call("DELETE", `${f}/accounts/savings`)).data, {
+    deleted: "savings",
+    transactions: 1,
+  });
   assertEquals((await call("DELETE", `${f}/accounts/savings`)).status, 404);
   const rows = (await call("GET", `${f}/transactions?account=none`)).data.transactions;
-  assertEquals(rows.map((t: any) => t.amountCents), [-99, 5000]);
+  assertEquals(rows.map((t: any) => t.amountCents), [-99]);
   const checking = (await call("GET", `${f}/transactions?account=checking`)).data;
   assertEquals(checking.transactions.map((t: any) => t.accountId), ["checking"]);
+});
+
+Deno.test("deleting an account leaves the other leg of its transfers alone", async () => {
+  const { call, f, add, ops, list } = await accountsFamily();
+  const [out, into] = await add(
+    { date: "2026-03-10", amountCents: -50000, accountId: "checking" },
+    { date: "2026-03-11", amountCents: 50000, accountId: "savings" },
+  );
+  await ops({ action: "link", ids: [out, into] });
+  assertEquals((await call("DELETE", `${f}/accounts/savings`)).data.transactions, 1);
+  const rows = (await list()).transactions;
+  assertEquals(rows.map((t: any) => [t.id, t.transferId]), [[out, null]]);
 });
 
 Deno.test("transfers count once by their net", async () => {

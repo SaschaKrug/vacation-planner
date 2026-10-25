@@ -221,6 +221,6 @@ optional) combines every suggested transfer in the range; the response has \`lin
 
 Accounts: \`POST ${f}/accounts\` \`{"name", "color": "#22c55e", "icon", "openingCents"}\`,
 \`PATCH ${f}/accounts/<id>\` with any of these and \`position\`, \`DELETE ${f}/accounts/<id>\`
-(its transactions stay, without an account).
+(its transactions are deleted too).
 `;
 }
