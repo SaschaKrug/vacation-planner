@@ -179,8 +179,8 @@ export type ChatEvent =
   }
   | { event: "messages"; data: { messages: ChatMessage[] } }
   | { event: "done"; data: Record<string, never> }
-  /** The server ran out of time: send the next request (with `continue: true`) right away. */
-  | { event: "continue"; data: Record<string, never> }
+  /** The server ran out of time, or a model call failed (`retry`): send the next request. */
+  | { event: "continue"; data: { retry?: boolean; message?: string } }
   | { event: "error"; data: { message: string } };
 
 export class ApiError extends Error {

@@ -34,7 +34,9 @@ const HAND_OFF_MS = 90_000;
 const DEADLINE_MS = 130_000;
 const MODEL_TIMEOUT_MS = 120_000;
 const NO_ANSWER = "(The model gave no answer.)";
-const TOO_SLOW = "The AI model took too long to answer. Ask it to go on.";
+const TOO_SLOW = "The AI model took too long to answer.";
+/** Times a model that ended without a word is asked again for its answer. */
+const MAX_NUDGES = 5;
 
 const WRAP_UP = `
 
@@ -218,8 +220,9 @@ function cleanParts(raw: unknown[]): ContentPart[] {
 /**
  * Runs the tool loop and emits: "text" {delta}, "tool" {id, name, args}, "tool_result"
  * {id, name, ok, summary}, "change" {id, kind, summary, undo}, "messages" {messages} (what the
- * app appends to its history) and "done", "error" {message} or "continue" {}: time is nearly
- * up, so the app sends the history again with `continue: true` and the turn goes on there.
+ * app appends to its history, after every step) and "done" or "continue" {retry?, message?}:
+ * time is nearly up, or a model call failed (`retry`, with the reason), so the app sends the
+ * history again and the turn goes on there.
  */
 export async function runChat(opts: {
   provider: Provider;
@@ -248,23 +251,30 @@ export async function runChat(opts: {
     messages.push(m);
     added.push(m);
   };
+  // The app gets each step's messages when it is done, so a request that is cut off loses no
+  // more than the step that was running.
+  let sent = 0;
+  const flush = () => {
+    if (added.length > sent) emit("messages", { messages: added.slice(sent) });
+    sent = added.length;
+  };
   // Steps count across requests: the tool rounds since the user's message.
   const turn = opts.history.findLastIndex((m) => m.role === "user");
   const used = opts.history.slice(turn + 1).filter((m) => m.tool_calls?.length).length;
-  let nudged = false;
+  let nudges = 0;
 
   try {
     for (let step = used;; step++) {
       // Every request takes at least one step, then hands off before time runs out (not while
       // asking for an answer: the history may end with the user's message then).
-      if (step > used && !nudged && Date.now() - started >= handOffMs) {
-        emit("messages", { messages: added });
+      if (step > used && !nudges && Date.now() - started >= handOffMs) {
+        flush();
         emit("continue", {});
         return;
       }
       const last = step >= MAX_STEPS - 1;
       // The last call of a turn gets no tools, so the model answers.
-      const final = last || nudged;
+      const final = last || nudges > 0;
       const body = final
         ? {
           messages: [
@@ -292,13 +302,14 @@ export async function runChat(opts: {
         }
       }
       late = undefined;
-      if (!calls.length && !content.trim() && !final) {
-        // Some models end a turn without a word (e.g. after tool results): ask for the answer.
-        nudged = true;
+      // Some models end a turn without a word (e.g. after tool results), or only call tools
+      // when they mustn't: ask again for the answer.
+      const silent = !content.trim() && (final || !calls.length);
+      if (silent && !last && nudges < MAX_NUDGES) {
+        nudges++;
         continue;
       }
-      if (final && !content.trim()) {
-        // A server that ignores tool_choice "none" may still only call tools, or stay silent.
+      if (silent) {
         content = last ? OUT_OF_STEPS : NO_ANSWER;
         emit("text", { delta: content });
       }
@@ -329,8 +340,9 @@ export async function runChat(opts: {
           : text;
         push({ role: "tool", tool_call_id: call.id, content });
       }
+      flush();
     }
-    emit("messages", { messages: added });
+    flush();
     emit("done", {});
   } catch (err) {
     if (signal?.aborted) return;
@@ -340,9 +352,10 @@ export async function runChat(opts: {
       ? err.message
       : "The assistant failed";
     if (!(err instanceof HttpError) && !late?.aborted) console.error(err);
-    // Keep what happened so far (changes may have been made) and report the error.
-    emit("messages", { messages: added });
-    emit("error", { message });
+    // Only a model call fails (tools report their errors to the model), so the steps so far are
+    // whole: the app keeps them and tries the failed step again with a new request.
+    flush();
+    emit("continue", { retry: true, message });
   }
 }
 

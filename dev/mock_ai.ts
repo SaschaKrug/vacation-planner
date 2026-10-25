@@ -12,6 +12,8 @@
 //   "say nothing"                         -> get_calendar, then no words until tools are off
 //   "stay silent"                         -> no words at all
 //   "take your time"                      -> answers after 200 ms
+//   "keep looking, then fail"             -> get_calendar, then fails (503)
+//   "calendar, then fail 2 times"         -> get_calendar, fails twice (503), then answers
 // Asked to sort transactions into categories (the categorize prompt), it picks the category
 // whose id or name occurs in a row's payee or description, searching the web once for a payee
 // it can't place.
@@ -93,6 +95,9 @@ function categorize(stream: boolean, system: string, messages: Msg[], canSearch:
   return reply(stream, "```json\n" + JSON.stringify(answer) + "\n```");
 }
 
+/** How often a "then fail N times" message failed so far. */
+const failed = new Map<string, number>();
+
 export async function mockAi(req: Request): Promise<Response> {
   const path = new URL(req.url).pathname.replace(/^.*\/v1/, "");
   if (req.method === "GET" && path === "/models") {
@@ -138,6 +143,14 @@ export async function mockAi(req: Request): Promise<Response> {
       });
     });
     return reply(stream, "Sorry for the wait.");
+  }
+  const fails = /then fail(?: (\d+) times)?/i.exec(asked);
+  if (fails && last.role === "tool") {
+    const n = (failed.get(asked) ?? 0) + 1;
+    failed.set(asked, n);
+    if (!fails[1] || n <= Number(fails[1])) {
+      return Response.json({ error: { message: "Overloaded" } }, { status: 503 });
+    }
   }
   if (/keep looking/i.test(asked)) {
     if (body.tool_choice === "none") return reply(stream, "Out of steps: here is what I have.");
