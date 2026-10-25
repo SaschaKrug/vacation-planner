@@ -130,6 +130,8 @@ export interface ChatRow {
   notes: string[];
   /** How full the model's context was at the last step: {used, max} tokens. */
   usage: Record<string, unknown> | null;
+  /** Messages written while a turn ran, to go next in order (each has an `id`). */
+  queue: Record<string, unknown>[];
   /** Counts the changes of the items. */
   rev: number;
   created_at: string;
@@ -374,6 +376,11 @@ export interface Store {
     until: string,
     mode: "start" | "resume",
   ): Promise<ChatRow | null>;
+  /** Adds a message to the end of the chat's queue; the chat after, or null if it is gone. */
+  queueChatMessage(id: string, entry: Record<string, unknown>): Promise<ChatRow | null>;
+  /** Takes the message `entryId` out of the chat's queue; the chat after, or null if the
+   *  message (or the chat) is gone, so only one of two callers gets it. */
+  unqueueChatMessage(id: string, entryId: string): Promise<ChatRow | null>;
   /** Deletes the chat with its items and messages. */
   deleteChat(id: string): Promise<void>;
   /** The items changed after revision `since` (all without), by position. */
@@ -903,6 +910,20 @@ export class MemoryStore implements Store {
     return Promise.resolve(structuredClone(c));
   }
 
+  queueChatMessage(id: string, entry: Record<string, unknown>) {
+    const c = this.chats.get(id);
+    if (!c) return Promise.resolve(null);
+    c.queue = [...c.queue, structuredClone(entry)];
+    return Promise.resolve(structuredClone(c));
+  }
+
+  unqueueChatMessage(id: string, entryId: string) {
+    const c = this.chats.get(id);
+    if (!c?.queue.some((e) => e.id === entryId)) return Promise.resolve(null);
+    c.queue = c.queue.filter((e) => e.id !== entryId);
+    return Promise.resolve(structuredClone(c));
+  }
+
   deleteChat(id: string) {
     this.chats.delete(id);
     this.chatItems.delete(id);
@@ -992,7 +1013,8 @@ export class MemoryStore implements Store {
     for (const p of all.passkeys ?? []) this.passkeys.set(p.id, { ...p });
     for (const m of all.members ?? []) this.members.set(`${m.family_id}|${m.user_id}`, { ...m });
     for (const { chat, items, messages } of all.chats ?? []) {
-      this.chats.set(chat.id, { ...chat });
+      // Saved before chats had a queue: an empty one.
+      this.chats.set(chat.id, { ...chat, queue: chat.queue ?? [] });
       this.chatItems.set(chat.id, new Map(items.map((r) => [r.seq, r])));
       this.chatMessages.set(chat.id, messages);
     }

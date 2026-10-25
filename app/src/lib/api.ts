@@ -183,6 +183,13 @@ export interface ChatUsage {
   max: number;
 }
 
+/** A message written while the assistant answered: it goes next (attachments by name). */
+export interface ChatQueued {
+  id: string;
+  text: string;
+  attachments?: { kind: "image" | "file"; name: string }[];
+}
+
 /** A chat as the list shows it; the server runs its turns. */
 export interface ChatSummary {
   id: string;
@@ -191,6 +198,8 @@ export interface ChatSummary {
   activity: ChatActivity | null;
   /** At its last step (null before the first). */
   usage: ChatUsage | null;
+  /** Messages waiting for the running turn to end, in order. */
+  queued?: ChatQueued[];
   updatedAt: string;
 }
 
@@ -648,6 +657,18 @@ export const api = {
     onEvent: (e: ChatEvent<Item>) => void,
     signal?: AbortSignal,
   ) => stream("POST", `${fam(token)}/ai/chats/${enc(id)}/messages`, input, onEvent, signal),
+  /** A message while a turn runs: it waits on the server and goes next (follow the chat). */
+  queueMessage: (token: string, id: string, input: ChatInput) =>
+    request<{ chat: ChatSummary; id: string }>(
+      "POST",
+      `${fam(token)}/ai/chats/${enc(id)}/queue`,
+      input,
+    ),
+  /** Takes back a waiting message (unless its turn started already). */
+  unqueueMessage: (token: string, id: string, queuedId: string) =>
+    request<{ chat: ChatSummary }>("POST", `${fam(token)}/ai/chats/${enc(id)}/unqueue`, {
+      id: queuedId,
+    }),
   /** Answers the assistant's question `questionId`; the turn goes on. */
   answerQuestion: <Item>(
     token: string,

@@ -451,3 +451,116 @@ Deno.test("imports a chat the device kept before", async () => {
   await t.call("POST", `${t.ai}/chats/${id}/messages`, { text: "again", ...CONTEXT });
   assertEquals(aiBody.messages.slice(1).map((m: any) => m.content), ["hi", "Hello!", "again"]);
 });
+
+Deno.test("messages written while the assistant answers wait, then go next", async () => {
+  const t = await setup();
+  assertEquals(await t.fire("POST", `${t.ai}/chats`, { text: "take your time", ...CONTEXT }), 200);
+  const id = (await t.call("GET", `${t.ai}/chats`)).data.chats[0].id;
+  // A follower from the start sees both turns, and only then the end.
+  const following = t.call("GET", `${t.ai}/chats/${id}/events?since=0`);
+  const first = await t.call("POST", `${t.ai}/chats/${id}/queue`, {
+    text: "and then?",
+    attachments: [{ kind: "file", name: "list.csv", text: "a,b" }],
+    ...CONTEXT,
+  });
+  assertEquals(first.status, 202, JSON.stringify(first.data));
+  assertEquals(first.data.chat.status, "running");
+  assertEquals(first.data.chat.queued, [{
+    id: first.data.id,
+    text: "and then?",
+    attachments: [{ kind: "file", name: "list.csv" }],
+  }]);
+  const second = await t.call("POST", `${t.ai}/chats/${id}/queue`, {
+    text: "last",
+    ...CONTEXT,
+    page: "finance",
+  });
+  assertEquals(second.data.chat.queued.map((q: any) => q.text), ["and then?", "last"]);
+  const s = await idle(t, id);
+  assertEquals(shown(s.items), [
+    "user: take your time",
+    "assistant: Sorry for the wait.",
+    "user: and then?",
+    "assistant: Mock reply: and then?\nAttached file “list.csv”:\n```\na,b\n```",
+    "user: last",
+    "assistant: Mock reply: last",
+  ]);
+  assertEquals(s.items[2].attachments, [{ kind: "file", name: "list.csv" }]);
+  assertEquals(s.chat.queued, []);
+  assertEquals(aiBody.messages.slice(1).map((m: any) => m.role), [
+    "user",
+    "assistant",
+    "user",
+    "assistant",
+    "user",
+  ]);
+  // A turn goes with where the user was when they wrote its message.
+  assertEquals(t.store.chats.get(id)!.context.page, "finance");
+  const ev = (await following).data as Event[];
+  assertEquals(ev.at(-1)!.event, "end");
+  assertEquals(shown(replay(ev)), shown(s.items));
+});
+
+Deno.test("a waiting message can be taken back, and stopping goes on with the next", async () => {
+  const t = await setup();
+  assertEquals(await t.fire("POST", `${t.ai}/chats`, { text: "take your time", ...CONTEXT }), 200);
+  const id = (await t.call("GET", `${t.ai}/chats`)).data.chats[0].id;
+  const queue = (text: string) => t.call("POST", `${t.ai}/chats/${id}/queue`, { text, ...CONTEXT });
+  const a = (await queue("never mind")).data.id;
+  await queue("hello");
+  const back = await t.call("POST", `${t.ai}/chats/${id}/unqueue`, { id: a });
+  assertEquals(back.status, 200);
+  assertEquals(back.data.chat.queued.map((q: any) => q.text), ["hello"]);
+  // Taken back already: nothing changes.
+  const again = await t.call("POST", `${t.ai}/chats/${id}/unqueue`, { id: a });
+  assertEquals(again.data.chat.queued.map((q: any) => q.text), ["hello"]);
+  // Only so many can wait.
+  for (let i = 1; i < 10; i++) assertEquals((await queue(`more ${i}`)).status, 202);
+  assertEquals((await queue("too many")).status, 409);
+  for (const q of (await state(t, id)).chat.queued.slice(1)) {
+    await t.call("POST", `${t.ai}/chats/${id}/unqueue`, { id: q.id });
+  }
+  // Stopping ends the running answer; the waiting message goes on.
+  assertEquals((await t.call("POST", `${t.ai}/chats/${id}/stop`)).status, 200);
+  const s = await idle(t, id);
+  assertEquals(shown(s.items), [
+    "user: take your time",
+    "user: hello",
+    "assistant: Mock reply: hello",
+  ]);
+  assertEquals(aiBody.messages.slice(1), [
+    { role: "user", content: "take your time" },
+    { role: "assistant", content: "(stopped)" },
+    { role: "user", content: "hello" },
+  ]);
+  // Another user's chat can't be queued to.
+  const other = await addUser(t.store, "other@test");
+  await addMember(t.store, t.f.id, other.user.id, "editor");
+  assertEquals(
+    (await t.as(other.token)("POST", `${t.ai}/chats/${id}/queue`, { text: "x" })).status,
+    404,
+  );
+});
+
+Deno.test("a message queued to an idle chat starts its turn, also if it was left waiting", async () => {
+  const t = await setup();
+  const { id } = await start(t, "hello");
+  const res = await t.call("POST", `${t.ai}/chats/${id}/queue`, { text: "again", ...CONTEXT });
+  assertEquals(res.status, 202);
+  assertEquals(res.data.chat.status, "running");
+  let s = await idle(t, id);
+  assertEquals(shown(s.items).slice(-2), ["user: again", "assistant: Mock reply: again"]);
+  // As if the invocation that ended a turn died before the waiting message started: whoever
+  // looks at the chat starts it.
+  await t.store.queueChatMessage(id, {
+    id: "q1",
+    item: { kind: "user", text: "left behind" },
+    content: "left behind",
+    context: CONTEXT,
+  });
+  s = await idle(t, id);
+  assertEquals(shown(s.items).slice(-2), [
+    "user: left behind",
+    "assistant: Mock reply: left behind",
+  ]);
+});
