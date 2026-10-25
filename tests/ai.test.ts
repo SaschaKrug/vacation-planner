@@ -563,6 +563,37 @@ Deno.test("chat needs settings, the edit link and a clean history", async () => 
   );
 });
 
+Deno.test("long messages: typed as long as an attached text, older ones cut", async () => {
+  const t = await configured();
+  // A typed message may be as long as an attached text…
+  const long = "x".repeat(60_000);
+  await chat(t, long);
+  assertEquals(aiBody.messages.at(-1).content, long);
+  // …but not longer.
+  const res = await t.call("POST", `${t.ai}/chat`, {
+    messages: [{ role: "user", content: long + "x" }],
+  });
+  assertEquals([res.status, res.data.error], [
+    400,
+    "A message is too long (max. 60,000 characters)",
+  ]);
+
+  // Older messages over the limits are cut instead of blocking the chat.
+  await chat(t, "", {
+    messages: [
+      { role: "user", content: long + "x" },
+      { role: "assistant", content: "y".repeat(20_001) },
+      { role: "user", content: [{ type: "text", text: long + "z" }] },
+      { role: "assistant", content: "ok" },
+      { role: "user", content: "hi" },
+    ],
+  });
+  const [, first, answer, parts] = aiBody.messages;
+  assertEquals(first.content, long + "…(truncated)");
+  assertEquals(answer.content, "y".repeat(20_000) + "…(truncated)");
+  assertEquals(parts.content[0].text, long + "…(truncated)");
+});
+
 Deno.test("user messages can carry attached files and images", async () => {
   const t = await configured();
   // A 1×1 PNG.

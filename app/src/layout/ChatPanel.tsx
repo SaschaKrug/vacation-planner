@@ -131,6 +131,16 @@ export function ChatPanel() {
   );
 }
 
+/** Pasted text at least this long is attached as a text file instead. */
+const PASTE_AS_FILE = 2_000;
+
+/** A pasted text as a file, numbered after the pasted texts already attached. */
+function pastedFile(text: string, attached: { name: string }[]) {
+  const base = t("chat.pasted");
+  const n = attached.filter((a) => a.name.startsWith(base)).length;
+  return new File([text], `${base}${n ? ` ${n + 1}` : ""}.txt`, { type: "text/plain" });
+}
+
 function ChatView({ onClose }: { onClose: () => void }) {
   const chat = useChat();
   const [text, setText] = useState("");
@@ -377,13 +387,21 @@ function ChatView({ onClose }: { onClose: () => void }) {
               className="max-h-40 min-h-9 resize-none border-0 bg-transparent p-1.5 shadow-none focus-visible:ring-0 dark:bg-transparent"
               onChange={(e) => setText(e.target.value)}
               onPaste={(e) => {
-                // Screenshots arrive as image files; plain text pastes as usual.
+                // Screenshots arrive as image files; a big text becomes a text file; other
+                // text pastes as usual.
                 const images = Array.from(e.clipboardData.files).filter((f) =>
                   f.type.startsWith("image/")
                 );
-                if (!images.length) return;
+                if (images.length) {
+                  e.preventDefault();
+                  attach(images);
+                  return;
+                }
+                const pasted = e.clipboardData.getData("text/plain");
+                const room = MAX_ATTACHMENTS - attachments.length - pending.length;
+                if (pasted.length < PASTE_AS_FILE || room <= 0) return;
                 e.preventDefault();
-                attach(images);
+                attach([pastedFile(pasted, [...attachments, ...pending])]);
               }}
               onKeyDown={(e) => {
                 if (
