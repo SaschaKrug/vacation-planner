@@ -148,6 +148,10 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   again, here or elsewhere, and it shows what happened meanwhile, or follows the answer live
   while it is still being written; *Stop* ends it from any device. Chats a device kept from
   before move to the server when the chat is first opened there.
+- **Write on while it answers:** a message sent while the assistant is still answering waits
+  under the chat (on the server, so also when the app is closed, and on every device) and goes
+  next once the answer is done; several wait in order (up to 10), and each can be taken back
+  until its turn. *Stop* ends the current answer, and the next waiting message goes on.
 - The server runs the whole turn: the Edge Function talks to the model and runs the tools in the
   background, saves every step, and hands the turn on to a new invocation of itself before the
   platform's time limit (a turn whose invocation died is taken over when someone looks at the
@@ -361,13 +365,15 @@ All are for editors only.
 | `POST /families/{id}/ai/models` | The API's models: `{"models": [...]}`; `{"baseUrl", "apiKey"}` in the body try values before saving them |
 | `POST /families/{id}/ai/test` | One short completion with the saved settings |
 | `POST /families/{id}/ai/categorize` | `{"ids": [...]}` or `{"from", "to", "skip"}`, and `"lang"`: sorts uncategorized transactions (the given ones, at most 200, or those in the range after the first `skip`, at most 200 per request) into categories: like similar earlier transactions where those agree, the rest by the model (with web search if set up; without AI settings this step is skipped) → `{"changed", "matched" (of these, like similar ones), "considered", "remaining", "ai", "inverse", "assignments": [{"id", "categoryId", "source": "similar" \| "ai"}]}`; `remaining` are the range's uncategorized rows not looked at yet (call again with `skip` + the ones left open), `inverse` undoes it via `/finance/transactions` |
-| `GET /families/{id}/ai/chats` | Your chats in the family, the latest first: `{"chats": [{"id", "title", "status": "idle" \| "running", "activity", "usage": {"used", "max"} \| null (the context's tokens in use, and the window), "updatedAt"}]}` |
+| `GET /families/{id}/ai/chats` | Your chats in the family, the latest first: `{"chats": [{"id", "title", "status": "idle" \| "running", "activity", "usage": {"used", "max"} \| null (the context's tokens in use, and the window), "queued": [{"id", "text", "attachments"?: [{"kind", "name"}]}] (messages waiting for the running answer to end), "updatedAt"}]}` |
 | `POST /families/{id}/ai/chats` | Starts a chat: `{"text", "attachments": [{"kind": "file", "name", "text"} \| {"kind": "image", "name", "url": "data:image/…"}], "lang", "today", "year", "page"}` (up to 4 attachments) → `text/event-stream` like `events` below, starting with `chat`. The answer runs on the server: closing the connection doesn't stop it |
 | `GET /families/{id}/ai/chats/{chat}` | `{"chat", "rev", "items": [...]}`: what the chat shows (`user`, `assistant`, `tool`, `change` with `undo`: requests against the family that undo it, `question`, `compacted`: the model gets the chat before it as a summary, `error`) |
 | `GET /families/{id}/ai/chats/{chat}/events?since=` | Follows the chat (`text/event-stream`): `items` `{"rev"?, "items": [{"seq", "item"}]}` (what changed since revision `since`, by position), `delta` `{"seq", "text"}` (text being written), `chat` (status, activity and context usage), then `end` once no answer runs, or `reconnect` (call again with the latest `rev`) |
 | `POST /families/{id}/ai/chats/{chat}/messages` | The next message, like starting a chat (409 while an answer runs); a question waiting for its answer stays unanswered |
+| `POST /families/{id}/ai/chats/{chat}/queue` | A message like `messages`, while an answer runs: it waits and goes next once the answer ends (or right away if none runs) → 202 `{"chat", "id"}`; follow the chat with `events`. At most 10 wait (409) |
+| `POST /families/{id}/ai/chats/{chat}/unqueue` | `{"id"}`: takes back a waiting message (unless its turn started already) → `{"chat"}` |
 | `POST /families/{id}/ai/chats/{chat}/answer` | `{"id", "selected": [...], "text", "lang", "today", "year", "page"}`: answers the assistant's question `id` (options and/or an own answer); the answer goes on |
-| `POST /families/{id}/ai/chats/{chat}/stop` | Stops the running answer; it ends with what it did so far |
+| `POST /families/{id}/ai/chats/{chat}/stop` | Stops the running answer; it ends with what it did so far (a waiting message goes on) |
 | `POST /families/{id}/ai/chats/{chat}/undone` | `{"id"}`: the change `id` of the chat was undone (the assistant hears it with the next message) |
 | `DELETE /families/{id}/ai/chats/{chat}` | Deletes the chat |
 | `POST /families/{id}/ai/chat` | One answer without a stored chat (the caller keeps the history): `{"messages": [...], "lang", "today", "year", "page"}` (OpenAI format, the last one the user's; a user message's `content` may be parts: `{"type": "text", "text"}` and up to 4 `{"type": "image_url", "image_url": {"url": "data:image/png;base64,…"}}`, the newest 8 images are sent) → `text/event-stream` with `text`, `tool`, `tool_result`, `change` (with `undo`: requests against the family that undo it), `messages` (to append to the history), `usage` `{"used", "max"}`, `compacting` / `compacted` `{"summary", "request"?, "keep"}` (the history got too long for the context window: the model went on with the summary instead of all but the newest `keep` messages), `done` / `continue` |

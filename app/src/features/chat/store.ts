@@ -1,6 +1,7 @@
 // The AI chats of one family: kept on the server, which also runs the turns (they go on when
 // the app is closed, and every device sees the same chats). The app lists the chats, shows the
 // open one, and follows it while a turn runs: what changed, and the answer as it is written.
+// A message written meanwhile waits on the server and goes next once the answer is done.
 
 import { toast } from "sonner";
 import type { Attachment } from "@/features/chat/attachments";
@@ -12,6 +13,7 @@ import {
   type ChatEvent,
   type ChatInput,
   type ChatQuestion,
+  type ChatQueued,
   type ChatSummary,
   type ChatUsage,
   type UndoStep,
@@ -78,6 +80,9 @@ export interface Chat {
   rev: number;
   /** How full the model's context is. */
   usage: ChatUsage | null;
+  /** Messages waiting for the running turn to end (ids starting with "local-" are on their
+   *  way to the server). */
+  queued: ChatQueued[];
 }
 
 /** A follow request: how it gets the chat's events. */
@@ -102,6 +107,12 @@ const today = () => {
     String(d.getDate()).padStart(2, "0")
   }`;
 };
+
+/** The messages that wait as the server says, then the ones still on their way to it. */
+const queuedOf = (chat: ChatSummary, before: ChatQueued[]) => [
+  ...(chat.queued ?? []),
+  ...before.filter((q) => q.id.startsWith("local-")),
+];
 
 /** Items the chat shows: blank answers (left by a step that is tried again) aren't. */
 export const visible = (items: Item[]) =>
@@ -245,6 +256,7 @@ export class ChatStore {
         items: s.items,
         rev: s.rev,
         usage: s.chat.usage ?? null,
+        queued: s.chat.queued ?? [],
       };
       this.summary(s.chat);
       this.emit();
@@ -290,9 +302,19 @@ export class ChatStore {
     return { lang: getLang(), today: today(), ...this.context() };
   }
 
+  /** Sends a message; while a turn runs, it waits and goes next (rejects if it couldn't). */
   async send(text: string, attachments: Attachment[] = []) {
     const message = text.trim();
-    if ((!message && !attachments.length) || this.busy) return;
+    if (!message && !attachments.length) return;
+    if (this.busy) {
+      return this.enqueue({
+        id: `local-${crypto.randomUUID()}`,
+        text: message,
+        ...(attachments.length
+          ? { attachments: attachments.map((a) => ({ kind: a.kind, name: a.name })) }
+          : {}),
+      }, this.inputOf(message, attachments));
+    }
     const item: Item = { kind: "user", text: message };
     if (attachments.length) {
       item.attachments = attachments.map((a) =>
@@ -301,15 +323,7 @@ export class ChatStore {
           : { kind: a.kind, name: a.name }
       );
     }
-    const input: ChatInput = {
-      ...this.input(),
-      text: message,
-      attachments: attachments.map((a) =>
-        a.kind === "image"
-          ? { kind: "image", name: a.name, url: a.url }
-          : { kind: "file", name: a.name, text: a.text }
-      ),
-    };
+    const input = this.inputOf(message, attachments);
     // Shown right away; the server sends it back at the same position.
     if (!this.current) {
       this.current = {
@@ -319,6 +333,7 @@ export class ChatStore {
         items: [],
         rev: 0,
         usage: null,
+        queued: [],
       };
     }
     const c = this.current;
@@ -334,6 +349,60 @@ export class ChatStore {
           ? api.sendMessage<Item>(this.token, id, input, onEvent, signal)
           : api.startChat<Item>(this.token, input, onEvent, signal),
     );
+  }
+
+  private inputOf(text: string, attachments: Attachment[]): ChatInput {
+    return {
+      ...this.input(),
+      text,
+      attachments: attachments.map((a) =>
+        a.kind === "image"
+          ? { kind: "image", name: a.name, url: a.url }
+          : { kind: "file", name: a.name, text: a.text }
+      ),
+    };
+  }
+
+  /** A message while the open chat's turn runs: shown as waiting right away, kept on the
+   *  server, which sends it once the turn is over. */
+  private async enqueue(shown: ChatQueued, input: ChatInput) {
+    const c = this.current;
+    if (!c?.id) {
+      // A new chat gets its id with the first answer: nothing to wait in yet.
+      toast(t("chat.queue_wait"));
+      throw new Error(t("chat.queue_wait"));
+    }
+    c.queued = [...c.queued, shown];
+    this.emit();
+    try {
+      const r = await api.queueMessage(this.token, c.id, input);
+      this.summary(r.chat);
+      c.queued = queuedOf(r.chat, c.queued.filter((q) => q !== shown));
+      c.status = r.chat.status;
+      // The turn was over by then: the message started the next one.
+      if (this.current === c && r.chat.status === "running" && !this.following) this.follow(c.id);
+    } catch (err) {
+      c.queued = c.queued.filter((q) => q !== shown);
+      toast((err as Error).message);
+      throw err;
+    } finally {
+      this.emit();
+    }
+  }
+
+  /** Takes back a waiting message of the open chat (unless its turn started already). */
+  async unqueue(id: string) {
+    const c = this.current;
+    if (!c?.id || id.startsWith("local-")) return;
+    c.queued = c.queued.filter((q) => q.id !== id);
+    this.emit();
+    try {
+      const r = await api.unqueueMessage(this.token, c.id, id);
+      c.queued = queuedOf(r.chat, c.queued);
+    } catch (err) {
+      toast((err as Error).message);
+    }
+    this.emit();
   }
 
   /** The open chat's question that waits for an answer (the turn goes on with it). */
@@ -469,6 +538,7 @@ export class ChatStore {
         c.title = e.data.title;
         c.status = e.data.status;
         c.usage = e.data.usage ?? c.usage;
+        c.queued = queuedOf(e.data, c.queued);
         const a = e.data.activity;
         if (!a || e.data.status !== "running") this.activity = null;
         else if (JSON.stringify({ ...this.activity, at: 0 }) !== JSON.stringify({ ...a, at: 0 })) {

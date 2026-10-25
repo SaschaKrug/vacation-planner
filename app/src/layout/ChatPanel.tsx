@@ -2,6 +2,7 @@ import {
   CalendarDays,
   Check,
   CircleAlert,
+  Clock,
   Copy,
   FileText,
   Globe,
@@ -47,6 +48,7 @@ import {
   readAttachment,
 } from "@/features/chat/attachments";
 import { type Item, type ItemAttachment, type QuestionItem, visible } from "@/features/chat/store";
+import type { ChatQueued } from "@/lib/api";
 import { toolDetail, toolLabel } from "@/features/chat/tools";
 import { transcript } from "@/features/chat/transcript";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -171,11 +173,18 @@ function ChatView({ onClose }: { onClose: () => void }) {
   const settings = chat.settings;
   const ready = settings?.configured;
 
+  const filled = !!text.trim() || attachments.length > 0;
+  // While the assistant answers, a message waits and goes next (once the chat has its id).
+  const canSend = !!ready && !pending.length && (!chat.busy || !!current?.id);
+
   const send = (value = text) => {
-    if ((!value.trim() && !attachments.length) || pending.length || chat.busy) {
-      return;
-    }
-    chat.send(value, attachments);
+    if ((!value.trim() && !attachments.length) || !canSend) return;
+    const files = attachments;
+    chat.send(value, files).catch(() => {
+      // It couldn't wait: back in the box, to send again.
+      setText((v) => v || value);
+      setAttachments((list) => (list.length ? list : files));
+    });
     setText("");
     setAttachments([]);
   };
@@ -358,6 +367,13 @@ function ChatView({ onClose }: { onClose: () => void }) {
           );
         })}
         {chat.busy && <ActivityLine />}
+        {current?.queued.map((q) => (
+          <QueuedMessage
+            key={q.id}
+            item={q}
+            onRemove={() => chat.unqueue(q.id)}
+          />
+        ))}
       </div>
 
       <form
@@ -419,7 +435,11 @@ function ChatView({ onClose }: { onClose: () => void }) {
               value={text}
               disabled={!ready}
               aria-label={t("chat.placeholder")}
-              placeholder={ready ? t("chat.placeholder") : t("chat.setup_first")}
+              placeholder={!ready
+                ? t("chat.setup_first")
+                : chat.busy
+                ? t("chat.placeholder_queue")
+                : t("chat.placeholder")}
               className="max-h-40 min-h-9 resize-none border-0 bg-transparent p-1.5 shadow-none placeholder:truncate focus-visible:ring-0 dark:bg-transparent"
               onChange={(e) => setText(e.target.value)}
               onPaste={(e) => {
@@ -440,30 +460,29 @@ function ChatView({ onClose }: { onClose: () => void }) {
                 }
               }}
             />
-            {chat.busy
-              ? (
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="secondary"
-                  aria-label={t("chat.stop")}
-                  title={t("chat.stop")}
-                  onClick={() => chat.stop()}
-                >
-                  <Square className="fill-current" />
-                </Button>
-              )
-              : (
-                <Button
-                  type="submit"
-                  size="icon"
-                  aria-label={t("chat.send")}
-                  disabled={!ready || pending.length > 0 ||
-                    (!text.trim() && !attachments.length)}
-                >
-                  <SendHorizontal />
-                </Button>
-              )}
+            {chat.busy && (
+              <Button
+                type="button"
+                size="icon"
+                variant="secondary"
+                aria-label={t("chat.stop")}
+                title={t("chat.stop")}
+                onClick={() => chat.stop()}
+              >
+                <Square className="fill-current" />
+              </Button>
+            )}
+            {(!chat.busy || filled) && (
+              <Button
+                type="submit"
+                size="icon"
+                aria-label={chat.busy ? t("chat.queue") : t("chat.send")}
+                title={chat.busy ? t("chat.queue") : undefined}
+                disabled={!canSend || !filled}
+              >
+                <SendHorizontal />
+              </Button>
+            )}
           </div>
         </div>
         <ContextMeter />
@@ -672,6 +691,48 @@ function SentAttachment({ attachment: a }: { attachment: ItemAttachment }) {
     >
       <Icon className="size-3.5 shrink-0" />
       <span className="min-w-0 truncate">{a.name}</span>
+    </div>
+  );
+}
+
+/** A message that waits for the answer to end (it goes next); it can be taken back until then. */
+function QueuedMessage({ item, onRemove }: { item: ChatQueued; onRemove: () => void }) {
+  const local = item.id.startsWith("local-");
+  return (
+    <div className="ml-8 flex items-start gap-2 rounded-2xl rounded-br-md border border-dashed border-primary/50 bg-primary/5 px-3 py-2">
+      <div className="min-w-0 flex-1 space-y-1.5">
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <Clock className="size-3 shrink-0" /> {t("chat.queued")}
+        </div>
+        {!!item.attachments?.length && (
+          <div className="flex flex-wrap gap-1.5">
+            {item.attachments.map((a, i) => {
+              const Icon = a.kind === "image" ? ImageIcon : FileText;
+              return (
+                <div
+                  key={i}
+                  className="flex max-w-full items-center gap-1.5 rounded-md bg-muted px-2 py-1 text-xs"
+                  title={a.name}
+                >
+                  <Icon className="size-3.5 shrink-0" />
+                  <span className="min-w-0 truncate">{a.name}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {item.text && <div className="whitespace-pre-wrap">{item.text}</div>}
+      </div>
+      <button
+        type="button"
+        className="-mr-1 rounded p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-40"
+        aria-label={t("chat.unqueue")}
+        title={t("chat.unqueue")}
+        disabled={local}
+        onClick={onRemove}
+      >
+        {local ? <Loader2 className="size-3.5 animate-spin" /> : <X className="size-3.5" />}
+      </button>
     </div>
   );
 }

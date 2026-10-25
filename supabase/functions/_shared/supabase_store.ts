@@ -581,6 +581,20 @@ export class SupabaseStore implements Store {
     return rows[0] ? chatRow(rows[0]) : null;
   }
 
+  async queueChatMessage(id: string, entry: Record<string, unknown>) {
+    const rows = check(
+      await this.db.rpc("ai_chat_queue_push", { p_chat: id, p_entry: entry }),
+    ) as ChatRow[];
+    return rows[0] ? chatRow(rows[0]) : null;
+  }
+
+  async unqueueChatMessage(id: string, entryId: string) {
+    const rows = check(
+      await this.db.rpc("ai_chat_queue_take", { p_chat: id, p_id: entryId }),
+    ) as ChatRow[];
+    return rows[0] ? chatRow(rows[0]) : null;
+  }
+
   async deleteChat(id: string) {
     // Items and messages go with it (ON DELETE CASCADE).
     check(await this.db.from("ai_chats").delete().eq("id", id));

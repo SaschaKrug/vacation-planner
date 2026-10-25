@@ -5,6 +5,8 @@
 // device, follows it: live from the invocation that runs the turn, else from the database. A
 // turn runs as long as the model works on; when the chat gets too long for the model's context
 // window, its older part is condensed into a summary (see context.ts), kept with the messages.
+// Messages written while a turn runs wait in the chat's queue; once the turn is over (answered,
+// stopped or failed), the next one starts a new turn, in a new invocation like a hand-off.
 //
 // Routes under /families/{id}/ai/chats:
 //   GET                    the user's chats
@@ -14,6 +16,8 @@
 //   GET    {chat}/events?since=rev   follows the chat: the items changed since `rev`, live text,
 //                          then "end" once no turn runs (or "reconnect": ask again)
 //   POST   {chat}/messages a message; streams the answer like events
+//   POST   {chat}/queue    a message while a turn runs: it goes next (or now, if none runs)
+//   POST   {chat}/unqueue  takes back a message that waits
 //   POST   {chat}/answer   the answer to the assistant's question; streams like events
 //   POST   {chat}/stop     stops the running turn
 //   POST   {chat}/undone   a change of the chat was undone (the model hears it next time)
@@ -98,6 +102,16 @@ export type Item =
   | { kind: "error"; text: string };
 
 type Attachment = { kind: "image" | "file"; name: string; url?: string };
+type UserItem = Item & { kind: "user" };
+
+/** A message that waits for the running turn to end: what the chat shows, what the model gets,
+ *  and where the user was. */
+interface Queued {
+  id: string;
+  item: UserItem;
+  content: ChatMessage["content"];
+  context: ChatContext;
+}
 type ToolItem = Item & { kind: "tool" };
 type QuestionItem = Item & { kind: "question" };
 
@@ -125,6 +139,8 @@ const MAX_CHATS = 100;
 const MAX_TITLE = 60;
 const MAX_TEXT = 20_000;
 const MAX_ATTACHMENTS = 4;
+/** Messages that can wait in a chat at once. */
+const MAX_QUEUE = 10;
 /** Characters of a tool result the chat shows (copying a chat includes them). */
 const MAX_RESULT_SHOWN = 2000;
 /** Imported chats: items and messages kept (the newest). */
@@ -164,6 +180,8 @@ class LocalRun {
   touched = new Set<number>();
   summary: Summary | null = null;
   ended = false;
+  /** Has the turn look at the chat again now (its queue changed). */
+  refresh = () => {};
 
   publish(e: Live) {
     if (e.type === "chat") this.summary = e.chat;
@@ -181,8 +199,20 @@ export function summaryOf(c: ChatRow) {
     status: c.status,
     activity: c.status === "running" ? c.activity : null,
     usage: (c.usage ?? null) as Usage | null,
+    queued: queuedOf(c),
     updatedAt: c.updated_at,
   };
+}
+
+/** The messages that wait, as the chat shows them (attachments by name only). */
+function queuedOf(c: ChatRow) {
+  return ((c.queue ?? []) as unknown as Queued[]).map(({ id, item }) => ({
+    id,
+    text: item.text,
+    ...(item.attachments?.length
+      ? { attachments: item.attachments.map(({ kind, name }) => ({ kind, name })) }
+      : {}),
+  }));
 }
 
 const leaseUntil = (env: Env) => new Date(Date.now() + (env.leaseMs ?? LEASE_MS)).toISOString();
@@ -203,6 +233,41 @@ function pause(ms: number, signal?: AbortSignal) {
       resolve();
     }
   });
+}
+
+/** The turn is over: answered, or a question waits for the user. */
+function over(items: Item[], messages: StoredMessage[]) {
+  const last = messages.at(-1);
+  return !last || (last.role === "assistant" && !last.tool_calls?.length) ||
+    !!openQuestion(items, messages);
+}
+
+/** What a new message adds: a question that waits stays unanswered, the changes undone since are
+ *  told (so the assistant doesn't assume they are still there), then the message itself. */
+function withMessage(
+  shown: Item[],
+  messages: StoredMessage[],
+  notes: string[],
+  message: { content: ChatMessage["content"]; item: Item },
+) {
+  const add: { messages: ChatMessage[]; items: { seq: number; item: Item }[] } = {
+    messages: [],
+    items: [],
+  };
+  const q = openQuestion(shown, messages);
+  if (q) {
+    add.items.push({ seq: shown.indexOf(q), item: { ...q, skipped: true } });
+    add.messages.push({ role: "tool", tool_call_id: q.id, content: SKIPPED });
+  }
+  for (const note of notes) {
+    add.messages.push(
+      { role: "user", content: `(I undid this change: ${note})` },
+      { role: "assistant", content: "OK." },
+    );
+  }
+  add.messages.push({ role: "user", content: message.content });
+  add.items.push({ seq: shown.length, item: message.item });
+  return add;
 }
 
 /** The question that waits for its answer: the last one, unanswered, while the history ends
@@ -246,6 +311,16 @@ async function takeOver(store: Store, env: Env, base: string, chat: ChatRow) {
   const token = randomToken(32);
   const claimed = await store.claimChat(chat.id, token, leaseUntil(env), "resume");
   if (claimed) await handOn(env, base, claimed, token, true);
+}
+
+/** Starts the turn of the messages that wait in an idle chat: a new invocation takes the next
+ *  one. The chat after, or null if no turn started (none wait, or one runs already). */
+async function kick(store: Store, env: Env, base: string, chat: ChatRow) {
+  if (chat.status !== "idle" || !chat.queue?.length) return null;
+  const token = randomToken(32);
+  const claimed = await store.claimChat(chat.id, token, leaseUntil(env), "start");
+  if (claimed) await handOn(env, base, claimed, token);
+  return claimed;
 }
 
 /** Has a new invocation of the function run the chat's turn (POST .../resume with the turn's
@@ -301,7 +376,9 @@ class Runner {
     private run: LocalRun,
     private id: string,
     private token: string,
-  ) {}
+  ) {
+    run.refresh = () => this.renew();
+  }
 
   private get signal() {
     return this.run.abort.signal;
@@ -369,8 +446,11 @@ class Runner {
         usage: this.usage,
       }, this.token);
       if (!row) return this.run.abort.abort("lost");
+      const queued = JSON.stringify(queuedOf(this.chat));
       this.chat = row;
       if (row.stop) this.run.abort.abort("stop");
+      // A message was queued or taken back meanwhile: followers see it.
+      if (JSON.stringify(queuedOf(row)) !== queued) this.publishChat();
     });
   }
 
@@ -419,6 +499,8 @@ class Runner {
     this.repair();
     if (this.chat.stop) return this.finish(STOPPED);
     if (this.retries > MAX_RETRIES) return this.fail(GAVE_UP);
+    // Started for a message that waited: the turn is about it.
+    if (over(this.items, this.messages) && !(await this.next())) return this.finish();
     this.doing({ kind: "thinking" });
     const family = (await this.store.listFamilies([this.chat.family_id]))[0];
     if (!family) return;
@@ -434,10 +516,8 @@ class Runner {
       return this.fail(err instanceof HttpError ? err.message : "The assistant failed");
     }
     for (;;) {
-      const last = this.messages.at(-1);
       // Answered already, or a question waits for the user.
-      if (!last || (last.role === "assistant" && !last.tool_calls?.length)) return this.finish();
-      if (openQuestion(this.items, this.messages)) return this.finish();
+      if (over(this.items, this.messages)) return this.finish();
       const elapsed = Date.now() - started;
       const outcome = await this.go(
         turn,
@@ -465,6 +545,32 @@ class Runner {
           this.doing({ kind: "thinking" });
       }
     }
+  }
+
+  /** Takes the next message that waits, and the turn goes on with it; false if none waits. */
+  private async next(): Promise<boolean> {
+    const chat = await this.store.getChat(this.id);
+    for (const q of (chat?.queue ?? []) as unknown as Queued[]) {
+      // Taken back meanwhile: the next one.
+      const row = await this.store.unqueueChatMessage(this.id, q.id);
+      if (!row) continue;
+      const add = withMessage(this.items, this.messages, row.notes, q);
+      for (const { seq, item } of add.items) this.set(seq, item);
+      this.addMessages(add.messages);
+      this.saveItems();
+      await this.write(async () => {
+        const after = await this.store.updateChat(
+          this.id,
+          { context: { ...q.context }, notes: [] },
+          this.token,
+        );
+        if (!after) return this.run.abort.abort("lost");
+        this.chat = after;
+      });
+      this.publishChat();
+      return true;
+    }
+    return false;
   }
 
   /** Runs the tool loop until it ends, and keeps what it does. */
@@ -714,7 +820,10 @@ class Runner {
         retries: 0,
       }, this.token);
     });
-    if (after.row) this.run.publish({ type: "chat", chat: summaryOf(after.row) });
+    // Messages wait: the next turn starts (in a new invocation, with its whole time).
+    const next = after.row && await kick(this.store, this.env, this.base, after.row);
+    const row = next ?? after.row;
+    if (row) this.run.publish({ type: "chat", chat: summaryOf(row) });
   }
 
   /** Time is nearly up: a new invocation goes on with the turn (with the same token). */
@@ -770,7 +879,11 @@ async function follow(
       if (Date.now() >= until) return emit("reconnect", {});
       continue;
     }
-    if (chat.status !== "running") return emit("end", {});
+    if (chat.status !== "running") {
+      // Messages wait without a turn (the invocation that ended the last one died): it starts.
+      if (await kick(store, env, base, chat)) continue;
+      return emit("end", {});
+    }
     if (stale(chat)) {
       await takeOver(store, env, base, chat);
       continue;
@@ -836,6 +949,10 @@ export function handleChats(ctx: Ctx, aiEnv: AiEnv, prepare: Prepare): Promise<R
       return events(ctx, env, id);
     case "POST :id/messages":
       return send(ctx, env, id);
+    case "POST :id/queue":
+      return queue(ctx, env, id);
+    case "POST :id/unqueue":
+      return unqueue(ctx, id);
     case "POST :id/answer":
       return answer(ctx, env, id);
     case "POST :id/stop":
@@ -868,9 +985,10 @@ async function list({ store, load, requireUser }: Ctx) {
 }
 
 async function get(ctx: Ctx, env: Env, id: string) {
-  const { chat } = await ownChat(ctx, id);
+  let { chat } = await ownChat(ctx, id);
   const rows = await ctx.store.listChatItems(id);
   if (stale(chat)) await takeOver(ctx.store, env, ctx.publicBase, chat);
+  else chat = await kick(ctx.store, env, ctx.publicBase, chat) ?? chat;
   return json(
     {
       chat: summaryOf(chat),
@@ -1012,6 +1130,7 @@ async function send(ctx: Ctx, env: Env, id: string | null) {
       activity: null,
       notes: [],
       usage: null,
+      queue: [],
       rev: 0,
       created_at: now,
       updated_at: now,
@@ -1032,27 +1151,49 @@ async function send(ctx: Ctx, env: Env, id: string | null) {
     store.listChatItems(chat.id),
     store.listChatMessages(chat.id),
   ]);
-  const shown = items.map((r) => r.item as Item);
-  const add: { messages: ChatMessage[]; items: { seq: number; item: Item }[] } = {
-    messages: [],
-    items: [],
-  };
-  // A new message instead of an answer: the question stays unanswered.
-  const q = openQuestion(shown, messages.map((r) => r.message as unknown as ChatMessage));
-  if (q) {
-    add.items.push({ seq: shown.indexOf(q), item: { ...q, skipped: true } });
-    add.messages.push({ role: "tool", tool_call_id: q.id, content: SKIPPED });
-  }
-  // Changes undone since, so the assistant doesn't assume they are still there.
-  for (const note of chat.notes) {
-    add.messages.push(
-      { role: "user", content: `(I undid this change: ${note})` },
-      { role: "assistant", content: "OK." },
-    );
-  }
-  add.messages.push({ role: "user", content: message.content });
-  add.items.push({ seq: shown.length, item: message.item });
+  const add = withMessage(
+    items.map((r) => r.item as Item),
+    messages.map((r) => r.message as unknown as StoredMessage),
+    chat.notes,
+    message,
+  );
   return begin(ctx, env, chat, token, { ...add, context });
+}
+
+/** POST /ai/chats/{id}/queue {text, attachments?, page, year, lang, today}: a message written
+ *  while the assistant answers. It waits and goes next once the turn is over; if none runs, it
+ *  starts one right away. Answers 202 with the chat (follow it to see the turn). */
+async function queue(ctx: Ctx, env: Env, id: string) {
+  const { store, req } = ctx;
+  const body = await readBody(req);
+  const message = userMessage(body);
+  const { family, chat } = await ownChat(ctx, id);
+  await checkSetUp(store, family.id);
+  if (chat.queue.length >= MAX_QUEUE) {
+    throw new HttpError(409, "Too many messages wait already");
+  }
+  const entry: Queued = {
+    id: crypto.randomUUID(),
+    item: message.item as UserItem,
+    content: message.content,
+    context: cleanContext(body),
+  };
+  const row = await store.queueChatMessage(id, entry as unknown as Record<string, unknown>);
+  if (!row) throw new HttpError(404, "Chat not found");
+  runs.get(id)?.refresh();
+  // No turn runs (any more): the message starts one.
+  const started = await kick(store, env, ctx.publicBase, row);
+  return json({ chat: summaryOf(started ?? row), id: entry.id }, 202);
+}
+
+/** POST /ai/chats/{id}/unqueue {id}: takes back a message that waits (unless its turn started
+ *  already); answers with the chat. */
+async function unqueue(ctx: Ctx, id: string) {
+  const body = await readBody(ctx.req);
+  const { chat } = await ownChat(ctx, id);
+  const row = typeof body.id === "string" ? await ctx.store.unqueueChatMessage(id, body.id) : null;
+  if (row) runs.get(id)?.refresh();
+  return json({ chat: summaryOf(row ?? chat) });
 }
 
 async function checkSetUp(store: Store, familyId: string) {
@@ -1196,6 +1337,7 @@ async function importChat(ctx: Ctx) {
     activity: null,
     notes: [],
     usage: null,
+    queue: [],
     rev: 0,
     created_at: updated,
     updated_at: updated,
