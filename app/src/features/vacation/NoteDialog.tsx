@@ -110,7 +110,7 @@ export function NoteDialog(
             </button>
           ))}
         </div>
-        <label className="flex items-center gap-2.5 text-[13px] font-semibold">
+        <label className="flex items-center gap-2.5 text-[13px] font-semibold max-sm:text-sm">
           {t("note.icon_other")}
           <Input
             className="w-[5.5em] text-center text-lg"
@@ -126,7 +126,7 @@ export function NoteDialog(
             }}
           />
         </label>
-        <label className="grid gap-1.5 text-[13px] font-semibold">
+        <label className="grid gap-1.5 text-[13px] font-semibold max-sm:text-sm">
           {t("note.comment")}
           <Textarea
             autoFocus

@@ -171,6 +171,15 @@
   }
 }
 
+/* Phones: text a step larger (Tailwind's text-xs/sm/base; the calendar's own sizes follow below). */
+@media (width < 40rem) {
+  :root {
+    --text-xs: 0.8125rem;
+    --text-sm: 0.9375rem;
+    --text-base: 1.0625rem;
+  }
+}
+
 /* ---------- year calendar (features/vacation/grid.ts) ----------
    The zoom sets --days, the number of days that fit across; cells grow in both directions.
    The calendar ends at the bottom of the screen and scrolls inside, so the day numbers and
@@ -525,7 +534,7 @@
     z-index: 6;
     margin: 0 -8px;
     padding: 10px 14px 6px;
-    font-size: 16px;
+    font-size: 17px;
     font-weight: 650;
     letter-spacing: -0.01em;
     background: color-mix(in srgb, var(--background) 92%, transparent);
@@ -543,7 +552,7 @@
   .mv-wd {
     padding: 0 0 4px;
     text-align: center;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
     color: var(--cal-muted);
   }
@@ -557,7 +566,7 @@
   .grid.mv .cell .wd {
     top: 6px;
     left: 7px;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
     color: var(--cal-text);
     opacity: 1;
@@ -597,5 +606,11 @@
   .grid.mv,
   .grid.mv .cell {
     -webkit-touch-callout: none;
+  }
+  .chip {
+    font-size: 15px;
+  }
+  .chip .count {
+    font-size: 12px;
   }
 }
