@@ -429,8 +429,8 @@ function PasswordCard({ user, reset }: { user: User; reset: boolean }) {
       />
       {user.hasPassword && user.passkeys > 0 && (
         <Button
-          variant="ghost"
-          className="justify-self-start text-destructive"
+          variant="link"
+          className="h-auto p-0 text-destructive"
           onClick={remove}
         >
           {t("account.password_remove")}
@@ -478,9 +478,10 @@ function TokensCard() {
     <SettingsCard
       title={t("account.tokens")}
       description={
-        <span>
-          {t("account.tokens_help")} <code className="text-xs">{apiBase()}</code>
-        </span>
+        <>
+          {t("account.tokens_help")}
+          <CopyField className="mt-2" value={apiBase()} label="API" />
+        </>
       }
     >
       {list && list.length > 0 && (
