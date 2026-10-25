@@ -86,6 +86,18 @@ export interface HandlerOptions {
   aiHandOffMs?: number;
   /** When an AI chat request cuts off a model call that still runs (tests). Default: 130 s. */
   aiDeadlineMs?: number;
+  /** Keeps work going after the response was sent: a chat's turn runs on in the background
+   *  (EdgeRuntime.waitUntil on Supabase). Default: the promise just runs. */
+  background?: (task: Promise<unknown>) => void;
+  /** How a chat turn calls the API again to hand itself on to a new invocation (before the
+   *  platform's time limit). Default: fetch. */
+  selfFetch?: Fetch;
+  /** Chat timings (tests): how often followers poll, how long their stream lasts, how long a
+   *  turn holds a chat without renewing, and the pause before a retry. */
+  aiPollMs?: number;
+  aiStreamMs?: number;
+  aiLeaseMs?: number;
+  aiRetryMs?: number;
   /** PBKDF2 iterations for new password hashes. Default: 600 000 (tests use few). */
   passwordIterations?: number;
   /** The app's origins (e.g. https://family-planner.example) that may use passkeys. Default:
@@ -105,8 +117,14 @@ export function createHandler(store: Store, options: HandlerOptions = {}) {
       allowPrivate: options.allowPrivateNetwork,
       resolve: options.resolve,
     },
+    background: options.background ?? ((task) => void task),
+    selfFetch: options.selfFetch ?? fetch,
     handOffMs: options.aiHandOffMs,
     deadlineMs: options.aiDeadlineMs,
+    pollMs: options.aiPollMs,
+    streamMs: options.aiStreamMs,
+    leaseMs: options.aiLeaseMs,
+    retryMs: options.aiRetryMs,
   };
   const auth = authEnv(options);
   // Once per instance: the admin of a new installation (tried again if it failed).
@@ -207,8 +225,11 @@ export function createHandler(store: Store, options: HandlerOptions = {}) {
     const route = `${method} ${parts.slice(1).join("/")}`;
     const isFeed = area === "families" && parts[2] === "calendar.ics" && parts.length === 3 &&
       method === "GET";
+    // A chat turn handing itself on: its token is the key (see ai/chats.ts), no user, no limits.
+    const isResume = area === "families" && method === "POST" && parts.length === 6 &&
+      parts[2] === "ai" && parts[3] === "chats" && parts[5] === "resume";
 
-    if (method !== "GET") {
+    if (method !== "GET" && !isResume) {
       const client = await clientKey(req);
       if (area === "auth" && PUBLIC_AUTH.includes(route)) await limit("login", client);
       else if (area === "families" && (parts.length === 1 || parts[2] === "clone")) {
@@ -224,6 +245,10 @@ export function createHandler(store: Store, options: HandlerOptions = {}) {
     // The calendar feed is public and never sends a token: no account lookups for it.
     if (isFeed) {
       return await handleVacation(familyCtx(req, url, parts, null))!;
+    }
+    if (isResume) {
+      checkToken(parts[1]);
+      return await handleAi(familyCtx(req, url, parts, null), ai)!;
     }
     await ready();
     // Signing in ignores an old session the device may still send.

@@ -1,6 +1,7 @@
 // One chat turn: the system prompt, the tool loop against the family's AI endpoint, and the
 // events streamed to the app (server-sent events).
 
+import { formatDate, isValidDate } from "../dates.ts";
 import { HttpError, objectOf } from "../http.ts";
 import type { AccountRow, CategoryRow, FamilyRow, TypeRow } from "../store.ts";
 import {
@@ -26,12 +27,12 @@ const IMAGES_PER_MESSAGE = 4;
 const MAX_IMAGES = 8;
 const IMAGE_URL = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/;
 const OLD_IMAGE = "(an earlier image, no longer sent)";
-/** Edge Functions run at most 150 s (free plan): after this, a request hands the turn back to
- *  the app, which goes on with a new request ("continue"). */
-const HAND_OFF_MS = 90_000;
+/** Edge Functions run at most 150 s (free plan): after this, a request hands the turn on to a
+ *  new one ("continue"). */
+export const HAND_OFF_MS = 90_000;
 /** A model call that is still running then is cut off, so the request can still report back
- *  (and the app learns what happened) before the platform stops it. */
-const DEADLINE_MS = 130_000;
+ *  (and the turn goes on) before the platform stops it. */
+export const DEADLINE_MS = 130_000;
 const MODEL_TIMEOUT_MS = 120_000;
 const NO_ANSWER = "(The model gave no answer.)";
 const TOO_SLOW = "The AI model took too long to answer.";
@@ -51,6 +52,28 @@ const ANSWER_NOW = `
 You ended without answering. Don't use tools now: tell the user what you found and did.`;
 
 export type Emit = (event: string, data: unknown) => void;
+
+const PAGES = ["vacation", "finance", "settings"];
+
+/** What the instructions depend on, from the app's latest message: the page and year the user
+ *  looks at, their language and their day. */
+export interface ChatContext {
+  page: string;
+  year: number;
+  lang: "en" | "de";
+  today: string;
+}
+
+/** The context the app sent, checked; the server's day (and its year) as a fallback. */
+export function cleanContext(body: Record<string, unknown>): ChatContext {
+  const today = isValidDate(body.today) ? body.today as string : formatDate(new Date());
+  return {
+    page: PAGES.includes(body.page as string) ? body.page as string : "vacation",
+    year: Number.isInteger(body.year) ? body.year as number : Number(today.slice(0, 4)),
+    lang: body.lang === "de" ? "de" : "en",
+    today,
+  };
+}
 
 const LANGUAGES: Record<string, string> = { en: "English", de: "German (Deutsch)" };
 const ROLE_TEXT: Record<string, string> = {
@@ -147,69 +170,85 @@ Look things up with the tools first, so the options are concrete (real dates, na
 amounts). Don't ask what the tools can tell you, or when the request is already clear.`;
 }
 
+/** Where the window of a history starts: the newest MAX_MESSAGES messages, but all of the
+ *  current turn (from the user's latest message). */
+function windowStart(list: unknown[]): number {
+  const turn = list.findLastIndex((m) => (m as { role?: unknown } | null)?.role === "user");
+  return Math.max(
+    0,
+    turn < 0 ? list.length - MAX_MESSAGES : Math.min(list.length - MAX_MESSAGES, turn),
+  );
+}
+
+/** The messages the model gets of a (checked) history: its window, cut to a clean start (the
+ *  user's message first, no orphaned tool results), with only the newest images. */
+export function windowHistory(history: ChatMessage[]): ChatMessage[] {
+  const out = history.slice(windowStart(history));
+  while (out.length && out[0].role !== "user") out.shift();
+  let images = 0;
+  for (let i = out.length - 1; i >= 0; i--) {
+    const m = out[i];
+    if (!Array.isArray(m.content)) continue;
+    out[i] = {
+      ...m,
+      content: m.content.map((p): ContentPart =>
+        p.type === "image_url" && ++images > MAX_IMAGES ? { type: "text", text: OLD_IMAGE } : p
+      ),
+    };
+  }
+  return out;
+}
+
 /** The app's history, checked: user, assistant and tool messages, newest kept (but all of the
  *  current turn). It ends with the user's message, or with tool results to `cont`inue a turn. */
 export function cleanHistory(raw: unknown, cont = false): ChatMessage[] {
   if (!Array.isArray(raw) || !raw.length) {
     throw new HttpError(400, "messages must be a non-empty array");
   }
-  const turn = raw.findLastIndex((m) => (m as { role?: unknown } | null)?.role === "user");
-  const from = Math.max(
-    0,
-    turn < 0 ? raw.length - MAX_MESSAGES : Math.min(raw.length - MAX_MESSAGES, turn),
-  );
-  const out: ChatMessage[] = raw.slice(from).map((m): ChatMessage => {
-    const o = objectOf(m, "Each message");
-    if (!["user", "assistant", "tool"].includes(o.role as string)) {
-      throw new HttpError(400, "role must be user, assistant or tool");
-    }
-    let content: ChatMessage["content"];
-    if (Array.isArray(o.content)) {
-      if (o.role !== "user") throw new HttpError(400, "Only user messages can have parts");
-      content = cleanParts(o.content);
-    } else {
-      content = o.content === null || o.content === undefined ? null : String(o.content);
-      if (content && content.length > MAX_CONTENT) {
-        throw new HttpError(400, "A message is too long");
-      }
-    }
-    const msg: ChatMessage = { role: o.role as ChatMessage["role"], content };
-    if (o.role === "assistant" && Array.isArray(o.tool_calls) && o.tool_calls.length) {
-      msg.tool_calls = o.tool_calls.slice(0, 20).map((c) => {
-        const call = objectOf(c, "tool call");
-        const fn = objectOf(call.function, "tool call function");
-        return {
-          id: String(call.id ?? ""),
-          type: "function" as const,
-          function: { name: String(fn.name ?? ""), arguments: String(fn.arguments ?? "{}") },
-        };
-      });
-    }
-    if (o.role === "tool") msg.tool_call_id = String(o.tool_call_id ?? "");
-    return msg;
-  });
-  // Cut to a clean start: the first message must be the user's (no orphaned tool results).
-  while (out.length && out[0].role !== "user") out.shift();
+  const out = windowHistory(raw.slice(windowStart(raw)).map(cleanMessage));
   if (cont && out.at(-1)?.role !== "tool") {
     throw new HttpError(400, "To continue, the last message must be a tool result");
   }
   if (!cont && (!out.length || out.at(-1)!.role !== "user")) {
     throw new HttpError(400, "The last message must be the user's");
   }
-  // Only the newest images go to the model, so the request stays bounded.
-  let images = 0;
-  for (let i = out.length - 1; i >= 0; i--) {
-    const m = out[i];
-    if (!Array.isArray(m.content)) continue;
-    m.content = m.content.map((p): ContentPart =>
-      p.type === "image_url" && ++images > MAX_IMAGES ? { type: "text", text: OLD_IMAGE } : p
-    );
-  }
   return out;
 }
 
+/** One message of a history, checked. */
+export function cleanMessage(m: unknown): ChatMessage {
+  const o = objectOf(m, "Each message");
+  if (!["user", "assistant", "tool"].includes(o.role as string)) {
+    throw new HttpError(400, "role must be user, assistant or tool");
+  }
+  let content: ChatMessage["content"];
+  if (Array.isArray(o.content)) {
+    if (o.role !== "user") throw new HttpError(400, "Only user messages can have parts");
+    content = cleanParts(o.content);
+  } else {
+    content = o.content === null || o.content === undefined ? null : String(o.content);
+    if (content && content.length > MAX_CONTENT) {
+      throw new HttpError(400, "A message is too long");
+    }
+  }
+  const msg: ChatMessage = { role: o.role as ChatMessage["role"], content };
+  if (o.role === "assistant" && Array.isArray(o.tool_calls) && o.tool_calls.length) {
+    msg.tool_calls = o.tool_calls.slice(0, 20).map((c) => {
+      const call = objectOf(c, "tool call");
+      const fn = objectOf(call.function, "tool call function");
+      return {
+        id: String(call.id ?? ""),
+        type: "function" as const,
+        function: { name: String(fn.name ?? ""), arguments: String(fn.arguments ?? "{}") },
+      };
+    });
+  }
+  if (o.role === "tool") msg.tool_call_id = String(o.tool_call_id ?? "");
+  return msg;
+}
+
 /** A user message's parts: text (typed or an attached file) and images as data URLs. */
-function cleanParts(raw: unknown[]): ContentPart[] {
+export function cleanParts(raw: unknown[]): ContentPart[] {
   if (!raw.length || raw.length > MAX_PARTS) {
     throw new HttpError(400, `A message needs 1 to ${MAX_PARTS} parts`);
   }
@@ -404,13 +443,18 @@ export async function runChat(opts: {
   }
 }
 
-/** A Response that streams the events of `run` as server-sent events. */
+/** A Response that streams the events of `run` as server-sent events; `signal` tells `run`
+ *  that the client went away. */
 export function sseResponse(
-  run: (emit: Emit) => Promise<void>,
+  run: (emit: Emit, signal: AbortSignal) => Promise<void>,
   headers: Record<string, string>,
 ): Response {
   const encoder = new TextEncoder();
+  const gone = new AbortController();
   const body = new ReadableStream<Uint8Array>({
+    cancel() {
+      gone.abort();
+    },
     async start(controller) {
       const emit: Emit = (event, data) => {
         try {
@@ -422,7 +466,7 @@ export function sseResponse(
       // A comment line every 15 s keeps proxies from closing a quiet connection.
       const ping = setInterval(() => emit("ping", {}), 15000);
       try {
-        await run(emit);
+        await run(emit, gone.signal);
       } finally {
         clearInterval(ping);
         try {

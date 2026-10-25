@@ -102,6 +102,63 @@ export interface AiSettingsRow {
   updated_at: string;
 }
 
+export type ChatStatus = "idle" | "running";
+
+/** An AI chat of one user in a family; it runs on the server (see ai/chats.ts). */
+export interface ChatRow {
+  id: string;
+  family_id: string;
+  user_id: string;
+  title: string;
+  status: ChatStatus;
+  /** The running turn: the invocation holding the token runs it, until `run_until`. */
+  run_token: string | null;
+  run_until: string | null;
+  /** The user asked to stop the running turn. */
+  stop: boolean;
+  /** Failed tries of the running step. */
+  retries: number;
+  /** Page, year, language and day of the latest message. */
+  context: Record<string, unknown>;
+  /** What the running turn does right now. */
+  activity: Record<string, unknown> | null;
+  /** Changes the user undid, for the model with the next message. */
+  notes: string[];
+  /** Counts the changes of the items. */
+  rev: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ChatPatch = Partial<
+  Pick<
+    ChatRow,
+    | "title"
+    | "status"
+    | "run_token"
+    | "run_until"
+    | "stop"
+    | "retries"
+    | "context"
+    | "activity"
+    | "notes"
+    | "updated_at"
+  >
+>;
+
+/** What the chat shows at one position; `rev`: the chat's revision it last changed in. */
+export interface ChatItemRow {
+  seq: number;
+  rev: number;
+  item: Record<string, unknown>;
+}
+
+/** What the model gets back, in order. */
+export interface ChatMessageRow {
+  seq: number;
+  message: Record<string, unknown>;
+}
+
 /** Everything of the finances, for an import that replaces them. */
 export interface FinanceContents {
   categories: CategoryRow[];
@@ -294,6 +351,30 @@ export interface Store {
 
   getAiSettings(familyId: string): Promise<AiSettingsRow | null>;
   saveAiSettings(row: AiSettingsRow): Promise<void>;
+
+  /** The user's chats in the family, the latest first. */
+  listChats(familyId: string, userId: string): Promise<ChatRow[]>;
+  getChat(id: string): Promise<ChatRow | null>;
+  createChat(row: ChatRow): Promise<void>;
+  /** Changes the chat (with `token`: only while that run holds it); the chat after, or null. */
+  updateChat(id: string, patch: ChatPatch, token?: string): Promise<ChatRow | null>;
+  /** Takes the chat's turn for `token` until `until`: `start` an idle chat's turn, or `resume`
+   *  a running one that the token holds or nobody holds any more. The chat after, or null. */
+  claimChat(
+    id: string,
+    token: string,
+    until: string,
+    mode: "start" | "resume",
+  ): Promise<ChatRow | null>;
+  /** Deletes the chat with its items and messages. */
+  deleteChat(id: string): Promise<void>;
+  /** The items changed after revision `since` (all without), by position. */
+  listChatItems(chatId: string, since?: number): Promise<ChatItemRow[]>;
+  /** Inserts or replaces items (by position); they get the chat's next revision, returned
+   *  (null if the chat is gone). */
+  putChatItems(chatId: string, items: Omit<ChatItemRow, "rev">[]): Promise<number | null>;
+  listChatMessages(chatId: string): Promise<ChatMessageRow[]>;
+  addChatMessages(chatId: string, rows: ChatMessageRow[]): Promise<void>;
 }
 
 export class MemoryStore implements Store {
@@ -311,6 +392,9 @@ export class MemoryStore implements Store {
   passkeys = new Map<string, PasskeyRow>();
   challenges = new Map<string, ChallengeRow>();
   members = new Map<string, MemberRow>(); // "family|user" -> row
+  chats = new Map<string, ChatRow>();
+  chatItems = new Map<string, Map<number, ChatItemRow>>(); // chatId -> seq -> row
+  chatMessages = new Map<string, ChatMessageRow[]>();
 
   createFamily(family: FamilyRow, types: TypeRow[]) {
     this.families.set(family.id, { ...family });
@@ -357,6 +441,7 @@ export class MemoryStore implements Store {
       ] as Map<string, unknown>[]
     ) map.delete(id);
     for (const [key, m] of this.members) if (m.family_id === id) this.members.delete(key);
+    for (const c of this.chats.values()) if (c.family_id === id) this.deleteChat(c.id);
     return Promise.resolve();
   }
 
@@ -411,6 +496,7 @@ export class MemoryStore implements Store {
     for (const [key, p] of this.passkeys) if (p.user_id === id) this.passkeys.delete(key);
     for (const [key, c] of this.challenges) if (c.user_id === id) this.challenges.delete(key);
     for (const [key, m] of this.members) if (m.user_id === id) this.members.delete(key);
+    for (const c of this.chats.values()) if (c.user_id === id) this.deleteChat(c.id);
     return Promise.resolve();
   }
 
@@ -766,6 +852,91 @@ export class MemoryStore implements Store {
     return Promise.resolve();
   }
 
+  listChats(familyId: string, userId: string) {
+    return Promise.resolve(
+      [...this.chats.values()].filter((c) => c.family_id === familyId && c.user_id === userId)
+        .sort((a, b) => b.updated_at.localeCompare(a.updated_at)).map((c) => structuredClone(c)),
+    );
+  }
+
+  getChat(id: string) {
+    const c = this.chats.get(id);
+    return Promise.resolve(c ? structuredClone(c) : null);
+  }
+
+  createChat(row: ChatRow) {
+    this.chats.set(row.id, structuredClone(row));
+    this.chatItems.set(row.id, new Map());
+    this.chatMessages.set(row.id, []);
+    return Promise.resolve();
+  }
+
+  updateChat(id: string, patch: ChatPatch, token?: string) {
+    const c = this.chats.get(id);
+    if (!c || (token !== undefined && c.run_token !== token)) return Promise.resolve(null);
+    Object.assign(c, structuredClone(patch));
+    return Promise.resolve(structuredClone(c));
+  }
+
+  claimChat(id: string, token: string, until: string, mode: "start" | "resume") {
+    const c = this.chats.get(id);
+    const now = new Date().toISOString();
+    if (mode === "start" && c?.status === "idle") {
+      Object.assign(c, { status: "running", run_token: token, run_until: until, stop: false });
+      c.retries = 0;
+    } else if (
+      mode === "resume" && c?.status === "running" &&
+      (c.run_token === token || !c.run_until || c.run_until < now)
+    ) {
+      Object.assign(c, { run_token: token, run_until: until });
+    } else return Promise.resolve(null);
+    return Promise.resolve(structuredClone(c));
+  }
+
+  deleteChat(id: string) {
+    this.chats.delete(id);
+    this.chatItems.delete(id);
+    this.chatMessages.delete(id);
+    return Promise.resolve();
+  }
+
+  listChatItems(chatId: string, since = 0) {
+    return Promise.resolve(
+      [...(this.chatItems.get(chatId)?.values() ?? [])].filter((r) => r.rev > since)
+        .sort((a, b) => a.seq - b.seq).map((r) => structuredClone(r)),
+    );
+  }
+
+  putChatItems(chatId: string, items: Omit<ChatItemRow, "rev">[]) {
+    const c = this.chats.get(chatId);
+    const rows = this.chatItems.get(chatId);
+    if (!c || !rows) return Promise.resolve(null);
+    c.rev++;
+    c.updated_at = new Date().toISOString();
+    for (const { seq, item } of items) {
+      rows.set(seq, { seq, rev: c.rev, item: structuredClone(item) });
+    }
+    return Promise.resolve(c.rev);
+  }
+
+  listChatMessages(chatId: string) {
+    return Promise.resolve(structuredClone(this.chatMessages.get(chatId) ?? []));
+  }
+
+  addChatMessages(chatId: string, rows: ChatMessageRow[]) {
+    const list = this.chatMessages.get(chatId);
+    if (list) {
+      for (const r of rows) {
+        if (list.some((m) => m.seq === r.seq)) {
+          return Promise.reject(new Error("duplicate message seq"));
+        }
+      }
+      list.push(...structuredClone(rows));
+      list.sort((a, b) => a.seq - b.seq);
+    }
+    return Promise.resolve();
+  }
+
   existingImportHashes(familyId: string, hashes: string[]) {
     const wanted = new Set(hashes);
     const found = new Set<string>();
@@ -794,6 +965,11 @@ export class MemoryStore implements Store {
       tokens: [...this.tokens.values()],
       passkeys: [...this.passkeys.values()],
       members: [...this.members.values()],
+      chats: [...this.chats.values()].map((chat) => ({
+        chat,
+        items: [...(this.chatItems.get(chat.id)?.values() ?? [])],
+        messages: this.chatMessages.get(chat.id) ?? [],
+      })),
     };
   }
 
@@ -805,6 +981,11 @@ export class MemoryStore implements Store {
     for (const t of all.tokens ?? []) this.tokens.set(t.id, { ...t });
     for (const p of all.passkeys ?? []) this.passkeys.set(p.id, { ...p });
     for (const m of all.members ?? []) this.members.set(`${m.family_id}|${m.user_id}`, { ...m });
+    for (const { chat, items, messages } of all.chats ?? []) {
+      this.chats.set(chat.id, { ...chat });
+      this.chatItems.set(chat.id, new Map(items.map((r) => [r.seq, r])));
+      this.chatMessages.set(chat.id, messages);
+    }
     for (const item of all.families) {
       const { types, entries, notes } = item;
       // Snapshots from before families hold a "session": its view id becomes the legacy id,
@@ -843,6 +1024,7 @@ export interface MemorySnapshot {
   tokens?: AuthTokenRow[];
   passkeys?: PasskeyRow[];
   members?: MemberRow[];
+  chats?: { chat: ChatRow; items: ChatItemRow[]; messages: ChatMessageRow[] }[];
 }
 
 type FamilySnapshot = {

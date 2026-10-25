@@ -150,19 +150,6 @@ export interface AiSettingsPatch {
   allowWrites?: boolean;
 }
 
-/** A part of a user message: text, or an image as a data URL. */
-export type ContentPart =
-  | { type: "text"; text: string }
-  | { type: "image_url"; image_url: { url: string } };
-
-/** A message in the OpenAI format, as the chat endpoint takes and returns them. */
-export interface ChatMessage {
-  role: "user" | "assistant" | "tool";
-  content: string | null | ContentPart[];
-  tool_calls?: { id: string; type: "function"; function: { name: string; arguments: string } }[];
-  tool_call_id?: string;
-}
-
 /** A request against /families/{id} that undoes (part of) a change the assistant made. */
 export interface UndoStep {
   method: "POST" | "PATCH" | "DELETE";
@@ -178,26 +165,50 @@ export interface ChatQuestion {
   multiple: boolean;
 }
 
-export type ChatEvent =
-  | { event: "text"; data: { delta: string } }
-  | { event: "tool"; data: { id: string; name: string; args: Record<string, unknown> } }
-  | { event: "tool_result"; data: { id: string; name: string; ok: boolean; summary: string } }
-  | {
-    event: "change";
-    data: {
-      id: string;
-      kind: "entries" | "notes" | "types" | "transactions";
-      summary: string;
-      undo: UndoStep[];
-    };
-  }
-  | { event: "messages"; data: { messages: ChatMessage[] } }
-  /** The assistant asks the user; `id` is the tool call the answer goes to. The turn ends. */
-  | { event: "question"; data: ChatQuestion }
-  | { event: "done"; data: Record<string, never> }
-  /** The server ran out of time, or a model call failed (`retry`): send the next request. */
-  | { event: "continue"; data: { retry?: boolean; message?: string } }
-  | { event: "error"; data: { message: string } };
+/** What a running turn does right now. */
+export type ChatActivity =
+  | { kind: "thinking" | "writing" | "tool" }
+  | { kind: "retrying"; attempt: number; max: number };
+
+/** A chat as the list shows it; the server runs its turns. */
+export interface ChatSummary {
+  id: string;
+  title: string;
+  status: "idle" | "running";
+  activity: ChatActivity | null;
+  updatedAt: string;
+}
+
+/** A chat with what it shows (the items, by position) and their revision. */
+export interface ChatState<Item = unknown> {
+  chat: ChatSummary;
+  rev: number;
+  items: Item[];
+}
+
+/** What a chat's stream sends: the chat, items that changed (by position; `rev` once they are
+ *  saved up to that revision), text the assistant writes, then the end (no turn runs any more)
+ *  or "reconnect" (ask again to go on following). */
+export type ChatEvent<Item = unknown> =
+  | { event: "chat"; data: ChatSummary }
+  | { event: "items"; data: { rev?: number; items: { seq: number; item: Item }[] } }
+  | { event: "delta"; data: { seq: number; text: string } }
+  | { event: "end"; data: { deleted?: boolean } }
+  | { event: "reconnect"; data: Record<string, never> };
+
+/** A message for the assistant: the text, files as text, images as data URLs; and where the
+ *  user is (the page, the year they look at, their language and day). */
+export interface ChatInput {
+  text?: string;
+  attachments?: (
+    | { kind: "image"; name: string; url: string }
+    | { kind: "file"; name: string; text: string }
+  )[];
+  page: string;
+  year: number;
+  lang: "en" | "de";
+  today: string;
+}
 
 /** A member of a family, as its members see them. */
 export interface Member {
@@ -296,6 +307,56 @@ async function request<T>(
     throw new ApiError(data.error || `HTTP ${res.status}`, res.status);
   }
   return data as T;
+}
+
+/** A request whose answer is a stream of server-sent events: calls `onEvent` for each until
+ *  the stream ends (or `signal` stops it). */
+async function stream<E>(
+  method: string,
+  path: string,
+  body: unknown,
+  onEvent: (e: E) => void,
+  signal?: AbortSignal,
+) {
+  let res: Response;
+  const sent = sessionToken();
+  try {
+    res = await fetch(apiBase() + path, {
+      method,
+      headers: headers(body !== undefined),
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal,
+    });
+  } catch (err) {
+    if ((err as Error).name === "AbortError") return;
+    throw new ApiError((err as Error).message);
+  }
+  if (!res.ok || !res.body) {
+    checkSession(res, sent);
+    const data = await res.json().catch(() => ({}));
+    throw new ApiError(data.error || `HTTP ${res.status}`, res.status);
+  }
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += value;
+      let end: number;
+      while ((end = buffer.indexOf("\n\n")) >= 0) {
+        const block = buffer.slice(0, end);
+        buffer = buffer.slice(end + 2);
+        const event = /^event: (.*)$/m.exec(block)?.[1];
+        const data = /^data: (.*)$/m.exec(block)?.[1];
+        if (!event || data === undefined || event === "ping") continue;
+        onEvent({ event, data: JSON.parse(data) } as E);
+      }
+    }
+  } catch (err) {
+    if ((err as Error).name === "AbortError") return;
+    throw new ApiError((err as Error).message);
+  }
 }
 
 const enc = encodeURIComponent;
@@ -551,52 +612,62 @@ export const api = {
       await request(step.method, fam(token) + step.path, step.body);
     }
   },
-  /** Sends a chat turn and calls `onEvent` for every server-sent event until the end. */
-  chat: async (
+  // ---------------------------------------------------------------- AI chats
+  chats: (token: string) =>
+    request<{ chats: ChatSummary[] }>("GET", `${fam(token)}/ai/chats`).then((r) => r.chats),
+  chat: <Item>(token: string, id: string) =>
+    request<ChatState<Item>>("GET", `${fam(token)}/ai/chats/${enc(id)}`),
+  /** Starts a chat with its first message; streams it like followChat. */
+  startChat: <Item>(
     token: string,
-    body: Record<string, unknown>,
-    onEvent: (e: ChatEvent) => void,
+    input: ChatInput,
+    onEvent: (e: ChatEvent<Item>) => void,
     signal?: AbortSignal,
-  ) => {
-    let res: Response;
-    const sent = sessionToken();
-    try {
-      res = await fetch(`${apiBase()}${fam(token)}/ai/chat`, {
-        method: "POST",
-        headers: headers(true),
-        body: JSON.stringify(body),
-        signal,
-      });
-    } catch (err) {
-      if ((err as Error).name === "AbortError") return;
-      throw new ApiError((err as Error).message);
-    }
-    if (!res.ok || !res.body) {
-      checkSession(res, sent);
-      const data = await res.json().catch(() => ({}));
-      throw new ApiError(data.error || `HTTP ${res.status}`, res.status);
-    }
-    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
-    let buffer = "";
-    try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += value;
-        let end: number;
-        while ((end = buffer.indexOf("\n\n")) >= 0) {
-          const block = buffer.slice(0, end);
-          buffer = buffer.slice(end + 2);
-          const event = /^event: (.*)$/m.exec(block)?.[1];
-          const data = /^data: (.*)$/m.exec(block)?.[1];
-          if (!event || data === undefined || event === "ping") continue;
-          onEvent({ event, data: JSON.parse(data) } as ChatEvent);
-        }
-      }
-    } catch (err) {
-      if ((err as Error).name !== "AbortError") throw err;
-    }
-  },
+  ) => stream("POST", `${fam(token)}/ai/chats`, input, onEvent, signal),
+  sendMessage: <Item>(
+    token: string,
+    id: string,
+    input: ChatInput,
+    onEvent: (e: ChatEvent<Item>) => void,
+    signal?: AbortSignal,
+  ) => stream("POST", `${fam(token)}/ai/chats/${enc(id)}/messages`, input, onEvent, signal),
+  /** Answers the assistant's question `questionId`; the turn goes on. */
+  answerQuestion: <Item>(
+    token: string,
+    id: string,
+    answer: Omit<ChatInput, "text" | "attachments"> & {
+      id: string;
+      selected: string[];
+      text?: string;
+    },
+    onEvent: (e: ChatEvent<Item>) => void,
+    signal?: AbortSignal,
+  ) => stream("POST", `${fam(token)}/ai/chats/${enc(id)}/answer`, answer, onEvent, signal),
+  /** Follows a chat: what changed since revision `since`, and the running turn live. */
+  followChat: <Item>(
+    token: string,
+    id: string,
+    since: number,
+    onEvent: (e: ChatEvent<Item>) => void,
+    signal?: AbortSignal,
+  ) =>
+    stream(
+      "GET",
+      `${fam(token)}/ai/chats/${enc(id)}/events?since=${since}`,
+      undefined,
+      onEvent,
+      signal,
+    ),
+  stopChat: (token: string, id: string) =>
+    request<unknown>("POST", `${fam(token)}/ai/chats/${enc(id)}/stop`, {}),
+  deleteChat: (token: string, id: string) =>
+    request<unknown>("DELETE", `${fam(token)}/ai/chats/${enc(id)}`),
+  /** Tells the chat that its change `changeId` was undone. */
+  chatUndone: (token: string, id: string, changeId: string) =>
+    request<unknown>("POST", `${fam(token)}/ai/chats/${enc(id)}/undone`, { id: changeId }),
+  /** Stores a chat this device kept from before chats were stored on the server. */
+  importChat: (token: string, chat: unknown) =>
+    request<{ chat: ChatSummary }>("POST", `${fam(token)}/ai/chats/import`, chat),
   calendarUrl: (feedId: string, params: Record<string, string> = {}) => {
     const qs = new URLSearchParams(params).toString();
     return `${apiBase()}${fam(feedId)}/calendar.ics${qs ? "?" + qs : ""}`;

@@ -1,23 +1,26 @@
-// The AI chat of one family on this device: the chats (kept in localStorage), the one that is
-// open, sending a message and showing the streamed answer, and undoing changes.
+// The AI chats of one family: kept on the server, which also runs the turns (they go on when
+// the app is closed, and every device sees the same chats). The app lists the chats, shows the
+// open one, and follows it while a turn runs: what changed, and the answer as it is written.
 
 import { toast } from "sonner";
-import { type Attachment, keepImages, toParts } from "@/features/chat/attachments";
+import type { Attachment } from "@/features/chat/attachments";
 import {
   type AiSettings,
   api,
   ApiError,
+  type ChatActivity,
   type ChatEvent,
-  type ChatMessage,
+  type ChatInput,
   type ChatQuestion,
+  type ChatSummary,
   type UndoStep,
 } from "@/lib/api";
 import { getLang, t } from "@/lib/i18n";
-import { read, write } from "@/lib/storage";
+import { read } from "@/lib/storage";
 
 export type ChangeKind = "entries" | "notes" | "types" | "categories" | "transactions";
 
-/** An attachment as the chat shows it: images keep their data URL unless storage was full. */
+/** An attachment as the chat shows it: images with their data URL. */
 export interface ItemAttachment {
   kind: "image" | "file";
   name: string;
@@ -35,6 +38,10 @@ export type Item =
     args: Record<string, unknown>;
     status: "running" | "ok" | "error";
     summary?: string;
+    /** The start of what the model got back. */
+    result?: string;
+    /** It was running when its turn broke off. */
+    interrupted?: boolean;
   }
   | {
     kind: "change";
@@ -54,46 +61,27 @@ export type Item =
 
 export type QuestionItem = Item & { kind: "question" };
 
-/** What a running turn is doing right now, for the status line under the chat. */
-export type Activity =
-  | { kind: "thinking" | "writing" | "tool"; at: number }
-  | { kind: "retrying"; at: number; attempt: number; max: number };
+/** What a running turn is doing right now, for the status line under the chat; `at` is when
+ *  this device learned it. */
+export type Activity = ChatActivity & { at: number };
 
+/** The open chat. `id` is "" until the server named a new chat. */
 export interface Chat {
   id: string;
   title: string;
-  updatedAt: number;
-  /** What the server gets back on the next turn. */
-  history: ChatMessage[];
+  status: ChatSummary["status"];
   items: Item[];
+  /** The items are saved up to this revision (the server sends what changed since). */
+  rev: number;
 }
 
-const MAX_CHATS = 20;
-/** Images sent along with a request (the server keeps no more either). */
-const MAX_IMAGES = 8;
-/** Characters of a tool result kept in the saved history (the server sends them in full). */
-const MAX_TOOL_RESULT = 2000;
-/** Times a turn is tried again after a request failed or broke off, before the chat says so. */
-const MAX_RETRIES = 5;
-/** What the model learns about a question the user didn't answer. */
-const SKIPPED = JSON.stringify({
-  skipped: true,
-  note: "The user didn't pick an answer and wrote a new message instead, which may answer it.",
-});
-/** What the model learns about a tool that was running when a request broke off. */
-const INTERRUPTED = JSON.stringify({
-  error: "Interrupted: this may or may not have been done. Check before doing it again.",
-});
+/** A follow request: how it gets the chat's events. */
+type Follow = (onEvent: (e: ChatEvent<Item>) => void, signal: AbortSignal) => Promise<void>;
 
-type ToolCall = NonNullable<ChatMessage["tool_calls"]>[number];
+/** Retries of a broken-off stream wait a little longer each time, up to this. */
+const MAX_PAUSE = 10_000;
 
-/** Whether a failed request is worth trying again (not, say, an invalid one). */
-const retryable = (err: unknown) => {
-  const status = err instanceof ApiError ? err.status : undefined;
-  return !status || status === 429 || status >= 500;
-};
-
-/** Resolves after `ms`, or as soon as the turn is stopped. */
+/** Resolves after `ms`, or as soon as `signal` aborts. */
 const pause = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
     const timer = setTimeout(resolve, ms);
@@ -103,22 +91,6 @@ const pause = (ms: number, signal: AbortSignal) =>
     }, { once: true });
   });
 
-/** A chat without its image data, for when storage is full. */
-const withoutImages = (c: Chat): Chat => ({
-  ...c,
-  history: keepImages(c.history, 0, "(an image that is no longer stored)"),
-  items: c.items.map((it) =>
-    it.kind === "user" && it.attachments
-      ? {
-        ...it,
-        attachments: it.attachments.map((a) => ({
-          kind: a.kind,
-          name: a.name,
-        })),
-      }
-      : it
-  ),
-});
 const today = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${
@@ -126,20 +98,30 @@ const today = () => {
   }`;
 };
 
+/** Items the chat shows: blank answers (left by a step that is tried again) aren't. */
+export const visible = (items: Item[]) =>
+  items.filter((it) => it && !(it.kind === "assistant" && !it.text));
+
 export class ChatStore {
   settings: AiSettings | null = null;
   settingsError: string | null = null;
-  chats: Chat[];
+  /** The user's chats, the latest first. */
+  chats: ChatSummary[] = [];
   currentId: string | null = null;
-  busy = false;
-  /** Set while busy; `at` is when the last event arrived. */
+  /** The open chat, once loaded (or a new one being started). */
+  current: Chat | null = null;
+  /** Set while a turn runs; `at` is when it last changed. */
   activity: Activity | null = null;
   rev = 0;
   private listeners = new Set<() => void>();
-  private abort: AbortController | null = null;
   private loading: Promise<void> | null = null;
-  /** Tool results in full, by tool call id: the saved history keeps only their start. */
-  private results = new Map<string, string>();
+  private listing: Promise<void> | null = null;
+  /** Following the open chat (its stream). */
+  private following: AbortController | null = null;
+  /** A message is on its way to the server. */
+  private sending = false;
+  /** Changes this device has seen, so it reloads the data only for new ones. */
+  private seen = new Set<string>();
 
   constructor(
     readonly token: string,
@@ -147,13 +129,7 @@ export class ChatStore {
     private onChange: (kind: ChangeKind) => void,
     /** The page and year the user looks at, sent along with every message. */
     private context: () => { page: string; year: number },
-  ) {
-    this.chats = read<Chat[]>(this.key, []).filter((c) => c && Array.isArray(c.items));
-  }
-
-  private get key() {
-    return `fp-chats:${this.token}`;
-  }
+  ) {}
 
   subscribe = (fn: () => void) => {
     this.listeners.add(fn);
@@ -167,30 +143,9 @@ export class ChatStore {
     for (const fn of this.listeners) fn();
   }
 
-  private save() {
-    // Newest first; if storage is full, store the chats without images (this session keeps
-    // them), then drop the oldest chats until it fits.
-    this.chats.sort((a, b) => b.updatedAt - a.updatedAt);
-    this.chats = this.chats.slice(0, MAX_CHATS);
-    if (this.store(this.chats)) return;
-    const lean = this.chats.map(withoutImages);
-    for (let n = lean.length; n > 0; n--) {
-      if (this.store(lean.slice(0, n))) return;
-    }
-    write(this.key, []);
-  }
-
-  private store(chats: Chat[]) {
-    try {
-      localStorage.setItem(this.key, JSON.stringify(chats));
-      return true;
-    } catch {
-      return false; // too big (or blocked)
-    }
-  }
-
-  get current(): Chat | undefined {
-    return this.chats.find((c) => c.id === this.currentId);
+  /** A turn runs in the open chat (or a message is on its way). */
+  get busy(): boolean {
+    return this.sending || this.current?.status === "running";
   }
 
   /** Loads the AI settings once (to know whether the assistant is set up). */
@@ -213,46 +168,119 @@ export class ChatStore {
     this.emit();
   }
 
+  /** Loads the list of chats (first moving chats this device kept before to the server). */
+  loadChats() {
+    this.listing ??= (async () => {
+      try {
+        await this.importLocal();
+        this.chats = await api.chats(this.token);
+        this.emit();
+      } catch {
+        // Offline or not allowed: the list stays as it is.
+      } finally {
+        this.listing = null;
+      }
+    })();
+    return this.listing;
+  }
+
+  /** Back on the page (another device may have chatted meanwhile): the list and the open chat
+   *  catch up. */
+  refresh() {
+    this.loadChats();
+    if (this.current?.id && !this.following) this.follow(this.current.id);
+  }
+
+  /** Chats from before they were stored on the server, kept in this browser: moved there. */
+  private async importLocal() {
+    const key = `fp-chats:${this.token}`;
+    const local = read<unknown[]>(key, []);
+    if (!Array.isArray(local) || !local.length) return;
+    for (const chat of local) {
+      try {
+        await api.importChat(this.token, chat);
+      } catch (err) {
+        // Kept for the next try unless the server refused the chat itself.
+        if (!(err instanceof ApiError) || !err.status || err.status >= 500 || err.status === 429) {
+          return;
+        }
+      }
+    }
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // storage blocked
+    }
+  }
+
   newChat() {
-    this.stop();
+    this.unfollow();
     this.currentId = null;
+    this.current = null;
+    this.activity = null;
     this.emit();
   }
 
-  open(id: string) {
-    this.stop();
+  /** Opens a chat (a running turn goes on either way). */
+  async open(id: string) {
+    if (id === this.currentId && this.current) return;
+    this.unfollow();
     this.currentId = id;
+    this.current = null;
+    this.activity = null;
     this.emit();
+    try {
+      const s = await api.chat<Item>(this.token, id);
+      if (this.currentId !== id) return;
+      for (const it of s.items) if (it?.kind === "change") this.seen.add(it.id);
+      this.current = { id, title: s.chat.title, status: s.chat.status, items: s.items, rev: s.rev };
+      this.summary(s.chat);
+      this.emit();
+      if (s.chat.status === "running") this.follow(id);
+    } catch (err) {
+      if (this.currentId !== id) return;
+      if (err instanceof ApiError && err.status === 404) {
+        this.chats = this.chats.filter((c) => c.id !== id);
+        this.currentId = null;
+      }
+      toast((err as Error).message);
+      this.emit();
+    }
   }
 
-  remove(id: string) {
+  async remove(id: string) {
+    try {
+      await api.deleteChat(this.token, id);
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 404)) {
+        toast((err as Error).message);
+        return;
+      }
+    }
     this.chats = this.chats.filter((c) => c.id !== id);
-    if (this.currentId === id) this.currentId = null;
-    this.save();
+    if (this.currentId === id) this.newChat();
     this.emit();
   }
 
-  stop() {
-    this.abort?.abort();
-    this.abort = null;
+  /** Stops the open chat's turn; it ends with what it did so far. */
+  async stop() {
+    const id = this.current?.id;
+    if (!id) return;
+    try {
+      await api.stopChat(this.token, id);
+      if (!this.following) this.follow(id);
+    } catch (err) {
+      toast((err as Error).message);
+    }
+  }
+
+  private input(): Omit<ChatInput, "text" | "attachments"> {
+    return { lang: getLang(), today: today(), ...this.context() };
   }
 
   async send(text: string, attachments: Attachment[] = []) {
     const message = text.trim();
     if ((!message && !attachments.length) || this.busy) return;
-    let chat = this.current;
-    if (!chat) {
-      chat = {
-        id: crypto.randomUUID(),
-        title: (message || attachments[0].name).slice(0, 60),
-        updatedAt: Date.now(),
-        history: [],
-        items: [],
-      };
-      this.chats.unshift(chat);
-      this.currentId = chat.id;
-    }
-    const c = chat;
     const item: Item = { kind: "user", text: message };
     if (attachments.length) {
       item.attachments = attachments.map((a) =>
@@ -261,290 +289,233 @@ export class ChatStore {
           : { kind: a.kind, name: a.name }
       );
     }
+    const input: ChatInput = {
+      ...this.input(),
+      text: message,
+      attachments: attachments.map((a) =>
+        a.kind === "image"
+          ? { kind: "image", name: a.name, url: a.url }
+          : { kind: "file", name: a.name, text: a.text }
+      ),
+    };
+    // Shown right away; the server sends it back at the same position.
+    if (!this.current) {
+      this.current = {
+        id: "",
+        title: (message || attachments[0].name).slice(0, 60),
+        status: "idle",
+        items: [],
+        rev: 0,
+      };
+    }
+    const c = this.current;
     // A new message instead of an answer: the question stays unanswered.
-    const open = this.openQuestion(c);
-    if (open) this.closeQuestion(c, open);
+    const open = this.openQuestion();
+    if (open) c.items = c.items.map((it) => (it === open ? { ...open, skipped: true } : it));
     c.items = [...c.items, item];
-    c.history = [...c.history, {
-      role: "user",
-      content: attachments.length ? toParts(message, attachments) : message,
-    }];
-    await this.run(c);
+    const id = c.id;
+    await this.start(
+      id || null,
+      (onEvent, signal) =>
+        id
+          ? api.sendMessage<Item>(this.token, id, input, onEvent, signal)
+          : api.startChat<Item>(this.token, input, onEvent, signal),
+    );
   }
 
-  /** The chat's question that still waits for an answer (the turn goes on with it). */
-  openQuestion(chat = this.current): QuestionItem | undefined {
-    const q = chat?.items.findLast((it) => it.kind === "question");
-    if (!chat || q?.kind !== "question" || q.answer || q.skipped) return undefined;
-    return chat.history.some((m) => m.role === "tool" && m.tool_call_id === q.id) ? undefined : q;
+  /** The open chat's question that waits for an answer (the turn goes on with it). */
+  openQuestion(): QuestionItem | undefined {
+    const items = this.current?.items ?? [];
+    const i = items.findLastIndex((it) => it?.kind === "question");
+    const q = items[i];
+    if (q?.kind !== "question" || q.answer || q.skipped || this.busy) return undefined;
+    return items.slice(i + 1).some((it) => it?.kind === "user") ? undefined : q;
   }
 
   /** Answers the open question of the current chat, and the assistant goes on. */
   async answer(selected: string[], text: string) {
     const c = this.current;
-    const q = this.openQuestion(c);
+    const q = this.openQuestion();
     const own = text.trim();
-    if (!c || !q || this.busy || (!selected.length && !own)) return;
-    this.closeQuestion(c, q, { selected, ...(own ? { text: own } : {}) });
-    await this.run(c);
+    if (!c?.id || !q || this.busy || (!selected.length && !own)) return;
+    const answer = { selected, ...(own ? { text: own } : {}) };
+    c.items = c.items.map((it) => (it === q ? { ...q, answer } : it));
+    await this.start(c.id, (onEvent, signal) =>
+      api.answerQuestion<Item>(
+        this.token,
+        c.id,
+        { ...this.input(), id: q.id, ...answer },
+        onEvent,
+        signal,
+      ));
   }
 
-  /** Gives a question its answer (or none: skipped), in the chat and in the history. */
-  private closeQuestion(c: Chat, q: QuestionItem, answer?: QuestionItem["answer"]) {
-    c.items = c.items.map((
-      it,
-    ) => (it === q ? { ...q, ...(answer ? { answer } : { skipped: true }) } : it));
-    const content = answer
-      ? JSON.stringify({
-        ...(answer.selected.length ? { selected: answer.selected } : {}),
-        ...(answer.text ? { ownAnswer: answer.text } : {}),
-      })
-      : SKIPPED;
-    c.history = [...c.history, { role: "tool", tool_call_id: q.id, content }];
-  }
-
-  /** Runs the turn: sends the history and shows the streamed answer, until it is complete. */
-  private async run(c: Chat) {
-    c.updatedAt = Date.now();
-    this.busy = true;
+  /** Sends a message (or an answer) with `request`, then follows the turn. */
+  private async start(id: string | null, request: Follow) {
+    this.sending = true;
     this.activity = { kind: "thinking", at: Date.now() };
-    this.save();
     this.emit();
+    await this.follow(id, request);
+  }
 
-    // One controller for the whole turn, so stopping also ends a chain of continued requests.
+  private unfollow() {
+    this.following?.abort();
+    this.following = null;
+  }
+
+  /**
+   * Follows a chat until no turn runs in it: with `first` (a message being sent), then with
+   * follow requests from what this device has. The server runs the turn either way, so a
+   * stream that breaks off is simply asked for again.
+   */
+  private async follow(id: string | null, first?: Follow) {
+    this.unfollow();
     const abort = new AbortController();
-    this.abort = abort;
-    const start = c.history.length; // where this turn's answer begins
-    let more = false;
-    let ended = false; // the request ended with "done", "error" or "continue"
-    let failure: string | null = null; // why the request has to be tried again
-    let answer: Item & { kind: "assistant" } | null = null;
-    // The step that is running: the server sends its messages once it is done.
-    let step = { text: "", calls: [] as ToolCall[], results: new Map<string, string>() };
-    const update = (fn: (items: Item[]) => Item[]) => {
-      c.items = fn([...c.items]);
-      this.emit();
-    };
-    const doing = (kind: "thinking" | "writing" | "tool") => {
-      this.activity = { kind, at: Date.now() };
-    };
-    const onEvent = (e: ChatEvent) => {
-      switch (e.event) {
-        case "text":
-          doing("writing");
-          if (!answer) {
-            answer = { kind: "assistant", text: "" };
-            update((items) => [...items, answer!]);
-          }
-          answer.text += e.data.delta;
-          step.text += e.data.delta;
-          update((items) => items);
-          break;
-        case "tool":
-          doing("tool");
-          answer = null; // text after the tool goes into a new bubble
-          step.calls.push({
-            id: e.data.id,
-            type: "function",
-            function: { name: e.data.name, arguments: JSON.stringify(e.data.args) },
-          });
-          update((
-            items,
-          ) => [...items, { kind: "tool", ...e.data, status: "running" }]);
-          break;
-        case "tool_result":
-          step.results.set(e.data.id, JSON.stringify({ ok: e.data.ok, summary: e.data.summary }));
-          // Once its tools are done, the model reads the results and decides what's next.
-          if (
-            !c.items.some((it) =>
-              it.kind === "tool" && it.status === "running" && it.id !== e.data.id
-            )
-          ) doing("thinking");
-          update((items) =>
-            items.map((it) =>
-              it.kind === "tool" && it.id === e.data.id
-                ? {
-                  ...it,
-                  status: e.data.ok ? "ok" : "error",
-                  summary: e.data.summary,
-                }
-                : it
-            )
-          );
-          break;
-        case "change":
-          update((items) => [...items, {
-            kind: "change",
-            id: e.data.id,
-            change: e.data.kind,
-            summary: e.data.summary,
-            undo: e.data.undo,
-          }]);
-          this.onChange(e.data.kind);
-          break;
-        case "question":
-          // The turn waits for the user's answer ("done" follows).
-          ended = true;
-          answer = null;
-          update((items) => [...items, { kind: "question", ...e.data }]);
-          break;
-        case "messages":
-          doing("thinking");
-          c.history = [...c.history, ...e.data.messages];
-          for (const m of e.data.messages) {
-            if (m.role === "tool" && m.tool_call_id && typeof m.content === "string") {
-              this.results.set(m.tool_call_id, m.content);
-            }
-          }
-          answer = null;
-          step = { text: "", calls: [], results: new Map() };
-          break;
-        case "done":
-          ended = true;
-          break;
-        case "continue":
-          more = true;
-          ended = true;
-          if (e.data.retry) failure = e.data.message ?? t("chat.cut_off");
-          break;
-        case "error":
-          ended = true;
-          failure = e.data.message;
-          break;
-      }
-    };
-
-    /** After a failed request: keep what the running step did, so it isn't done twice. */
-    const recover = () => {
-      if (step.calls.length) {
-        // Its tools ran (some maybe only partly): tell the model what is known about them.
-        const calls = step.calls;
-        c.history = [
-          ...c.history,
-          { role: "assistant", content: step.text || null, tool_calls: calls },
-          ...calls.map((call): ChatMessage => ({
-            role: "tool",
-            tool_call_id: call.id,
-            content: step.results.get(call.id) ?? INTERRUPTED,
-          })),
-        ];
-        update((items) =>
-          items.map((it) =>
-            it.kind === "tool" && it.status === "running"
-              ? { ...it, status: "error", summary: t("chat.interrupted") }
-              : it
-          )
-        );
-      } else if (answer) {
-        // Only text so far: the step runs again, so its text goes.
-        const partial = answer;
-        update((items) => items.filter((it) => it !== partial));
-      }
-      answer = null;
-      step = { text: "", calls: [], results: new Map() };
-    };
-
-    // The server hands the turn off ("continue") before it runs out of time, or to try a failed
-    // step again; a request can also break off. Carry on with new requests until the answer is
-    // there, trying again (a little later each time) up to MAX_RETRIES times.
-    const body = { lang: getLang(), today: today(), ...this.context() };
-    for (let tries = 0; !abort.signal.aborted;) {
-      more = false;
-      ended = false;
-      failure = null;
-      let fatal = false;
+    this.following = abort;
+    let chatId = id;
+    let request = first;
+    for (let failures = 0; !abort.signal.aborted;) {
+      let end = false;
+      let heard = false;
+      const onEvent = (e: ChatEvent<Item>) => {
+        if (abort.signal.aborted) return;
+        heard = true;
+        if (e.event === "chat") chatId ??= e.data.id;
+        if (e.event === "end") end = true;
+        if (chatId) this.apply(chatId, e);
+      };
       try {
-        await api.chat(
-          this.token,
-          {
-            messages: keepImages(
-              c.history,
-              MAX_IMAGES,
-              "(an earlier image, no longer sent)",
-            ),
-            ...body,
-            // After tool results the turn goes on; else the user's message is (still) last.
-            ...(c.history.at(-1)?.role === "tool" ? { continue: true } : {}),
-          },
-          onEvent,
-          abort.signal,
-        );
-        // Closed before the server said how it ended (stopped at a time limit, network gone).
-        if (!ended) failure ??= t("chat.cut_off");
+        if (request) {
+          const r = request;
+          request = undefined;
+          await r(onEvent, abort.signal);
+        } else if (chatId) {
+          await api.followChat<Item>(
+            this.token,
+            chatId,
+            this.current?.rev ?? 0,
+            onEvent,
+            abort.signal,
+          );
+        } else break;
       } catch (err) {
-        failure = (err as Error).message;
-        fatal = !retryable(err);
+        if (first && !heard && this.sending) {
+          // The message didn't get through: the chat says so (it stays visible).
+          this.sending = false;
+          this.failed((err as Error).message);
+          if (!(err instanceof ApiError && err.status)) this.loadChats(); // maybe it did
+          break;
+        }
+        // Refused (the chat is gone, or no longer ours): following won't help.
+        const status = err instanceof ApiError ? err.status : undefined;
+        if (status && status < 500 && status !== 429) break;
+        failures++;
       }
-      if (abort.signal.aborted) break;
-      if (failure === null) {
-        if (more) continue;
-        break;
-      }
-      recover();
-      if (fatal || ++tries > MAX_RETRIES) {
-        this.activity = null;
-        const text = failure;
-        update((items) => [...items, { kind: "error", text }]);
-        // The server never answered this turn: drop the message from the history so the next
-        // one starts cleanly (it stays visible).
-        if (c.history.at(-1)?.role === "user") c.history = c.history.slice(0, -1);
-        break;
-      }
-      this.activity = { kind: "retrying", at: Date.now(), attempt: tries, max: MAX_RETRIES };
+      this.sending = false;
+      if (abort.signal.aborted || end) break;
+      // Reconnect at once after a good stream, else a little later each time.
+      if (heard) failures = 0;
+      else await pause(Math.min(MAX_PAUSE, 1000 * 2 ** failures), abort.signal);
+    }
+    if (this.following === abort) {
+      this.following = null;
+      this.sending = false;
+      if (this.current?.id === chatId && this.current?.status !== "running") this.activity = null;
       this.emit();
-      await pause(tries * 1000, abort.signal);
-      doing("thinking");
     }
-    const last = c.history.at(-1);
-    if (last && (last.role !== "assistant" || last.tool_calls?.length) && !this.openQuestion(c)) {
-      // Stopped before the answer: keep the history valid for the next turn.
-      c.history = [...c.history, { role: "assistant", content: "(stopped)" }];
+  }
+
+  private failed(text: string) {
+    if (this.current) {
+      this.current.items = [...this.current.items, { kind: "error", text }];
+      if (!this.current.id) this.current.status = "idle";
     }
-    // Keep only the start of this turn's tool results.
-    c.history = c.history.map((m, i) =>
-      i >= start && m.role === "tool" && typeof m.content === "string" &&
-        m.content.length > MAX_TOOL_RESULT
-        ? { ...m, content: m.content.slice(0, MAX_TOOL_RESULT) + "…(truncated)" }
-        : m
-    );
-    this.busy = false;
     this.activity = null;
-    this.abort = null;
-    c.updatedAt = Date.now();
-    this.save();
     this.emit();
   }
 
-  /** A tool call's result: in full if it ran on this device since the page loaded. */
+  /** Keeps a chat's summary in the list (the latest first). */
+  private summary(s: ChatSummary) {
+    this.chats = [s, ...this.chats.filter((c) => c.id !== s.id)].sort((a, b) =>
+      b.updatedAt.localeCompare(a.updatedAt)
+    );
+  }
+
+  /** What a chat's stream says. */
+  private apply(id: string, e: ChatEvent<Item>) {
+    // A new chat gets its id with the first event.
+    if (this.current && !this.current.id && e.event === "chat" && this.currentId === null) {
+      this.current.id = id;
+      this.currentId = id;
+    }
+    const c = this.current?.id === id ? this.current : null;
+    switch (e.event) {
+      case "chat": {
+        this.summary(e.data);
+        if (!c) break;
+        c.title = e.data.title;
+        c.status = e.data.status;
+        const a = e.data.activity;
+        if (!a || e.data.status !== "running") this.activity = null;
+        else if (JSON.stringify({ ...this.activity, at: 0 }) !== JSON.stringify({ ...a, at: 0 })) {
+          this.activity = { ...a, at: Date.now() };
+        }
+        break;
+      }
+      case "items":
+        if (!c) break;
+        c.items = [...c.items];
+        for (const { seq, item } of e.data.items) {
+          c.items[seq] = item;
+          if (item?.kind === "change" && !this.seen.has(item.id)) {
+            this.seen.add(item.id);
+            this.onChange(item.change);
+          }
+        }
+        if (e.data.rev !== undefined) c.rev = Math.max(c.rev, e.data.rev);
+        break;
+      case "delta": {
+        const it = c?.items[e.data.seq];
+        if (!c || it?.kind !== "assistant") break;
+        c.items = [...c.items];
+        c.items[e.data.seq] = { ...it, text: it.text + e.data.text };
+        this.activity = { kind: "writing", at: Date.now() };
+        break;
+      }
+      case "end":
+        if (e.data.deleted) {
+          this.chats = this.chats.filter((x) => x.id !== id);
+          if (c) this.newChat();
+        } else if (c) {
+          c.status = "idle";
+          this.activity = null;
+        }
+        break;
+    }
+    this.emit();
+  }
+
+  /** A tool call's result, as far as the chat keeps it. */
   toolResult(chat: Chat, id: string): string | undefined {
-    const saved = chat.history.find((m) => m.role === "tool" && m.tool_call_id === id);
-    const content = this.results.get(id) ?? saved?.content;
-    return typeof content === "string" ? content : undefined;
+    const item = chat.items.find((it) => it?.kind === "tool" && it.id === id);
+    return item?.kind === "tool" ? item.result : undefined;
   }
 
   async undo(chatId: string, changeId: string) {
-    const chat = this.chats.find((c) => c.id === chatId);
-    const item = chat?.items.find((it) => it.kind === "change" && it.id === changeId);
+    const chat = this.current?.id === chatId ? this.current : null;
+    const item = chat?.items.find((it) => it?.kind === "change" && it.id === changeId);
     if (!chat || !item || item.kind !== "change" || item.undone) return;
     try {
       await api.undo(this.token, item.undo);
-      chat.items = chat.items.map((
-        it,
-      ) => (it === item ? { ...item, undone: true } : it));
-      const open = this.openQuestion(chat);
-      if (open) this.closeQuestion(chat, open);
-      // Tell the assistant, so it doesn't assume the change is still there.
-      chat.history = [
-        ...chat.history,
-        { role: "user", content: `(I undid this change: ${item.summary})` },
-        { role: "assistant", content: "OK." },
-      ];
-      this.save();
+      chat.items = chat.items.map((it) => (it === item ? { ...item, undone: true } : it));
       this.emit();
       this.onChange(item.change);
       toast(t("chat.undone"));
     } catch (err) {
       toast(t("chat.undo_failed", { msg: (err as Error).message }));
+      return;
     }
+    // Tell the assistant, so it doesn't assume the change is still there.
+    await api.chatUndone(this.token, chatId, changeId).catch(() => {});
   }
 }
