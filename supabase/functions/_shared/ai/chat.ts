@@ -129,7 +129,7 @@ ${
   }
 - Call tools that don't depend on each other together, and put many changes into one call's
   ops: an answer can only take a limited number of steps.
-- Dates are YYYY-MM-DD. Keep answers short; use Markdown lists only where they help.
+- Dates are YYYY-MM-DD. Keep answers short; use Markdown lists or tables only where they help.
 
 ## Ask instead of guessing
 Asking is cheap for the user: ask_user shows answers to click (one, or several with
