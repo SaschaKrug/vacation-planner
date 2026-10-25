@@ -2,6 +2,7 @@ import {
   CalendarDays,
   Check,
   CircleAlert,
+  Copy,
   FileText,
   Globe,
   History,
@@ -18,9 +19,10 @@ import {
   Wallet,
   X,
 } from "lucide-react";
-import { type DragEvent, useEffect, useRef, useState } from "react";
+import { type DragEvent, Fragment, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
+import { copyText } from "@/components/CopyField";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import {
@@ -44,6 +46,8 @@ import {
   readAttachment,
 } from "@/features/chat/attachments";
 import type { Item, ItemAttachment } from "@/features/chat/store";
+import { toolDetail, toolLabel } from "@/features/chat/tools";
+import { transcript } from "@/features/chat/transcript";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { getLang, t } from "@/lib/i18n";
 import { readFlag, writeFlag } from "@/lib/storage";
@@ -141,6 +145,10 @@ function ChatView({ onClose }: { onClose: () => void }) {
   const listRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const current = chat.current;
+  /** Copies items of the open chat, with every tool call's arguments and result. */
+  const copy = (items: Item[]) => {
+    if (current) copyText(transcript(items, (id) => chat.toolResult(current, id)));
+  };
 
   useEffect(() => {
     chat.loadSettings();
@@ -220,6 +228,16 @@ function ChatView({ onClose }: { onClose: () => void }) {
         <h2 className="min-w-0 flex-1 truncate font-semibold">
           {current?.title ?? t("chat.title")}
         </h2>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={t("chat.copy.chat")}
+          title={t("chat.copy.chat")}
+          disabled={!current?.items.length}
+          onClick={() => current && copy(current.items)}
+        >
+          <Copy />
+        </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -299,19 +317,33 @@ function ChatView({ onClose }: { onClose: () => void }) {
         {settings && !ready && <SetupHint />}
         {chat.settingsError && <p className="text-gap">{chat.settingsError}</p>}
         {ready && !current?.items.length && <Suggestions onPick={send} />}
-        {current?.items.map((item, i) => (
-          <ItemView
-            key={i}
-            item={item}
-            onUndo={(id) => chat.undo(current.id, id)}
-          />
-        ))}
-        {chat.busy && current?.items.at(-1)?.kind === "user" && (
-          <Loader2
-            className="size-4 animate-spin text-muted-foreground"
-            aria-label={t("chat.thinking")}
-          />
-        )}
+        {current?.items.map((item, i, items) => {
+          // An answer is everything between two messages of the user; once it's complete it
+          // gets a copy button.
+          const next = items[i + 1];
+          const complete = item.kind !== "user" &&
+            (next ? next.kind === "user" : !chat.busy);
+          let start = i;
+          while (complete && start > 0 && items[start - 1].kind !== "user") start--;
+          return (
+            <Fragment key={i}>
+              <ItemView item={item} onUndo={(id) => chat.undo(current.id, id)} />
+              {complete && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="-mt-2 size-7 text-muted-foreground"
+                  aria-label={t("chat.copy.answer")}
+                  title={t("chat.copy.answer")}
+                  onClick={() => copy(items.slice(start, i + 1))}
+                >
+                  <Copy className="size-3.5" />
+                </Button>
+              )}
+            </Fragment>
+          );
+        })}
+        {chat.busy && <ActivityLine />}
       </div>
 
       <form
@@ -473,23 +505,42 @@ const TOOL_ICONS: Record<string, typeof Search> = {
   finance_summary: Wallet,
   manage_categories: Wallet,
   change_transactions: Wallet,
+  combine_transfers: Wallet,
 };
 
-function toolLabel(item: Item & { kind: "tool" }) {
-  const a = item.args ?? {};
-  if (item.name === "web_search") {
-    return t("chat.tool.web_search", { q: String(a.query ?? "") });
+/** After this long without a new piece of text, the model is busy with its next step. */
+const WRITING_PAUSE = 2000;
+
+/** What the assistant is doing right now, under the chat while it answers. */
+function ActivityLine() {
+  const chat = useChat();
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const a = chat.activity;
+  if (!a) return null;
+  const running = (chat.current?.items ?? []).filter(
+    (it): it is Item & { kind: "tool" } => it.kind === "tool" && it.status === "running",
+  );
+  let text = t("chat.thinking");
+  if (a.kind === "retrying") {
+    text = t("chat.status.retrying", { n: a.attempt, max: a.max });
+  } else if (a.kind === "tool" && running.length) {
+    const more = running.length > 1 ? ` (+${running.length - 1})` : "";
+    text = `${toolLabel(running.at(-1)!)}${more}…`;
+  } else if (a.kind === "writing" && now - a.at < WRITING_PAUSE) {
+    text = t("chat.status.writing");
   }
-  if (item.name === "fetch_page") {
-    let host = String(a.url ?? "");
-    try {
-      host = new URL(host).hostname;
-    } catch {
-      // keep as is
-    }
-    return t("chat.tool.fetch_page", { host });
-  }
-  return t(`chat.tool.${item.name}`);
+  const secs = Math.floor((now - a.at) / 1000);
+  return (
+    <div className="flex items-center gap-2 text-xs text-muted-foreground" role="status">
+      <Loader2 className="size-3.5 shrink-0 animate-spin" />
+      <span className="min-w-0 truncate">{text}</span>
+      {secs >= 5 && <span className="shrink-0 tabular-nums opacity-70">{secs} s</span>}
+    </div>
+  );
 }
 
 /** An attachment in the composer, with a remove button. */
@@ -593,13 +644,18 @@ function ItemView(
   }
   if (item.kind === "tool") {
     const Icon = TOOL_ICONS[item.name] ?? Sparkles;
+    const label = toolLabel(item);
+    const detail = toolDetail(item);
     return (
       <div
         className="flex items-center gap-2 text-xs text-muted-foreground"
-        title={item.summary}
+        title={[label, detail, item.summary].filter(Boolean).join("\n")}
       >
         <Icon className="size-3.5 shrink-0" />
-        <span className="min-w-0 truncate">{toolLabel(item)}</span>
+        <span className="min-w-0 truncate">
+          {label}
+          {detail && <span className="opacity-70">{` · ${detail}`}</span>}
+        </span>
         {item.status === "running" && <Loader2 className="size-3 shrink-0 animate-spin" />}
         {item.status === "ok" && <Check className="size-3 shrink-0" />}
         {item.status === "error" && <CircleAlert className="size-3 shrink-0 text-gap" />}
