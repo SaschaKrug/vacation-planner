@@ -3,7 +3,14 @@
 
 import { toast } from "sonner";
 import { type Attachment, keepImages, toParts } from "@/features/chat/attachments";
-import { type AiSettings, api, type ChatEvent, type ChatMessage, type UndoStep } from "@/lib/api";
+import {
+  type AiSettings,
+  api,
+  ApiError,
+  type ChatEvent,
+  type ChatMessage,
+  type UndoStep,
+} from "@/lib/api";
 import { getLang, t } from "@/lib/i18n";
 import { read, write } from "@/lib/storage";
 
@@ -52,6 +59,30 @@ const MAX_CHATS = 20;
 const MAX_IMAGES = 8;
 /** Characters of a tool result kept in the saved history (the server sends them in full). */
 const MAX_TOOL_RESULT = 2000;
+/** Times a turn is tried again after a request failed or broke off, before the chat says so. */
+const MAX_RETRIES = 5;
+/** What the model learns about a tool that was running when a request broke off. */
+const INTERRUPTED = JSON.stringify({
+  error: "Interrupted: this may or may not have been done. Check before doing it again.",
+});
+
+type ToolCall = NonNullable<ChatMessage["tool_calls"]>[number];
+
+/** Whether a failed request is worth trying again (not, say, an invalid one). */
+const retryable = (err: unknown) => {
+  const status = err instanceof ApiError ? err.status : undefined;
+  return !status || status === 429 || status >= 500;
+};
+
+/** Resolves after `ms`, or as soon as the turn is stopped. */
+const pause = (ms: number, signal: AbortSignal) =>
+  new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener("abort", () => {
+      clearTimeout(timer);
+      resolve();
+    }, { once: true });
+  });
 
 /** A chat without its image data, for when storage is full. */
 const withoutImages = (c: Chat): Chat => ({
@@ -222,7 +253,11 @@ export class ChatStore {
     this.abort = abort;
     const start = c.history.length; // where this turn's answer begins
     let more = false;
+    let ended = false; // the request ended with "done", "error" or "continue"
+    let failure: string | null = null; // why the request has to be tried again
     let answer: Item & { kind: "assistant" } | null = null;
+    // The step that is running: the server sends its messages once it is done.
+    let step = { text: "", calls: [] as ToolCall[], results: new Map<string, string>() };
     const update = (fn: (items: Item[]) => Item[]) => {
       c.items = fn([...c.items]);
       this.emit();
@@ -235,15 +270,22 @@ export class ChatStore {
             update((items) => [...items, answer!]);
           }
           answer.text += e.data.delta;
+          step.text += e.data.delta;
           update((items) => items);
           break;
         case "tool":
           answer = null; // text after the tool goes into a new bubble
+          step.calls.push({
+            id: e.data.id,
+            type: "function",
+            function: { name: e.data.name, arguments: JSON.stringify(e.data.args) },
+          });
           update((
             items,
           ) => [...items, { kind: "tool", ...e.data, status: "running" }]);
           break;
         case "tool_result":
+          step.results.set(e.data.id, JSON.stringify({ ok: e.data.ok, summary: e.data.summary }));
           update((items) =>
             items.map((it) =>
               it.kind === "tool" && it.id === e.data.id
@@ -268,23 +310,63 @@ export class ChatStore {
           break;
         case "messages":
           c.history = [...c.history, ...e.data.messages];
+          answer = null;
+          step = { text: "", calls: [], results: new Map() };
+          break;
+        case "done":
+          ended = true;
           break;
         case "continue":
           more = true;
+          ended = true;
+          if (e.data.retry) failure = e.data.message ?? t("chat.cut_off");
           break;
         case "error":
-          update((
-            items,
-          ) => [...items, { kind: "error", text: e.data.message }]);
+          ended = true;
+          failure = e.data.message;
           break;
       }
     };
 
-    // The server may hand the turn off ("continue") before it runs out of time: carry on with
-    // the next request until one ends without it.
+    /** After a failed request: keep what the running step did, so it isn't done twice. */
+    const recover = () => {
+      if (step.calls.length) {
+        // Its tools ran (some maybe only partly): tell the model what is known about them.
+        const calls = step.calls;
+        c.history = [
+          ...c.history,
+          { role: "assistant", content: step.text || null, tool_calls: calls },
+          ...calls.map((call): ChatMessage => ({
+            role: "tool",
+            tool_call_id: call.id,
+            content: step.results.get(call.id) ?? INTERRUPTED,
+          })),
+        ];
+        update((items) =>
+          items.map((it) =>
+            it.kind === "tool" && it.status === "running"
+              ? { ...it, status: "error", summary: t("chat.interrupted") }
+              : it
+          )
+        );
+      } else if (answer) {
+        // Only text so far: the step runs again, so its text goes.
+        const partial = answer;
+        update((items) => items.filter((it) => it !== partial));
+      }
+      answer = null;
+      step = { text: "", calls: [], results: new Map() };
+    };
+
+    // The server hands the turn off ("continue") before it runs out of time, or to try a failed
+    // step again; a request can also break off. Carry on with new requests until the answer is
+    // there, trying again (a little later each time) up to MAX_RETRIES times.
     const body = { lang: getLang(), today: today(), ...this.context() };
-    for (let first = true; first || (more && !abort.signal.aborted); first = false) {
+    for (let tries = 0; !abort.signal.aborted;) {
       more = false;
+      ended = false;
+      failure = null;
+      let fatal = false;
       try {
         await api.chat(
           this.token,
@@ -295,18 +377,33 @@ export class ChatStore {
               "(an earlier image, no longer sent)",
             ),
             ...body,
-            ...(first ? {} : { continue: true }),
+            // After tool results the turn goes on; else the user's message is (still) last.
+            ...(c.history.at(-1)?.role === "tool" ? { continue: true } : {}),
           },
           onEvent,
           abort.signal,
         );
+        // Closed before the server said how it ended (stopped at a time limit, network gone).
+        if (!ended) failure ??= t("chat.cut_off");
       } catch (err) {
-        more = false;
-        c.items = [...c.items, { kind: "error", text: (err as Error).message }];
-        // The server never saw this turn's answer: drop the message from the history so the
-        // next one starts cleanly (it stays visible).
-        if (first && c.history.at(-1)?.role === "user") c.history = c.history.slice(0, -1);
+        failure = (err as Error).message;
+        fatal = !retryable(err);
       }
+      if (abort.signal.aborted) break;
+      if (failure === null) {
+        if (more) continue;
+        break;
+      }
+      recover();
+      if (fatal || ++tries > MAX_RETRIES) {
+        const text = failure;
+        update((items) => [...items, { kind: "error", text }]);
+        // The server never answered this turn: drop the message from the history so the next
+        // one starts cleanly (it stays visible).
+        if (c.history.at(-1)?.role === "user") c.history = c.history.slice(0, -1);
+        break;
+      }
+      await pause(tries * 1000, abort.signal);
     }
     const last = c.history.at(-1);
     if (last && (last.role !== "assistant" || last.tool_calls?.length)) {

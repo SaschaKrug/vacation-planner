@@ -29,12 +29,26 @@ const OLD_IMAGE = "(an earlier image, no longer sent)";
 /** Edge Functions run at most 150 s (free plan): after this, a request hands the turn back to
  *  the app, which goes on with a new request ("continue"). */
 const HAND_OFF_MS = 90_000;
+/** A model call that is still running then is cut off, so the request can still report back
+ *  (and the app learns what happened) before the platform stops it. */
+const DEADLINE_MS = 130_000;
+const MODEL_TIMEOUT_MS = 120_000;
+const NO_ANSWER = "(The model gave no answer.)";
+const TOO_SLOW = "The AI model took too long to answer.";
+/** Times a model that ended without a word is asked again for its answer. */
+const MAX_NUDGES = 5;
 
 const WRAP_UP = `
 
 ## Out of steps
 You can't use tools any more in this answer. Answer now with what you found and did so far,
 and say what is still open, so the user can ask you to go on.`;
+
+/** For a model that ended its turn without a word: it gets one more call, without tools. */
+const ANSWER_NOW = `
+
+## Answer now
+You ended without answering. Don't use tools now: tell the user what you found and did.`;
 
 export type Emit = (event: string, data: unknown) => void;
 
@@ -206,8 +220,9 @@ function cleanParts(raw: unknown[]): ContentPart[] {
 /**
  * Runs the tool loop and emits: "text" {delta}, "tool" {id, name, args}, "tool_result"
  * {id, name, ok, summary}, "change" {id, kind, summary, undo}, "messages" {messages} (what the
- * app appends to its history) and "done", "error" {message} or "continue" {}: time is nearly
- * up, so the app sends the history again with `continue: true` and the turn goes on there.
+ * app appends to its history, after every step) and "done" or "continue" {retry?, message?}:
+ * time is nearly up, or a model call failed (`retry`, with the reason), so the app sends the
+ * history again and the turn goes on there.
  */
 export async function runChat(opts: {
   provider: Provider;
@@ -220,6 +235,8 @@ export async function runChat(opts: {
   signal?: AbortSignal;
   /** When to hand off to a new request (tests). Default: HAND_OFF_MS. */
   handOffMs?: number;
+  /** When to cut off a model call (tests). Default: DEADLINE_MS. */
+  deadlineMs?: number;
 }) {
   const { provider, ctx, emit, signal } = opts;
   const tools = toolsFor({ writes: opts.writes, search: opts.search });
@@ -228,33 +245,54 @@ export async function runChat(opts: {
   const added: ChatMessage[] = [];
   const started = Date.now();
   const handOffMs = opts.handOffMs ?? HAND_OFF_MS;
+  const deadlineMs = opts.deadlineMs ?? DEADLINE_MS;
+  let late: AbortSignal | undefined;
   const push = (m: ChatMessage) => {
     messages.push(m);
     added.push(m);
   };
+  // The app gets each step's messages when it is done, so a request that is cut off loses no
+  // more than the step that was running.
+  let sent = 0;
+  const flush = () => {
+    if (added.length > sent) emit("messages", { messages: added.slice(sent) });
+    sent = added.length;
+  };
   // Steps count across requests: the tool rounds since the user's message.
   const turn = opts.history.findLastIndex((m) => m.role === "user");
   const used = opts.history.slice(turn + 1).filter((m) => m.tool_calls?.length).length;
+  let nudges = 0;
 
   try {
     for (let step = used;; step++) {
-      // Every request takes at least one step, then hands off before time runs out.
-      if (step > used && Date.now() - started >= handOffMs) {
-        emit("messages", { messages: added });
+      // Every request takes at least one step, then hands off before time runs out (not while
+      // asking for an answer: the history may end with the user's message then).
+      if (step > used && !nudges && Date.now() - started >= handOffMs) {
+        flush();
         emit("continue", {});
         return;
       }
       const last = step >= MAX_STEPS - 1;
-      const body = last
-        ? { messages: [{ ...messages[0], content: opts.system + WRAP_UP }, ...messages.slice(1)] }
+      // The last call of a turn gets no tools, so the model answers.
+      const final = last || nudges > 0;
+      const body = final
+        ? {
+          messages: [
+            { ...messages[0], content: opts.system + (last ? WRAP_UP : ANSWER_NOW) },
+            ...messages.slice(1),
+          ],
+        }
         : { messages };
       let content = "";
       let calls: ToolCall[] = [];
+      late = AbortSignal.timeout(
+        Math.max(1, Math.min(MODEL_TIMEOUT_MS, deadlineMs - (Date.now() - started))),
+      );
       const stream = streamChat(
         provider,
-        { ...body, tools, toolChoice: last ? "none" : "auto" },
+        { ...body, tools, toolChoice: final ? "none" : "auto" },
         ctx.net,
-        signal,
+        signal ? AbortSignal.any([signal, late]) : late,
       );
       for await (const ev of stream) {
         if (ev.type === "text") emit("text", { delta: ev.delta });
@@ -263,12 +301,19 @@ export async function runChat(opts: {
           calls = ev.toolCalls.filter((c) => c.function.name);
         }
       }
-      if (last && !content) {
-        // A server that ignores tool_choice "none" may still only call tools.
-        content = OUT_OF_STEPS;
+      late = undefined;
+      // Some models end a turn without a word (e.g. after tool results), or only call tools
+      // when they mustn't: ask again for the answer.
+      const silent = !content.trim() && (final || !calls.length);
+      if (silent && !last && nudges < MAX_NUDGES) {
+        nudges++;
+        continue;
+      }
+      if (silent) {
+        content = last ? OUT_OF_STEPS : NO_ANSWER;
         emit("text", { delta: content });
       }
-      if (!calls.length || last) {
+      if (!calls.length || final) {
         push({ role: "assistant", content });
         break;
       }
@@ -295,16 +340,22 @@ export async function runChat(opts: {
           : text;
         push({ role: "tool", tool_call_id: call.id, content });
       }
+      flush();
     }
-    emit("messages", { messages: added });
+    flush();
     emit("done", {});
   } catch (err) {
     if (signal?.aborted) return;
-    const message = err instanceof HttpError ? err.message : "The assistant failed";
-    if (!(err instanceof HttpError)) console.error(err);
-    // Keep what happened so far (changes may have been made) and report the error.
-    emit("messages", { messages: added });
-    emit("error", { message });
+    const message = late?.aborted
+      ? TOO_SLOW
+      : err instanceof HttpError
+      ? err.message
+      : "The assistant failed";
+    if (!(err instanceof HttpError) && !late?.aborted) console.error(err);
+    // Only a model call fails (tools report their errors to the model), so the steps so far are
+    // whole: the app keeps them and tries the failed step again with a new request.
+    flush();
+    emit("continue", { retry: true, message });
   }
 }
 

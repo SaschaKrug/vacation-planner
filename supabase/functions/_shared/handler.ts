@@ -66,6 +66,8 @@ export interface HandlerOptions {
   resolve?: (host: string) => Promise<string[]>;
   /** When an AI chat request hands the turn on to a new one (tests). Default: 90 s. */
   aiHandOffMs?: number;
+  /** When an AI chat request cuts off a model call that still runs (tests). Default: 130 s. */
+  aiDeadlineMs?: number;
 }
 
 export function createHandler(store: Store, options: HandlerOptions = {}) {
@@ -79,6 +81,7 @@ export function createHandler(store: Store, options: HandlerOptions = {}) {
       resolve: options.resolve,
     },
     handOffMs: options.aiHandOffMs,
+    deadlineMs: options.aiDeadlineMs,
   };
 
   /** Counts the request against a limit; 429 once the window's limit is used up. */

@@ -113,6 +113,11 @@ function events(sse: string) {
   }).filter((e) => e.event !== "ping");
 }
 
+/** What the app adds to its history: the messages of every step. */
+function addedOf(ev: { event: string; data: any }[]) {
+  return ev.filter((e) => e.event === "messages").flatMap((e) => e.data.messages);
+}
+
 async function chat(t: Awaited<ReturnType<typeof configured>>, text: string, extra = {}) {
   const res = await t.call("POST", `${t.ai}/chat`, {
     messages: [{ role: "user", content: text }],
@@ -234,6 +239,7 @@ Deno.test("the assistant changes the calendar and the change can be undone", asy
     "tool_result",
     "change",
     "messages",
+    "messages",
     "done",
   ]);
   const tool = ev.find((e) => e.event === "tool")!.data;
@@ -247,7 +253,7 @@ Deno.test("the assistant changes the calendar and the change can be undone", asy
   assertMatch(text, /Done: 5 days changed/);
 
   // The history for the next turn: the call, its (shortened) result and the answer.
-  const added = ev.find((e) => e.event === "messages")!.data.messages;
+  const added = addedOf(ev);
   assertEquals(added.map((m: any) => m.role), ["assistant", "tool", "assistant"]);
   assertEquals(added[1].tool_call_id, added[0].tool_calls[0].id);
 
@@ -297,14 +303,14 @@ Deno.test("the assistant searches the web and reads pages, but not private ones"
   assertEquals(search.find((e) => e.event === "tool_result")!.data.ok, true);
 
   const page = await chat(t, "read https://pages.test/ferien please");
-  const added = page.find((e) => e.event === "messages")!.data.messages;
+  const added = addedOf(page);
   const tool = JSON.parse(added[1].content);
   assertEquals(tool.title, "School holidays 2027");
   assert(tool.text.includes("Summer: Aug 2 – Sep 13") && !tool.text.includes("evil"));
 
   // The app gets the whole tool result (it shortens them itself once the turn is over).
   const long = await chat(t, "read https://pages.test/long please");
-  const longTool = long.find((e) => e.event === "messages")!.data.messages[1].content;
+  const longTool = addedOf(long)[1].content;
   assert(longTool.length > 7000 && !longTool.includes("…(truncated)"));
 
   for (const url of ["http://169.254.169.254/latest/meta-data", "https://redirect.test/"]) {
@@ -323,7 +329,7 @@ Deno.test("out of steps, the assistant answers with what it has instead of loopi
   assertEquals(tools.length, 29);
   assertEquals(aiBody.tool_choice, "none");
   assert(aiBody.messages[0].content.includes("## Out of steps"));
-  const added = ev.find((e) => e.event === "messages")!.data.messages;
+  const added = addedOf(ev);
   assertEquals(added.at(-1), { role: "assistant", content: "Out of steps: here is what I have." });
   assert(ev.some((e) => e.event === "done"));
 });
@@ -334,14 +340,14 @@ Deno.test("near the time limit, the turn is handed on to the next request", asyn
   // Each request takes one step, then hands off.
   let ev = await chat(t, "keep looking");
   assertEquals(ev.map((e) => e.event), ["tool", "tool_result", "messages", "continue"]);
-  const history: unknown[] = [user, ...ev.find((e) => e.event === "messages")!.data.messages];
+  const history: unknown[] = [user, ...addedOf(ev)];
   assertEquals(history.length, 3);
   let rounds = 1;
   for (;;) {
     const res = await t.call("POST", `${t.ai}/chat`, { messages: history, continue: true });
     assertEquals(res.status, 200, res.data);
     ev = events(res.data);
-    history.push(...ev.find((e) => e.event === "messages")!.data.messages);
+    history.push(...addedOf(ev));
     rounds++;
     if (!ev.some((e) => e.event === "continue")) break;
     assertEquals(ev.filter((e) => e.event === "tool").length, 1);
@@ -373,6 +379,52 @@ Deno.test("near the time limit, the turn is handed on to the next request", asyn
   for (const body of bad) {
     assertEquals((await t.call("POST", `${t.ai}/chat`, body)).status, 400, JSON.stringify(body));
   }
+});
+
+Deno.test("a model that ends without a word is asked again for its answer", async () => {
+  const t = await configured();
+  let ev = await chat(t, "say nothing");
+  assertEquals(aiBody.tool_choice, "none");
+  assert(aiBody.messages[0].content.includes("## Answer now"));
+  assertEquals(
+    ev.filter((e) => e.event === "text").map((e) => e.data.delta).join(""),
+    "Here is the calendar.",
+  );
+  let added = addedOf(ev);
+  assertEquals(added.map((m: { role: string }) => m.role), ["assistant", "tool", "assistant"]);
+  assertEquals(added.at(-1), { role: "assistant", content: "Here is the calendar." });
+  assert(ev.some((e) => e.event === "done"));
+
+  // Still nothing after five tries: the chat says so instead of ending blank.
+  const before = requests.length;
+  ev = await chat(t, "stay silent");
+  assertEquals(requests.length - before, 6);
+  assertEquals(ev.find((e) => e.event === "text")?.data.delta, "(The model gave no answer.)");
+  added = addedOf(ev);
+  assertEquals(added, [{ role: "assistant", content: "(The model gave no answer.)" }]);
+  assert(ev.some((e) => e.event === "done"));
+});
+
+Deno.test("a failed or too slow model call hands the step back to be tried again", async () => {
+  // Too slow: cut off before the platform would stop the request.
+  let t = await configured({ aiDeadlineMs: 50 });
+  let ev = await chat(t, "take your time");
+  assertEquals(ev.map((e) => e.event), ["continue"]);
+  assertEquals(ev[0].data.retry, true);
+  assertMatch(ev[0].data.message, /took too long/);
+
+  // Failed after a step: that step is kept, and the turn goes on from its tool results.
+  t = await configured();
+  const user = { role: "user", content: "keep looking, then fail" };
+  const res = await t.call("POST", `${t.ai}/chat`, { messages: [user] });
+  ev = events(res.data);
+  assertEquals(ev.map((e) => e.event), ["tool", "tool_result", "messages", "continue"]);
+  assertEquals(ev[3].data.retry, true);
+  assertMatch(ev[3].data.message, /refused the request: 503/);
+  const history = [user, ...addedOf(ev)];
+  assertEquals(history.at(-1)!.role, "tool");
+  const again = await t.call("POST", `${t.ai}/chat`, { messages: history, continue: true });
+  assertEquals(again.status, 200, again.data);
 });
 
 Deno.test("the assistant reads the finances", async () => {

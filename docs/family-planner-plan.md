@@ -118,11 +118,11 @@ New default categories in EN/DE (Groceries, Rent, Utilities, Mobility, Leisure, 
 - `POST /families/{id}/ai/chat`: the client sends its local history, and the server runs the
   OpenAI-compatible `/chat/completions` tool loop (max 30 steps per turn, the last without tools so
   the model wraps up) and streams **SSE** events: `text`, `tool_start`, `tool_result`, `change`
-  (summary + inverse ops for undo), `messages` (what the app appends to its history, tool results in
-  full), then `done`, `error` or `continue`. After `continue` the app sends the history again with
-  `continue: true` (it then ends with tool results) and the same turn goes on; the steps used are
-  counted from the history. Once a turn is over, the app shortens its tool results to 2,000
-  characters.
+  (summary + inverse ops for undo), `messages` (after every step: what the app appends to its
+  history, tool results in full), then `done` or `continue`. After `continue` the app sends the
+  history again (with `continue: true` when it ends with tool results) and the same turn goes on;
+  the steps used are counted from the history. Once a turn is over, the app shortens its tool
+  results to 2,000 characters.
 - System prompt: today's date, language, family name, the current year's types and finance
   categories, rules (read before writing, confirm before >31 days, deleting types or bulk finance
   edits).
@@ -145,7 +145,15 @@ New default categories in EN/DE (Groceries, Rent, Utilities, Mobility, Leisure, 
   `fetch_page` and `web_search` count per tool call.
 - The edge function's wall-clock limit (150s on the free plan) bounds a request, not a turn: after
   90s a request ends with `continue` before its next model call (each request takes at least one
-  step), and the app picks the turn up with a new request.
+  step), and the app picks the turn up with a new request. A model call still running at 130s is cut
+  off, so the request reports back before the platform stops it.
+- A turn goes on until it has an answer. A model that stops without a word (no text, no tool calls)
+  is asked again without tools, up to 5 times, before the chat says it gave no answer. A failed or
+  cut-off model call ends the request with `continue` `{retry, message}`, and the app tries the step
+  again. So does a request that fails (network, 5xx, 429) or whose stream closes without `done` or
+  `continue`: the app keeps what the running step did (its tool calls, with "interrupted" for tools
+  without a result, so they aren't done twice) and drops its partial text. Each turn tries again up
+  to 5 times, waiting 1, 2, … 5 s, and only then shows the error.
 
 ### Export v2 / agent doc
 

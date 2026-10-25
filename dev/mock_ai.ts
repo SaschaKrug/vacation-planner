@@ -9,6 +9,11 @@
 //   "search <words>"                      -> web_search
 //   a URL                                 -> fetch_page
 //   "keep looking"                        -> get_calendar again and again, until tools are off
+//   "say nothing"                         -> get_calendar, then no words until tools are off
+//   "stay silent"                         -> no words at all
+//   "take your time"                      -> answers after 200 ms
+//   "keep looking, then fail"             -> get_calendar, then fails (503)
+//   "calendar, then fail 2 times"         -> get_calendar, fails twice (503), then answers
 // Asked to sort transactions into categories (the categorize prompt), it picks the category
 // whose id or name occurs in a row's payee or description, searching the web once for a payee
 // it can't place.
@@ -90,6 +95,9 @@ function categorize(stream: boolean, system: string, messages: Msg[], canSearch:
   return reply(stream, "```json\n" + JSON.stringify(answer) + "\n```");
 }
 
+/** How often a "then fail N times" message failed so far. */
+const failed = new Map<string, number>();
+
 export async function mockAi(req: Request): Promise<Response> {
   const path = new URL(req.url).pathname.replace(/^.*\/v1/, "");
   if (req.method === "GET" && path === "/models") {
@@ -117,6 +125,33 @@ export async function mockAi(req: Request): Promise<Response> {
   }
 
   const asked = textOf(messages.findLast((m) => m.role === "user")?.content ?? "");
+  if (/stay silent/i.test(asked)) return reply(stream, "");
+  if (/say nothing/i.test(asked)) {
+    if (body.tool_choice === "none") return reply(stream, "Here is the calendar.");
+    if (last.role === "tool") return reply(stream, "");
+    return reply(stream, "", {
+      name: "get_calendar",
+      args: { from: "2026-01-01", to: "2026-01-31" },
+    });
+  }
+  if (/take your time/i.test(asked)) {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(resolve, 200);
+      req.signal.addEventListener("abort", () => {
+        clearTimeout(timer);
+        reject(req.signal.reason);
+      });
+    });
+    return reply(stream, "Sorry for the wait.");
+  }
+  const fails = /then fail(?: (\d+) times)?/i.exec(asked);
+  if (fails && last.role === "tool") {
+    const n = (failed.get(asked) ?? 0) + 1;
+    failed.set(asked, n);
+    if (!fails[1] || n <= Number(fails[1])) {
+      return Response.json({ error: { message: "Overloaded" } }, { status: 503 });
+    }
+  }
   if (/keep looking/i.test(asked)) {
     if (body.tool_choice === "none") return reply(stream, "Out of steps: here is what I have.");
     return reply(stream, "", {
