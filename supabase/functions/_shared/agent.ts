@@ -1,17 +1,14 @@
 // Instructions for AI agents: GET /families/{id}/agent returns this Markdown page, so a user
-// can hand an agent one URL and it knows the family's calendar and the API with ready-to-use
-// URLs.
+// can hand an agent one URL and an API token, and it knows the family's calendar and the API
+// with ready-to-use URLs.
 
 import type { FamilyRow, TypeRow } from "./store.ts";
 
 export interface AgentDocInput {
   /** Public API base, e.g. https://<project>.supabase.co/functions/v1/api */
   base: string;
-  /** The token in the URL: the edit id (full access) or a read-only id. */
-  token: string;
+  /** Whether the user who asks is only a viewer. */
   readOnly: boolean;
-  /** Whether the link may see the finances (not the legacy calendar-only link). */
-  finance: boolean;
   family: FamilyRow;
   /** Types of all years. */
   types: TypeRow[];
@@ -38,12 +35,12 @@ function typesTable(types: TypeRow[]): string {
 }
 
 export function buildAgentDoc(input: AgentDocInput): string {
-  const { base, token, readOnly, finance, family, types, today, refreshSeconds } = input;
+  const { base, readOnly, family, types, today, refreshSeconds } = input;
   const years = [...new Set(types.map((t) => t.year))].sort((a, b) => a - b);
   // Examples use the current year, or the latest year with types if it has none.
   const thisYear = Number(today.slice(0, 4));
   const year = years.includes(thisYear) ? thisYear : (years.at(-1) ?? thisYear);
-  const s = `${base}/families/${token}`;
+  const s = `${base}/families/${family.id}`;
   const example = types.find((t) => t.year === year && t.role === "covers") ??
     types.find((t) => t.year === year) ?? { id: "vacation", name: "Vacation" };
   const json = (v: unknown) => "`" + JSON.stringify(v) + "`";
@@ -55,7 +52,9 @@ export function buildAgentDoc(input: AgentDocInput): string {
 
   const read = `## Reading
 
-All responses are JSON. Dates are \`YYYY-MM-DD\`.
+Every request needs the user's API token: \`Authorization: Bearer <token>\` (the user makes
+one in the app under *Account* → *API tokens*). All responses are JSON. Dates are
+\`YYYY-MM-DD\`.
 
 - Everything for a year (types, entries, notes): ${s}?year=${year}
 - Entries only: ${s}/entries?year=${year} → \`{"${year}-08-03": ["${example.id}"], ...}\`
@@ -66,10 +65,9 @@ All responses are JSON. Dates are \`YYYY-MM-DD\`.
   if (readOnly) {
     return `# Family Planner “${family.name}” – instructions for AI agents
 
-This URL gives **read-only** access to the family's shared year calendar for vacation, public
-holidays, sick days and day-care closures. You can read it and answer questions about it, but
-not change it: ask the user for the AI link of the edit link if they want changes. Today is
-${today}.
+The user can only **view** this family's shared year calendar for vacation, public holidays,
+sick days and day-care closures. You can read it and answer questions about it, but not change
+it: an editor of the family can make them an editor too. Today is ${today}.
 
 ${concepts()}
 
@@ -78,7 +76,7 @@ ${concepts()}
 ${typeSections}
 
 ${read}
-${finance ? financeDoc(s, year, false) : ""}`;
+${financeDoc(s, year, false)}`;
   }
 
   const addOp = {
@@ -95,7 +93,7 @@ ${finance ? financeDoc(s, year, false) : ""}`;
 The user gave you **full edit access** to their family's shared year calendar for vacation,
 public holidays, sick days and day-care closures. Help them read and plan it. Today is ${today}.
 
-- This URL contains the family's secret key. Don't repeat it in public places or share it.
+- The API token acts as the user: don't repeat it in public places or share it.
 - Read the current state before changing anything, and check the result afterwards.
 - For bigger changes (many days, deleting types, renaming) say what you'll do first and ask
   the user to confirm; small, clearly requested changes can be made directly.
@@ -157,10 +155,11 @@ For example, this would add the vacation from the entries section (only send wha
 asked for):
 
 \`\`\`sh
-curl -X POST "${s}/entries" -H "content-type: application/json" \\
-  -d '${JSON.stringify(addOp)}'
+curl -X POST "${s}/entries" -H "authorization: Bearer $TOKEN" \\
+  -H "content-type: application/json" -d '${JSON.stringify(addOp)}'
 \`\`\`
-${finance ? "\n" + financeDoc(s, year, true) : ""}`;
+
+${financeDoc(s, year, true)}`;
 }
 
 function concepts(): string {

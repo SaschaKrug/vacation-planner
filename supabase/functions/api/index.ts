@@ -24,4 +24,8 @@ Deno.serve(createHandler(new SupabaseStore(db), {
   aiSecret: Deno.env.get("AI_CONFIG_KEY") || undefined,
   rateLimiter: new SupabaseRateLimiter(db),
   clientKey: (req) => hashAddress(clientAddress(req)),
+  // The app's origin(s), comma-separated (the deploy sets it): only those may use passkeys.
+  appOrigins: Deno.env.get("APP_ORIGIN")?.split(",").map((o) => o.trim()).filter(Boolean),
+  // The first admin's password; "admin" if not set (it has to be changed at the first sign-in).
+  initialAdminPassword: Deno.env.get("INITIAL_ADMIN_PASSWORD") || undefined,
 }));
