@@ -512,7 +512,7 @@ const STRINGS: Record<Lang, Dict> = {
     "chat.thinking": "Thinking…",
     "chat.cut_off": "The connection to the assistant broke off.",
     "chat.interrupted": "Interrupted",
-    "chat.placeholder": "Ask about your calendar or finances…",
+    "chat.placeholder": "Ask me anything…",
     "chat.setup_first": "Set up the assistant in the settings first",
     "chat.hint": "Enter sends, Shift+Enter for a new line. Paste or attach screenshots and files.",
     "chat.attach": "Attach images or text files",
@@ -1240,7 +1240,7 @@ const STRINGS: Record<Lang, Dict> = {
     "chat.thinking": "Denkt nach…",
     "chat.cut_off": "Die Verbindung zum Assistenten ist abgebrochen.",
     "chat.interrupted": "Unterbrochen",
-    "chat.placeholder": "Frag nach Kalender oder Finanzen…",
+    "chat.placeholder": "Frag mich etwas…",
     "chat.setup_first": "Richte den Assistenten zuerst in den Einstellungen ein",
     "chat.hint":
       "Enter sendet, Umschalt+Enter für eine neue Zeile. Screenshots und Dateien einfügen oder anhängen.",
