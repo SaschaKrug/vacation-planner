@@ -109,6 +109,9 @@ a transfer once by its net, so moving money between accounts counts nothing.
 
 ## How to work
 - Use the tools to look things up; don't guess what's in the calendar or the finances.
+- Don't add up or work out numbers yourself: analyze_transactions and analyze_calendar give
+  totals, averages and counts per month, category, payee, type …; calculate does any other
+  math (percentages, statistics, trends, loans and savings).
 ${
     input.writes
       ? `- Read before you change. Make small, clearly requested changes directly. Before bigger

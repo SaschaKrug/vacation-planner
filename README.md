@@ -90,6 +90,17 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   and **reads pages**. Every change shows up in the chat with **Undo**; bigger changes (more than
   31 days, deleting types, categories or transactions) need the user's OK first. *Allow changes*
   off makes it read-only.
+- **Calculations and analytics:** the assistant doesn't add up numbers itself. *Analyze
+  transactions* gives exact totals and statistics (count, income, expenses, net, average,
+  median, min, max, standard deviation) per month, quarter, year, week, weekday, day, category,
+  account, payee (similar spellings together) or income / expense, up to two at once (e.g. per
+  month and category), counted like all totals (transfers by their net, split bookings by
+  their parts); grouped by one, also the average and median group (e.g. the average month,
+  empty months counting as 0). *Count calendar
+  days* gives days per entry type, year, month or weekday, optionally only weekdays and without
+  vacation days on public holidays. *Calculate* evaluates expressions (no code is run):
+  arithmetic, lists, percentiles, trends and forecasts, and loans and savings like a
+  spreadsheet (`pmt`, `fv`, `pv`, `nper`, `npv`, `irr`, `cagr`).
 - **Attach** images (screenshots, photos) and text files (e.g. CSV) to a message; images need a
   model with vision support.
 - **Auto-categorize** on the finance page sorts the period's uncategorized transactions into
