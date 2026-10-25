@@ -212,7 +212,7 @@ export function VacationPage() {
           </>
         )}
         <Button size="sm" asChild title={t("top.share_title")}>
-          <Link to={`/f/${store.token}/settings/sharing`}>
+          <Link to={`/f/${store.token}/settings/members`}>
             <Share2 /> <span className="max-sm:sr-only">{t("page.share")}</span>
           </Link>
         </Button>

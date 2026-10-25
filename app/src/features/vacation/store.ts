@@ -36,7 +36,7 @@ import {
 } from "@/lib/core";
 import { t } from "@/lib/i18n";
 import { read, readFlag, write, writeFlag } from "@/lib/storage";
-import { rememberFamily } from "@/lib/recent";
+import { rememberFamily } from "@/lib/auth";
 
 const POLL_MS = 15000;
 const CACHE_KEY = "fp-cache";
@@ -212,7 +212,7 @@ export class PlannerStore {
       this.setSync("sync.updating");
     } else this.setSync("sync.loading");
     if (!(await this.load({ pending }))) return;
-    if (this.family) rememberFamily(this.token, this.family);
+    if (this.family) rememberFamily(this.token, this.family.name);
     this.startPolling();
   }
 
@@ -601,7 +601,7 @@ export class PlannerStore {
     this.setSync("sync.saving");
     try {
       await api.renameFamily(this.token, name);
-      rememberFamily(this.token, this.family);
+      rememberFamily(this.token, this.family.name);
       if (!this.flushing) this.setSync("sync.saved");
     } catch (err) {
       const e = err as ApiError;
@@ -614,7 +614,7 @@ export class PlannerStore {
     }
   }
 
-  async rotateLink(link: "view" | "feed" | "legacy") {
+  async rotateLink(link: "feed" | "legacy") {
     const data = await api.rotateLink(this.token, link, this.year);
     if (this.family) this.family = { ...this.family, ...data.family };
     this.cacheState();

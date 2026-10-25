@@ -29,7 +29,7 @@ export function FinancePage() {
   const [importing, setImporting] = useState(false);
   const [tab, setTab] = useState("transactions");
   const family = planner.family;
-  const sees = family && family.access !== "calendar";
+  const sees = !!family;
 
   useEffect(() => {
     if (sees) finance.open();
@@ -38,17 +38,6 @@ export function FinancePage() {
   useEffect(() => {
     if (sees && tab === "overview") finance.loadSummary();
   }, [sees, tab, finance]);
-
-  if (family && !sees) {
-    return (
-      <>
-        <PageHeader title={t("nav.finance")} />
-        <p className="m-6 max-w-xl rounded-lg border bg-card p-4 text-sm text-muted-foreground">
-          {t("finance.calendar_only")}
-        </p>
-      </>
-    );
-  }
 
   const edit = !planner.readOnly;
   const list = finance.list;

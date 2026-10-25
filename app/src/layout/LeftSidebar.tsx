@@ -3,23 +3,13 @@ import {
   Check,
   ChevronsUpDown,
   CircleHelp,
-  Link2,
   Plus,
   Settings,
+  ShieldCheck,
   Wallet,
 } from "lucide-react";
 import { useState } from "react";
 import { NavLink, useNavigate } from "react-router";
-import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,7 +18,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
 import {
   Sidebar,
   SidebarContent,
@@ -43,25 +32,15 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { usePlanner } from "@/features/family/context";
-import { api, ApiError } from "@/lib/api";
-import { getLang, t } from "@/lib/i18n";
-import { useRecentFamilies } from "@/lib/recent";
+import { createFamily } from "@/features/landing/Landing";
+import { useAuth } from "@/lib/auth";
+import { t } from "@/lib/i18n";
 import { setHelpOpen } from "@/lib/ui";
-
-/** Turns a pasted link (new /f/<id>/… or old ?s=<id>) or a bare id into the family id. */
-export function tokenFromInput(value: string): string {
-  const v = value.trim();
-  try {
-    const url = new URL(v);
-    return url.pathname.match(/\/f\/([A-Za-z0-9]+)/)?.[1] ??
-      url.searchParams.get("s") ?? v;
-  } catch {
-    return v; // not a URL, use as id
-  }
-}
+import { UserMenu } from "./UserMenu";
 
 export function LeftSidebar() {
   const store = usePlanner();
+  const { me } = useAuth();
   const { isMobile, setOpenMobile } = useSidebar();
   const base = `/f/${store.token}`;
   const closeOnMobile = () => isMobile && setOpenMobile(false);
@@ -140,6 +119,21 @@ export function LeftSidebar() {
               )}
             </NavLink>
           </SidebarMenuItem>
+          {me?.user.isAdmin && (
+            <SidebarMenuItem>
+              <NavLink to="/admin" onClick={closeOnMobile}>
+                <SidebarMenuButton asChild tooltip={t("nav.admin")}>
+                  <span>
+                    <ShieldCheck />
+                    <span>{t("nav.admin")}</span>
+                  </span>
+                </SidebarMenuButton>
+              </NavLink>
+            </SidebarMenuItem>
+          )}
+          <SidebarMenuItem>
+            <UserMenu />
+          </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>
       <SidebarRail />
@@ -147,36 +141,17 @@ export function LeftSidebar() {
   );
 }
 
-function accessLabel(access: string | undefined) {
-  if (access === "view") return t("family.view_only");
-  if (access === "calendar") return t("family.calendar_only");
-  return "";
-}
-
 function FamilySwitcher() {
   const store = usePlanner();
-  const recent = useRecentFamilies();
+  const { me } = useAuth();
   const navigate = useNavigate();
-  const [openLink, setOpenLink] = useState(false);
   const [creating, setCreating] = useState(false);
   const name = store.family?.name ?? t("family.loading");
 
   async function create() {
     setCreating(true);
-    try {
-      const data = await api.createFamily({
-        lang: getLang(),
-        year: store.year,
-      });
-      navigate(`/f/${data.family.id}/vacation`);
-    } catch (err) {
-      const e = err as ApiError;
-      toast(
-        e.status === 429 ? t("toast.rate_limited") : t("toast.create_failed", { msg: e.message }),
-      );
-    } finally {
-      setCreating(false);
-    }
+    await createFamily(navigate, store.year);
+    setCreating(false);
   }
 
   return (
@@ -197,7 +172,7 @@ function FamilySwitcher() {
               <div className="grid min-w-0 flex-1 text-left leading-tight">
                 <span className="truncate font-semibold">{name}</span>
                 <span className="truncate text-xs text-muted-foreground">
-                  {accessLabel(store.family?.access) || t("app.title")}
+                  {store.readOnly && store.family ? t("family.view_only") : t("app.title")}
                 </span>
               </div>
               <ChevronsUpDown className="ml-auto" />
@@ -205,74 +180,29 @@ function FamilySwitcher() {
           </DropdownMenuTrigger>
           <DropdownMenuContent className="min-w-64" align="start" side="bottom">
             <DropdownMenuLabel className="text-xs text-muted-foreground">
-              {t("family.recent")}
+              {t("family.yours")}
             </DropdownMenuLabel>
-            {recent.map((f) => (
+            {me?.families.map((f) => (
               <DropdownMenuItem
-                key={f.token}
-                onSelect={() => navigate(`/f/${f.token}/vacation`)}
+                key={f.id}
+                onSelect={() => navigate(`/f/${f.id}/vacation`)}
               >
                 <span className="min-w-0 flex-1 truncate">{f.name}</span>
-                {f.readOnly && (
+                {f.role === "viewer" && (
                   <span className="text-xs text-muted-foreground">
                     {t("family.view_only")}
                   </span>
                 )}
-                {f.token === store.token && <Check className="size-4" />}
+                {f.id === store.token && <Check className="size-4" />}
               </DropdownMenuItem>
             ))}
             <DropdownMenuSeparator />
             <DropdownMenuItem disabled={creating} onSelect={create}>
               <Plus className="size-4" /> {t("family.new")}
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => setOpenLink(true)}>
-              <Link2 className="size-4" /> {t("family.open")}
-            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        <OpenFamilyDialog open={openLink} onOpenChange={setOpenLink} />
       </SidebarMenuItem>
     </SidebarMenu>
-  );
-}
-
-function OpenFamilyDialog(
-  { open, onOpenChange }: {
-    open: boolean;
-    onOpenChange: (open: boolean) => void;
-  },
-) {
-  const navigate = useNavigate();
-  const [value, setValue] = useState("");
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <form
-          className="grid gap-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const token = tokenFromInput(value);
-            if (!token) return;
-            onOpenChange(false);
-            setValue("");
-            navigate(`/f/${token}/vacation`);
-          }}
-        >
-          <DialogHeader>
-            <DialogTitle>{t("family.open_title")}</DialogTitle>
-            <DialogDescription>{t("family.open_help")}</DialogDescription>
-          </DialogHeader>
-          <Input
-            autoFocus
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder={t("landing.open_placeholder")}
-          />
-          <DialogFooter>
-            <Button type="submit">{t("landing.open")}</Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
   );
 }

@@ -102,6 +102,9 @@ async function seed() {
   const admin = await store.findUserByEmail(ADMIN_EMAIL);
   if (!admin) throw new Error(`Seeding needs the "${ADMIN_EMAIL}" account`);
   const { token, row } = await issueToken(store, admin.id, "session");
+  // The admin may still have to change the initial password; the seed doesn't wait for that.
+  const mustChange = admin.must_change_password;
+  await store.updateUser(admin.id, { must_change_password: false });
   const call = async (method: string, path: string, body: unknown) => {
     const res = await handleApi(
       new Request(`${origin}/api${path}`, {
@@ -228,6 +231,7 @@ async function seed() {
       .map((o) => ({ accountId: "checking", ...o })),
   });
   await store.deleteTokens(admin.id, { id: row.id });
+  await store.updateUser(admin.id, { must_change_password: mustChange });
 }
 
 if (args.seed && store.families.size === 0) await seed();

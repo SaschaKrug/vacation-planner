@@ -198,6 +198,13 @@ Deno.test("admins create accounts that are set up with a one-time link", async (
   assertEquals(setup.data.families, []);
   // Once only.
   assertEquals((await t.anon("POST", "/auth/setup", { token: made.data.setupToken })).status, 404);
+  // A device that still sends an ended session can use a link (and sign in) all the same.
+  const link2 = (await t.call("POST", `/admin/users/${made.data.user.id}/setup`)).data.setupToken;
+  const stale = t.api("fps_ended");
+  assertEquals((await stale("POST", "/auth/setup", { token: link2 })).status, 200);
+  const login = await stale("POST", "/auth/login", { email: "admin", password: "correct horse" });
+  assertEquals(login.status, 200);
+  assertEquals((await stale("GET", "/auth/me")).status, 401);
   assertEquals((await t.anon("POST", "/auth/setup", { token: "fpu_nonsense" })).status, 404);
 
   const mom = t.api(setup.data.token);

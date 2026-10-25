@@ -385,10 +385,8 @@ async function setPassword(
       throw new HttpError(403, "The current password is wrong");
     }
   }
-  if (
-    user.must_change_password && user.password_hash &&
-    await verifyPassword(password, user.password_hash)
-  ) {
+  // (Compared as text: each hash costs a third of a second, and requests have little CPU.)
+  if (user.must_change_password && password === env.initialAdminPassword) {
     throw new HttpError(400, "Choose a new password, not the initial one");
   }
   const patch = {

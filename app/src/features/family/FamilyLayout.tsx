@@ -5,8 +5,9 @@ import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { ChatStore } from "@/features/chat/store";
 import { FinanceStore } from "@/features/finance/store";
 import { PlannerStore } from "@/features/vacation/store";
+import { refreshMe } from "@/features/auth/RequireAuth";
+import { forgetFamily } from "@/lib/auth";
 import { t, useLang } from "@/lib/i18n";
-import { forgetFamily } from "@/lib/recent";
 import { readFlag, writeFlag } from "@/lib/storage";
 import { ChatPanel } from "@/layout/ChatPanel";
 import { LeftSidebar } from "@/layout/LeftSidebar";
@@ -81,7 +82,9 @@ function FamilyShell() {
 
   useEffect(() => {
     if (!store.notFound) return;
+    // Not (or no longer) a member: the start page opens another family, so not this one.
     forgetFamily(store.token);
+    refreshMe();
     toast(t("toast.not_found"));
   }, [store.notFound, store.token]);
 

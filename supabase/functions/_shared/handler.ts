@@ -20,6 +20,7 @@ import {
   type Principal,
 } from "./auth.ts";
 import { type Access, ACCESS_RANK, accessOf, type Ctx, type Loaded } from "./context.ts";
+import { hashToken } from "./passwords.ts";
 import { createFamily, handleFamily } from "./families.ts";
 import { handleFinance } from "./finance.ts";
 import { CORS, HttpError, json } from "./http.ts";
@@ -225,10 +226,11 @@ export function createHandler(store: Store, options: HandlerOptions = {}) {
       return await handleVacation(familyCtx(req, url, parts, null))!;
     }
     await ready();
-    const principal = await authenticate(store, req);
+    // Signing in ignores an old session the device may still send.
+    const signingIn = area === "auth" && PUBLIC_AUTH.includes(route);
+    const principal = signingIn ? null : await authenticate(store, req);
     if (principal) {
-      const allowed = area === "auth" &&
-        [...BEFORE_PASSWORD_CHANGE, ...PUBLIC_AUTH].includes(route);
+      const allowed = area === "auth" && BEFORE_PASSWORD_CHANGE.includes(route);
       if (principal.user.must_change_password && !allowed) {
         throw new HttpError(403, "Change your password first");
       }
@@ -248,7 +250,8 @@ export function createHandler(store: Store, options: HandlerOptions = {}) {
         rest: parts.slice(1),
         principal,
         env: auth,
-        limitAccount: (email) => limit("loginAccount", `email:${email}`),
+        // Hashed, so the counters don't keep the emails people tried.
+        limitAccount: async (email) => limit("loginAccount", `email:${await hashToken(email)}`),
       });
     }
     if (area === "admin") {
