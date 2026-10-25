@@ -192,6 +192,16 @@ async function seed() {
     amountCents: -2350,
     payee: "Bakery",
   });
+  // An Amazon "Splitbuchung" last month whose order lines the bank lists too, not combined yet,
+  // so "Auto-combine" has a split booking to find.
+  const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const last = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}-10`;
+  ops.push(
+    { date: last, amountCents: -4498, payee: "Amazon Payments", description: "Splitbuchung" },
+    { date: last, amountCents: -2999, payee: "Amazon.de", description: "Order 1 Book" },
+    { date: last, amountCents: -1999, payee: "Amazon.de", description: "Order 2 Toy" },
+    { date: last, amountCents: 500, payee: "Amazon.de", description: "Voucher" },
+  );
   await call("POST", `${s}/finance/transactions`, {
     ops: ops.filter((o) => (o.date as string) <= new Date().toISOString().slice(0, 10))
       .map((o) => ({ accountId: "checking", ...o })),

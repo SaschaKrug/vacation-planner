@@ -5,11 +5,11 @@
 import { dateRange, isValidDate, isWeekend } from "../dates.ts";
 import {
   applyTransactionOps,
+  autoCombine,
   changedCategory,
   financeSummary,
   findCategory,
   findTransactions,
-  linkTransferPairs,
   listAccounts,
   newCategory,
   publicCategory,
@@ -80,6 +80,7 @@ const PHRASES = {
     categoryChanged: (name: string) => `Changed the category “${name}”`,
     transactions: (n: number) => `${n} ${n === 1 ? "transaction" : "transactions"} changed`,
     transfers: (n: number) => `${n} ${n === 1 ? "transfer" : "transfers"} combined`,
+    splits: (n: number) => `${n} split ${n === 1 ? "booking" : "bookings"} combined`,
   },
   de: {
     days: (n: number) => `${n} ${n === 1 ? "Tag" : "Tage"} geändert`,
@@ -92,6 +93,7 @@ const PHRASES = {
     categoryChanged: (name: string) => `Kategorie „${name}“ geändert`,
     transactions: (n: number) => `${n} ${n === 1 ? "Buchung" : "Buchungen"} geändert`,
     transfers: (n: number) => `${n} ${n === 1 ? "Umbuchung" : "Umbuchungen"} zusammengefasst`,
+    splits: (n: number) => `${n} ${n === 1 ? "Aufteilung" : "Aufteilungen"} zusammengefasst`,
   },
 };
 
@@ -115,6 +117,7 @@ const TX_COLUMNS = [
   "categoryId",
   "accountId",
   "transferId",
+  "splitOf",
   "note",
 ];
 
@@ -442,7 +445,7 @@ export const TOOLS: Record<string, Tool> = {
     spec: {
       name: "list_transactions",
       description:
-        'Lists transactions (newest first) with totals, as rows of `columns`: as many as fit, long descriptions shortened. If `nextOffset` is set there are more: call again with that offset. For totals per month or category use finance_summary instead. Amounts are integer cents, negative = money out. Legs of a transfer between the family\'s accounts share a transferId; totals count a transfer once by its net (500 moved between two accounts counts 0). Filters: from/to (YYYY-MM-DD), account (id, name or "none"), category (id, name or "none"), kind (income | expense | transfer: legs of transfers), q (text in payee, description, note).',
+        'Lists transactions (newest first) with totals, as rows of `columns`: as many as fit, long descriptions shortened. If `nextOffset` is set there are more: call again with that offset. For totals per month or category use finance_summary instead. Amounts are integer cents, negative = money out. Legs of a transfer between the family\'s accounts share a transferId; totals count a transfer once by its net (500 moved between two accounts counts 0). A part of a split booking (e.g. an order line of an Amazon "Splitbuchung") has the booking\'s id as splitOf; totals count the parts and only what is left of the booking. Filters: from/to (YYYY-MM-DD), account (id, name or "none"), category (id, name or "none"), kind (income | expense | transfer: legs of transfers), q (text in payee, description, note).',
       parameters: {
         type: "object",
         properties: {
@@ -462,7 +465,7 @@ export const TOOLS: Record<string, Tool> = {
       for (const k of ["from", "to", "account", "category", "kind", "q"]) {
         if (typeof args[k] === "string" && args[k]) query.set(k, args[k] as string);
       }
-      const { rows, groups, incomeCents, expenseCents } = await findTransactions(
+      const { rows, links, incomeCents, expenseCents } = await findTransactions(
         store,
         familyId,
         query,
@@ -474,7 +477,7 @@ export const TOOLS: Record<string, Tool> = {
       let size = JSON.stringify(head).length + 60;
       const out: unknown[][] = [];
       for (const t of rows.slice(offset, offset + limit)) {
-        const p = publicTransaction(t, groups);
+        const p = publicTransaction(t, links);
         const description = p.description.length > MAX_TX_DESCRIPTION
           ? p.description.slice(0, MAX_TX_DESCRIPTION) + "…"
           : p.description;
@@ -487,6 +490,7 @@ export const TOOLS: Record<string, Tool> = {
           p.categoryId,
           p.accountId,
           p.transferId,
+          p.splitOf,
           p.note,
         ];
         size += JSON.stringify(row).length + 1;
@@ -611,11 +615,14 @@ export const TOOLS: Record<string, Tool> = {
     spec: {
       name: "change_transactions",
       description:
-        'Adds, changes, deletes, links or unlinks transactions. Ops: {"action": "add", "date", "amountCents" (integer, negative = money out), "payee", "description", "categoryId" (id or name), "accountId" (id or name), "note"}, {"action": "update", "id", ...fields}, {"action": "delete", "ids": [...]}, {"action": "link", "ids": [at least 2]}: the transactions become the legs of one transfer between the family\'s accounts (e.g. 500 out of checking and 500 into savings), counted once by their net, {"action": "unlink", "ids": [...]}: dissolves the transfers these transactions belong to.',
+        'Adds, changes, deletes, links, unlinks, splits or unsplits transactions. Ops: {"action": "add", "date", "amountCents" (integer, negative = money out), "payee", "description", "categoryId" (id or name), "accountId" (id or name), "note"}, {"action": "update", "id", ...fields}, {"action": "delete", "ids": [...]}, {"action": "link", "ids": [at least 2]}: the transactions become the legs of one transfer between the family\'s accounts (e.g. 500 out of checking and 500 into savings), counted once by their net, {"action": "unlink", "ids": [...]}: dissolves the transfers these transactions belong to, {"action": "split", "id": "<booking>", "ids": [parts]}: the transactions become parts of the booking (e.g. the order lines the bank lists next to an Amazon "Splitbuchung"); totals count the parts with their categories and only what is left of the booking, {"action": "unsplit", "ids": [...]}: parts become normal transactions again (for a booking: all of its parts).',
       parameters: opsSchema({
         type: "object",
         properties: {
-          action: { type: "string", enum: ["add", "update", "delete", "link", "unlink"] },
+          action: {
+            type: "string",
+            enum: ["add", "update", "delete", "link", "unlink", "split", "unsplit"],
+          },
           id: { type: "string" },
           ids: { type: "array", items: { type: "string" } },
           date: { type: "string" },
@@ -662,7 +669,7 @@ export const TOOLS: Record<string, Tool> = {
     spec: {
       name: "combine_transfers",
       description:
-        "Finds transfers between the family's accounts (money out of one account and the same amount into another within 4 days, not yet combined) and links each pair, so it counts once by its net (0). from/to (YYYY-MM-DD) limit the range; without them the whole history.",
+        "Combines what belongs together, like the app's Auto-combine: first split bookings (a booking marked \"Splitbuchung\" takes the transactions of the same day, account and merchant as its parts, so they don't count twice), then transfers between the family's accounts (money out of one account and the same amount into another within 4 days, not yet combined), so each counts once by its net (0). from/to (YYYY-MM-DD) limit the range; without them the whole history.",
       parameters: {
         type: "object",
         properties: {
@@ -681,23 +688,23 @@ export const TOOLS: Record<string, Tool> = {
           throw new HttpError(400, "from/to must be YYYY-MM-DD");
         }
       }
-      const pairs = await transferPairs(
-        store,
-        familyId,
-        args.from as string | undefined,
-        args.to as string | undefined,
-      );
+      const from = args.from as string | undefined, to = args.to as string | undefined;
+      const pairs = await transferPairs(store, familyId, from, to);
       if (pairs.length > CONFIRM_TRANSACTIONS / 2) {
         needConfirm(args, `This combines ${pairs.length} transfers.`);
       }
-      const res = await linkTransferPairs(store, pairs);
+      const res = await autoCombine(store, familyId, from, to);
+      const phrases = [
+        ...(res.splits ? [PHRASES[lang].splits(res.splits)] : []),
+        ...(res.linked || !res.splits ? [PHRASES[lang].transfers(res.linked)] : []),
+      ];
       return {
-        result: { ok: true, linked: res.linked },
-        summary: `${res.linked} transfers combined`,
-        change: res.linked
+        result: { ok: true, linked: res.linked, splits: res.splits },
+        summary: `${res.linked} transfers and ${res.splits} split bookings combined`,
+        change: res.changed
           ? {
             kind: "transactions",
-            summary: PHRASES[lang].transfers(res.linked),
+            summary: phrases.join(", "),
             undo: [{ method: "POST", path: "/finance/transactions", body: { ops: res.inverse } }],
           }
           : undefined,

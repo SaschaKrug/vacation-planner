@@ -2,11 +2,14 @@ import {
   ArrowLeftRight,
   Download,
   Link,
+  ListTree,
   Loader2,
   Pencil,
   Search,
   Sparkles,
+  Split,
   Trash2,
+  Ungroup,
   Unlink,
   WandSparkles,
   X,
@@ -87,7 +90,7 @@ function AutoCategorizeButton() {
 }
 
 /** The filtered transactions of the period, newest first; categories can be set inline. In
- *  edit mode rows can be ticked and combined into a transfer. */
+ *  edit mode rows can be ticked and combined into a transfer or a split booking. */
 export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void }) {
   const finance = useFinance();
   const planner = usePlanner();
@@ -114,6 +117,12 @@ export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void
     return byGroup;
   }, [list]);
 
+  // To name the booking a part belongs to.
+  const byId = useMemo(
+    () => new Map(list?.transactions.map((tx) => [tx.id, tx] as const)),
+    [list],
+  );
+
   const accountName = (tx: Transaction) =>
     finance.accountById(tx.accountId)?.name ?? t("finance.no_account");
 
@@ -128,6 +137,23 @@ export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void
       ? `${accountName(tx)} →`
       : `→ ${accountName(tx)}`;
     return `${t("finance.transfer")} · ${route}`;
+  }
+
+  /** "Part of <booking>" (just "of a split booking" when it isn't loaded), or on the booking
+   *  "Split into N parts", with what it still counts itself unless that is 0. */
+  function splitText(tx: Transaction) {
+    if (tx.splitOf) {
+      const booking = byId.get(tx.splitOf);
+      const name = booking && (booking.payee || booking.description);
+      return name ? t("finance.part_of", { name }) : t("finance.part_of_split");
+    }
+    const { parts, remainderCents } = tx.split!;
+    const text = t("finance.split_into", { n: parts });
+    if (!remainderCents) return text;
+    const amount = formatMoney(remainderCents, finance.currency, lang, {
+      sign: remainderCents > 0,
+    });
+    return `${text} · ${t("finance.split_remainder", { amount })}`;
   }
 
   const remove = (tx: Transaction) =>
@@ -282,6 +308,13 @@ export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void
                       <span className="truncate">{transferText(tx)}</span>
                     </div>
                   )
+                  : tx.splitOf || tx.split
+                  ? (
+                    <div className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+                      <ListTree className="size-3 shrink-0" aria-hidden />
+                      <span className="truncate">{splitText(tx)}</span>
+                    </div>
+                  )
                   : (account || (tx.payee && tx.description)) && (
                     <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                       {account && <AccountChip account={account} />}
@@ -326,14 +359,19 @@ export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void
               <div
                 className={cn(
                   "col-start-3 row-start-1 text-right font-semibold whitespace-nowrap tabular-nums sm:col-auto sm:row-auto",
-                  // a transfer leg doesn't count on its own
-                  tx.transferId
+                  // a transfer leg doesn't count on its own, a split booking only through its
+                  // parts (and what they leave over)
+                  tx.transferId || tx.split
                     ? "text-muted-foreground"
                     : tx.amountCents > 0
                     ? "text-ok"
                     : tx.amountCents < 0 && "text-gap",
                 )}
-                title={tx.transferId ? t("finance.transfer_amount_hint") : undefined}
+                title={tx.transferId
+                  ? t("finance.transfer_amount_hint")
+                  : tx.split
+                  ? t("finance.split_amount_hint")
+                  : undefined}
               >
                 {formatMoney(tx.amountCents, finance.currency, lang, { sign: tx.amountCents > 0 })}
               </div>
@@ -357,6 +395,17 @@ export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void
                         onClick={() => finance.unlink(tx.id)}
                       >
                         <Unlink />
+                      </Button>
+                    )}
+                    {(tx.splitOf || tx.split) && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-8"
+                        title={t(tx.splitOf ? "finance.unsplit_part" : "finance.unsplit")}
+                        onClick={() => finance.unsplit(tx.id)}
+                      >
+                        <Ungroup />
                       </Button>
                     )}
                     <Button
@@ -397,7 +446,8 @@ export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void
   );
 }
 
-/** What the ticked rows add up to, and the button that combines them into a transfer. */
+/** What the ticked rows add up to, and the buttons that combine them into a transfer or a
+ *  split booking. */
 function SelectionBar({ selected }: { selected: Transaction[] }) {
   const finance = useFinance();
   const lang = getLang();
@@ -405,10 +455,26 @@ function SelectionBar({ selected }: { selected: Transaction[] }) {
   const net = selected.reduce((sum, tx) => sum + tx.amountCents, 0);
   const money = (cents: number, sign = false) =>
     formatMoney(cents, finance.currency, lang, { sign });
+  // Parts and split bookings can't be transfer legs; a split takes only plain transactions.
+  const linkable = selected.every((tx) => !tx.splitOf && !tx.split);
+  const splittable = selected.length >= 2 && linkable && selected.every((tx) => !tx.transferId);
+  // The largest one is the booking (the first of equal ones), the others its parts.
+  const booking = selected.reduce((a, b) =>
+    Math.abs(b.amountCents) > Math.abs(a.amountCents) ? b : a
+  );
 
   async function combine() {
     setBusy(true);
     await finance.link(selected.map((tx) => tx.id));
+    setBusy(false);
+  }
+
+  async function combineSplit() {
+    setBusy(true);
+    await finance.split(
+      booking.id,
+      selected.filter((tx) => tx !== booking).map((tx) => tx.id),
+    );
     setBusy(false);
   }
 
@@ -426,13 +492,28 @@ function SelectionBar({ selected }: { selected: Transaction[] }) {
             })}
         </div>
       </div>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Button variant="ghost" size="sm" onClick={() => finance.clearSelection()}>
           <X /> {t("finance.clear_selection")}
         </Button>
-        <Button size="sm" disabled={busy} onClick={combine}>
-          <Link /> {t("finance.combine")}
-        </Button>
+        {/* the hints sit on a wrapper: a disabled button shows no tooltip */}
+        <span
+          title={splittable
+            ? t("finance.combine_split_help", {
+              name: booking.payee || booking.description || "—",
+              amount: money(booking.amountCents, booking.amountCents > 0),
+            })
+            : t("finance.combine_split_blocked")}
+        >
+          <Button size="sm" variant="outline" disabled={busy || !splittable} onClick={combineSplit}>
+            <Split /> {t("finance.combine_split")}
+          </Button>
+        </span>
+        <span title={linkable ? undefined : t("finance.combine_transfer_blocked")}>
+          <Button size="sm" disabled={busy || !linkable} onClick={combine}>
+            <Link /> {t("finance.combine")}
+          </Button>
+        </span>
       </div>
     </div>
   );

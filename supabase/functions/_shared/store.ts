@@ -77,6 +77,8 @@ export interface TransactionRow {
   account_id: string | null;
   /** Transactions sharing one are the legs of a transfer between the family's accounts. */
   transfer_id: string | null;
+  /** Set on a part of a split booking: the booking's id (see splits in finance.ts). */
+  split_of: string | null;
   created_at: string;
 }
 
@@ -149,17 +151,22 @@ export interface Store {
   /** Accounts ordered by position. */
   listAccounts(familyId: string): Promise<AccountRow[]>;
   upsertAccounts(rows: AccountRow[]): Promise<void>;
-  /** Deletes the account and its transactions; returns those transactions. */
+  /** Deletes the account and its transactions; returns those transactions. Parts of a deleted
+   *  booking on other accounts become normal transactions. */
   deleteAccount(familyId: string, id: string): Promise<TransactionRow[]>;
-  /** Sum of all transactions (all time) per account id, for the balances. */
+  /** Sum of all transactions (all time) per account id, for the balances. Parts of split
+   *  bookings don't count: their booking does. */
   accountTotals(familyId: string): Promise<Map<string, number>>;
   /** Transactions in the range (all without one), newest first. */
   listTransactions(familyId: string, from?: string, to?: string): Promise<TransactionRow[]>;
   getTransactions(familyId: string, ids: string[]): Promise<TransactionRow[]>;
   /** All legs of the given transfer groups. */
   listTransfers(familyId: string, transferIds: string[]): Promise<TransactionRow[]>;
+  /** All transactions that are parts of a split booking. */
+  listSplitParts(familyId: string): Promise<TransactionRow[]>;
   /** Inserts or replaces transactions (by id). */
   upsertTransactions(rows: TransactionRow[]): Promise<void>;
+  /** Deletes the transactions; parts of a deleted booking become normal transactions. */
   deleteTransactions(familyId: string, ids: string[]): Promise<void>;
   /** Deletes all transactions, accounts, categories and finance settings of the family. */
   clearFinance(familyId: string): Promise<void>;
@@ -364,13 +371,16 @@ export class MemoryStore implements Store {
     const map = this.transactions.get(familyId);
     const gone = [...map?.values() ?? []].filter((t) => t.account_id === id);
     for (const t of gone) map!.delete(t.id);
+    this.orphanParts(familyId, gone.map((t) => t.id));
     return Promise.resolve(gone);
   }
 
   accountTotals(familyId: string) {
     const totals = new Map<string, number>();
     for (const t of this.transactions.get(familyId)?.values() ?? []) {
-      if (t.account_id) totals.set(t.account_id, (totals.get(t.account_id) ?? 0) + t.amount_cents);
+      if (t.account_id && !t.split_of) {
+        totals.set(t.account_id, (totals.get(t.account_id) ?? 0) + t.amount_cents);
+      }
     }
     return Promise.resolve(totals);
   }
@@ -400,6 +410,13 @@ export class MemoryStore implements Store {
     );
   }
 
+  listSplitParts(familyId: string) {
+    return Promise.resolve(
+      [...(this.transactions.get(familyId)?.values() ?? [])].filter((t) => t.split_of)
+        .map((t) => ({ ...t })),
+    );
+  }
+
   upsertTransactions(rows: TransactionRow[]) {
     for (const row of rows) {
       const map = this.transactions.get(row.family_id) ?? new Map();
@@ -412,7 +429,16 @@ export class MemoryStore implements Store {
   deleteTransactions(familyId: string, ids: string[]) {
     const map = this.transactions.get(familyId);
     if (map) { for (const id of ids) map.delete(id); }
+    this.orphanParts(familyId, ids);
     return Promise.resolve();
+  }
+
+  /** Like ON DELETE SET NULL in the database: parts of deleted bookings become normal. */
+  private orphanParts(familyId: string, ids: string[]) {
+    const gone = new Set(ids);
+    for (const t of this.transactions.get(familyId)?.values() ?? []) {
+      if (t.split_of && gone.has(t.split_of)) t.split_of = null;
+    }
   }
 
   clearFinance(familyId: string) {
@@ -472,7 +498,8 @@ export class MemoryStore implements Store {
       if (item.financeSettings) this.financeSettings.set(family.id, item.financeSettings);
       this.categories.set(family.id, (item.categories ?? []).map((c) => ({ ...c })));
       this.accounts.set(family.id, (item.accounts ?? []).map((a) => ({ ...a })));
-      // Transactions from before accounts have neither an account nor a transfer.
+      // Transactions from before accounts have neither an account nor a transfer, and ones
+      // from before splits no booking.
       this.transactions.set(
         family.id,
         new Map(
@@ -480,6 +507,7 @@ export class MemoryStore implements Store {
             ...t,
             account_id: t.account_id ?? null,
             transfer_id: t.transfer_id ?? null,
+            split_of: t.split_of ?? null,
           }]),
         ),
       );

@@ -45,12 +45,13 @@ type Step =
     fileName: string;
     duplicates: number[];
     transfers: number;
+    splits: number;
   };
 
 /** Imports a bank statement: pick the file, check how its columns map, then import the rows
  *  that aren't there yet into an account. Mappings are remembered per bank (by the file's
- *  header), with the account and whether transfers are combined; the new transactions can be
- *  sorted into categories afterwards (like similar ones, then by the AI). */
+ *  header), with the account and whether transfers and split bookings are combined; the new
+ *  transactions can be sorted into categories afterwards (like similar ones, then by the AI). */
 export function ImportDialog({ onClose }: { onClose: () => void }) {
   const finance = useFinance();
   const chat = useChat();
@@ -104,7 +105,8 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
 
   const accountId = (id = account) => (id === "none" ? undefined : id);
 
-  /** A dry run: which rows are there already, and how many transfers would be combined. */
+  /** A dry run: which rows are there already, and how many transfers and split bookings would
+   *  be combined. */
   async function check(next: { account?: string; auto?: boolean } = {}) {
     if (step.name === "file" || !parsed?.ok.length) return;
     setBusy(true);
@@ -122,6 +124,7 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
         name: "review",
         duplicates: res.duplicates,
         transfers: res.transfers ?? 0,
+        splits: res.splits ?? 0,
       });
     } catch (err) {
       setError((err as Error).message);
@@ -213,6 +216,11 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
             {step.transfers > 0 && (
               <p className="text-muted-foreground">
                 {t("finance.import_transfers", { n: step.transfers })}
+              </p>
+            )}
+            {step.splits > 0 && (
+              <p className="text-muted-foreground">
+                {t("finance.import_splits", { n: step.splits })}
               </p>
             )}
             {finance.accounts.length > 0 && (

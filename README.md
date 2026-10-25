@@ -57,6 +57,12 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   another is nothing, 500 out and 480 in is a 20 expense. *Find transfers* suggests pairs (the
   same amount out of one account and into another, at most 4 days apart); *Auto-combine*
   combines them all at once.
+- **Split bookings:** some banks list a booking (an Amazon *Splitbuchung*, say) and its order
+  lines too. Tick them and *Combine as split booking* (the largest becomes the booking): the
+  parts count with their own categories, the booking only with what they leave over (shipping),
+  so nothing counts twice and the totals match the statement; balances count the booking.
+  *Auto-combine* (and the import) first finds them: a booking marked “Splitbuchung” takes the
+  transactions of the same day, account and merchant as its parts.
 - **Import bank statements (CSV):** the import guesses the format (UTF-8 or Windows-1252,
   separator, lines before the table, which column is the date, amount or debit / credit,
   payee and description, German or English numbers and dates) and shows a preview to correct
