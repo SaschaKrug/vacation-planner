@@ -851,7 +851,7 @@ export const TOOLS: Record<string, Tool> = {
     spec: {
       name: "combine_transfers",
       description:
-        'Combines what belongs together, like the app\'s Auto-combine: first split bookings (order lines without a payee that name an order, "Bestellnr. 306-…", become parts of the booking of the same day and account that names the same order; a booking marked "Splitbuchung" takes the transactions of the same day, account and merchant as its parts; so they don\'t count twice), then transfers between the family\'s accounts (money out of one account and the same amount into another within 4 days, not yet combined), so each counts once by its net (0). from/to (YYYY-MM-DD) limit the range; without them the whole history.',
+        'Combines what belongs together, like the app\'s Auto-combine: first split bookings (order lines without a payee that name an order, "Bestellnr. 306-…", all become parts of the booking on the same account that names the same order, of the same day or else the closest within 4 days, also a booking already split; a booking marked "Splitbuchung" takes the transactions of the same day, account and merchant as its parts; so they don\'t count twice), then transfers between the family\'s accounts (money out of one account and the same amount into another within 4 days, not yet combined), so each counts once by its net (0). from/to (YYYY-MM-DD) limit the range; without them the whole history.',
       parameters: {
         type: "object",
         properties: {
