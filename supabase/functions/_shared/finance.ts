@@ -713,10 +713,14 @@ function wordsOf(t: TransactionRow): string[] {
  * Splits `left` among `bookings` (of one day and account): with several bookings, each first
  * takes the parts that add up to it exactly. The parts left over go to the one booking without
  * an exact match, if there is just one: all of them if they add up to at most its amount in the
- * same direction (the rest being shipping, say), else the ones that add up to it exactly (an
- * order line listed twice stays out).
+ * same direction (the rest being shipping, say), else the ones that add up to it exactly.
+ * `all` gives every part left over to that booking (or else the largest one) all the same.
  */
-function assignParts(bookings: TransactionRow[], left: TransactionRow[]): SplitMatch[] {
+function assignParts(
+  bookings: TransactionRow[],
+  left: TransactionRow[],
+  all = false,
+): SplitMatch[] {
   bookings = [...bookings].sort((a, b) =>
     Math.abs(b.amount_cents) - Math.abs(a.amount_cents) || byLead(a, b)
   );
@@ -731,7 +735,12 @@ function assignParts(bookings: TransactionRow[], left: TransactionRow[]): SplitM
       left = left.filter((t) => !parts.includes(t));
     }
   }
-  if (unmatched.length !== 1 || !left.length) return out;
+  if (!left.length) return out;
+  if (all) {
+    const booking = unmatched.length === 1 ? unmatched[0] : bookings[0];
+    return [...out, { booking, parts: left }];
+  }
+  if (unmatched.length !== 1) return out;
   const [booking] = unmatched;
   const sum = left.reduce((s, t) => s + t.amount_cents, 0);
   const fits = Math.sign(sum) === Math.sign(booking.amount_cents) &&
@@ -743,15 +752,19 @@ function assignParts(bookings: TransactionRow[], left: TransactionRow[]): SplitM
 
 /**
  * Split bookings by order number: order lines without a payee that name an order ("Bestellnr.
- * 306-…") are the parts of the transaction with a payee of the same day and account that names
- * the same order (the bank's booking, "AMAZON PAYMENTS EUROPE S.C.A." with the order number).
+ * 306-…") are the parts of a transaction with a payee on the same account that names the same
+ * order (the bank's booking, "AMAZON PAYMENTS EUROPE S.C.A." with the order number): of the
+ * same day, or else of the closest day at most TRANSFER_DAYS away. All of them, even when they
+ * add up to more than the booking (an order line listed twice, a discount), as the bank books
+ * only the booking; the booking's remainder evens it out, so totals match the statement. A
+ * booking in `booked` (one with parts already) takes more parts.
  */
-function matchOrders(rows: TransactionRow[]): SplitMatch[] {
+function matchOrders(rows: TransactionRow[], booked: Set<string>): SplitMatch[] {
   const lines = new Map<string, TransactionRow[]>();
   for (const t of rows) {
-    const order = t.payee.trim() ? "" : orderOf(t);
+    const order = t.payee.trim() || booked.has(t.id) ? "" : orderOf(t);
     if (!order) continue;
-    const key = `${t.day}|${t.account_id ?? ""}|${order}`;
+    const key = `${t.account_id ?? ""}|${order}`;
     lines.set(key, [...(lines.get(key) ?? []), t]);
   }
   if (!lines.size) return [];
@@ -759,34 +772,44 @@ function matchOrders(rows: TransactionRow[]): SplitMatch[] {
   for (const t of rows) {
     if (!t.payee.trim()) continue;
     for (const word of new Set(wordsOf(t))) {
-      const key = `${t.day}|${t.account_id ?? ""}|${word}`;
+      const key = `${t.account_id ?? ""}|${word}`;
       if (lines.has(key)) bookings.set(key, [...(bookings.get(key) ?? []), t]);
     }
   }
-  const out: SplitMatch[] = [];
-  const taken = new Set<TransactionRow>();
-  for (const [key, parts] of lines) {
-    const free = (bookings.get(key) ?? []).filter((t) => !taken.has(t));
-    if (!free.length) continue;
-    for (const m of assignParts(free, parts)) {
-      out.push(m);
-      taken.add(m.booking);
+  const parts = new Map<TransactionRow, TransactionRow[]>();
+  for (const [key, all] of lines) {
+    const candidates = bookings.get(key) ?? [];
+    for (const day of new Set(all.map((t) => t.day))) {
+      const gap = (t: TransactionRow) => Math.abs(diffDays(t.day, day));
+      const near = candidates.filter((t) => gap(t) <= TRANSFER_DAYS);
+      if (!near.length) continue;
+      const closest = Math.min(...near.map(gap));
+      const onDay = near.filter((t) => gap(t) === closest);
+      const firstDay = onDay.map((t) => t.day).sort()[0];
+      const free = all.filter((t) => t.day === day);
+      for (const m of assignParts(onDay.filter((t) => t.day === firstDay), free, true)) {
+        parts.set(m.booking, [...(parts.get(m.booking) ?? []), ...m.parts]);
+      }
     }
   }
-  return out;
+  return [...parts].map(([booking, parts]) => ({ booking, parts }));
 }
 
 /**
- * Split bookings among transactions that aren't parts or bookings yet. First by order number
- * (see matchOrders); then a transaction marked "Splitbuchung" (in payee or description) takes
+ * Split bookings among transactions that aren't parts yet. First by order number (see
+ * matchOrders, where a booking in `booked` may take more parts); then, among the rest that
+ * aren't bookings either, a transaction marked "Splitbuchung" (in payee or description) takes
  * the other transactions of the same day, account and merchant as its parts (see assignParts).
  */
-export function matchSplits(rows: TransactionRow[]): SplitMatch[] {
-  const out = matchOrders(rows);
+export function matchSplits(
+  rows: TransactionRow[],
+  booked = new Set<string>(),
+): SplitMatch[] {
+  const out = matchOrders(rows, booked);
   const taken = new Set(out.flatMap((m) => [m.booking, ...m.parts]));
   const byKey = new Map<string, TransactionRow[]>();
   for (const t of rows) {
-    if (taken.has(t)) continue;
+    if (taken.has(t) || booked.has(t.id)) continue;
     const key = `${t.day}|${t.account_id ?? ""}|${merchantOf(t)}`;
     byKey.set(key, [...(byKey.get(key) ?? []), t]);
   }
@@ -880,12 +903,13 @@ async function unlinked(store: Store, familyId: string, from?: string, to?: stri
   return rows.filter((t) => !groupOf(t, groups) && !inSplit(t, splits));
 }
 
-/** Transactions in the range (all without one) that aren't in a split yet: legs of transfers
- *  too, as a wrongly combined "transfer" may well be a split booking's part. */
+/** Transactions in the range (all without one) that aren't parts of a split yet: legs of
+ *  transfers too, as a wrongly combined "transfer" may well be a split booking's part, and
+ *  bookings (their ids in `booked`), which may take more parts. */
 async function splitCandidates(store: Store, familyId: string, from?: string, to?: string) {
   const rows = await store.listTransactions(familyId, from, to);
   const splits = await loadSplits(store, familyId);
-  return rows.filter((t) => !inSplit(t, splits));
+  return { rows: rows.filter((t) => !t.split_of), booked: new Set(splits.keys()) };
 }
 
 /** The pairs that look like transfers in the range (all without one), newest first. */
@@ -930,7 +954,8 @@ export async function autoCombine(
   only?: Set<string>,
 ) {
   const touches = (ts: TransactionRow[]) => !only || ts.some((t) => only.has(t.id));
-  const matches = matchSplits(await splitCandidates(store, familyId, from, to))
+  const { rows, booked } = await splitCandidates(store, familyId, from, to);
+  const matches = matchSplits(rows, booked)
     .filter((m) => touches([m.booking, ...m.parts]));
   const splits = await linkSplits(store, familyId, matches);
   const pairs = matchTransfers(await unlinked(store, familyId, from, to))
@@ -1526,7 +1551,7 @@ async function importRoute({ store, req, load }: Ctx): Promise<Response> {
         splitCandidates(store, family.id, from, to),
         unlinked(store, family.id, from, to),
       ]);
-      splits = matchSplits([...fresh, ...candidates])
+      splits = matchSplits([...fresh, ...candidates.rows], candidates.booked)
         .filter((m) => touches([m.booking, ...m.parts])).length;
       transfers = Math.min(
         matchTransfers([...fresh, ...around]).filter((p) => touches([p.out, p.in])).length,

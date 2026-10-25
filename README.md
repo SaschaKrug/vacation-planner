@@ -64,8 +64,9 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   parts count with their own categories, the booking only with what they leave over (shipping),
   so nothing counts twice and the totals match the statement; balances count the booking.
   *Auto-combine* (and the import) first finds them: order lines without a payee that name an
-  order (“Bestellnr. 306-…”) become parts of the booking of the same day and account that names
-  that order too, and a booking marked “Splitbuchung” takes the transactions of the same day,
+  order (“Bestellnr. 306-…”) all become parts of the booking on the same account that names that
+  order too (of the same day, or else the closest day at most 4 days away; a booking already
+  split takes the lines it is still missing), and a booking marked “Splitbuchung” takes the transactions of the same day,
   account and merchant as its parts.
 - **Import bank statements (CSV):** the import guesses the format (UTF-8 or Windows-1252,
   separator, lines before the table, which column is the date, amount or debit / credit,

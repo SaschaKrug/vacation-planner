@@ -225,8 +225,8 @@ Categories and accounts are referenced by id or name. Ask before deleting or cha
 transactions.
 
 \`POST ${f}/transfers/auto\` with \`{"from": "${year}-01-01", "to": "${year}-12-31"}\` (both
-optional) combines the split bookings (order lines without a payee and the booking of the same
-day and account naming the same order number; "Splitbuchung" and the transactions of the same
+optional) combines the split bookings (order lines without a payee and the booking on the same
+account naming the same order number, of the same day or within 4 days; "Splitbuchung" and the transactions of the same
 day, account and merchant) and then every suggested transfer in the range; the response has
 \`splits\`, \`linked\` and \`inverse\` like above.
 

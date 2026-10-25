@@ -2000,6 +2000,13 @@ const ORDER_STATEMENT = [
     payee: "",
     description: "Fleece Bestellnr. 306-0265205-1111111",
   },
+  // An order line booked a day later.
+  {
+    date: "2026-01-03",
+    amountCents: -500,
+    payee: "",
+    description: "Cap Bestellnr. 306-0265205-1111111",
+  },
   // Two charges for one order, and an order line listed twice.
   { date: "2026-05-20", amountCents: -7295, payee: AMAZON, description: "306-6954512-2222222" },
   { date: "2026-05-20", amountCents: -2804, payee: AMAZON, description: "306-6954512-2222222" },
@@ -2021,7 +2028,7 @@ const ORDER_STATEMENT = [
     payee: "",
     description: "Board Bestellnr. 306-6954512-2222222",
   },
-  // A discount: the order line is more than the booking, so it's left alone.
+  // A discount: the order line is more than the booking.
   { date: "2026-05-20", amountCents: -1359, payee: AMAZON, description: "306-1227454-3333333" },
   {
     date: "2026-05-20",
@@ -2029,7 +2036,7 @@ const ORDER_STATEMENT = [
     payee: "",
     description: "Lock Bestellnr. 306-1227454-3333333",
   },
-  // Order lines of an order whose booking is on another day stay alone too.
+  // An order line months after its order's booking stays alone.
   {
     date: "2026-05-21",
     amountCents: -500,
@@ -2042,26 +2049,101 @@ Deno.test("auto-combine finds split bookings by their order number", async () =>
   const { call, f, list } = await accountsFamily();
   const body = { rows: ORDER_STATEMENT, accountId: "checking", autoTransfers: true };
   const res = await call("POST", `${f}/import`, body);
-  assertEquals([res.data.added, res.data.splits, res.data.transfers], [10, 3, 0]);
+  assertEquals([res.data.added, res.data.splits, res.data.transfers], [11, 4, 0]);
   const all = await list("account=checking");
   const bookings = all.transactions.filter((t: any) => t.split)
     .map((t: any) => [t.date, t.amountCents, t.split.parts, t.split.remainderCents]);
+  // Every order line is a part, so the bookings count as the bank booked them: the line listed
+  // twice and the discount even out in the remainder.
   assertEquals(bookings, [
-    ["2026-05-20", -7295, 1, 0],
+    ["2026-05-20", -7295, 2, 2804],
     ["2026-05-20", -2804, 1, 0],
-    ["2026-01-02", -7289, 1, 0],
+    ["2026-05-20", -1359, 1, 340],
+    ["2026-01-02", -7289, 2, 500],
   ]);
   const alone = all.transactions.filter((t: any) => !t.split && !t.splitOf)
-    .map((t: any) => `${t.date} ${t.amountCents}`).sort();
-  assertEquals(alone, [
-    "2026-05-20 -1359",
-    "2026-05-20 -1699",
-    "2026-05-20 -2804",
-    "2026-05-21 -500",
-  ]);
-  // Only the duplicate, the discounted order and the line of another day count twice.
-  const net = -(7289 + 7295 + 2804 + 2804 + 1359 + 1699 + 500);
-  assertEquals(all.incomeCents - all.expenseCents, net);
+    .map((t: any) => `${t.date} ${t.amountCents}`);
+  assertEquals(alone, ["2026-05-21 -500"]);
+  assertEquals(all.incomeCents - all.expenseCents, -(7289 + 7295 + 2804 + 1359 + 500));
+});
+
+/** January's Amazon rows of a checking account statement (with a "Splitbuchung" column, true
+ *  for the order lines): a refund's order line is listed twice, once by the bank. */
+const JANUARY_AMAZON = [
+  {
+    date: "2026-01-12",
+    amountCents: -1198,
+    payee: "AMAZON EU S.A R.L., NIEDERLASSUNG DEUTSCHLAND",
+    description: "306-0582276-2307564 Amazon.de 1Y7CA  7VM96XQJW7Z",
+  },
+  {
+    date: "2026-01-12",
+    amountCents: -1198,
+    payee: "",
+    description: "tesa INSULATION Fenster-Isolierfolie Bestellnr. 306-0582276-2307564",
+  },
+  {
+    date: "2026-01-14",
+    amountCents: -1177,
+    payee: "AMAZON EU S.A R.L., NIEDERLASSUNG DEUTSCHLAND",
+    description: "306-2295250-0932308 Amazon.de 58PAO  3MUUGGKX28W",
+  },
+  {
+    date: "2026-01-14",
+    amountCents: -1177,
+    payee: "",
+    description: "Doppelherz Omega-3 Seefischoel 1000 Bestellnr. 306-2295250-0932308",
+  },
+  {
+    date: "2026-01-14",
+    amountCents: 1198,
+    payee: "AMAZON EU S.A R.L., NIEDERLASSUNG DEUTSCHLAND",
+    description: "306-0582276-2307564 Amazon.de 1NJ2I  1WOZFDK72RD",
+  },
+  {
+    date: "2026-01-14",
+    amountCents: 1198,
+    payee: "",
+    description: "Erstattung Bestellnr. 306-0582276-2307564",
+  },
+  {
+    date: "2026-01-14",
+    amountCents: 1198,
+    payee: "",
+    description: "COMDIRECT BANK AG0800 Bestellnummer 306-0582276-2307564 Erstattung",
+  },
+  {
+    date: "2026-01-23",
+    amountCents: -1435,
+    payee: "AMAZON PAYMENTS EUROPE S.C.A.",
+    description: "305-9356245-3073956 AMZN Mktp DE 5X  MTBO28KNURUUSB",
+  },
+];
+/** What the bank booked: the rows without the order lines. */
+const JANUARY_AMAZON_NET = -1198 - 1177 + 1198 - 1435;
+
+Deno.test("auto-combine gives a split booking the order lines it is still missing", async () => {
+  const { call, f, ops, list } = await accountsFamily();
+  const res = await call("POST", `${f}/import`, { rows: JANUARY_AMAZON, accountId: "checking" });
+  const ids: string[] = res.data.ids;
+  // As before: the refund took only one of its two order lines.
+  await ops({ action: "split", id: ids[4], ids: [ids[5]] });
+  const before = await list("account=checking");
+  assertEquals(before.incomeCents - before.expenseCents, -1198 * 2 - 1177 * 2 + 1198 * 2 - 1435);
+
+  const auto = (await call("POST", `${f}/transfers/auto`, {})).data;
+  assertEquals([auto.splits, auto.linked], [3, 0]);
+  const all = await list("account=checking");
+  assertEquals(all.incomeCents - all.expenseCents, JANUARY_AMAZON_NET);
+  const refund = all.transactions.find((t: any) => t.id === ids[4]);
+  assertEquals([refund.split.parts, refund.split.remainderCents], [2, -1198]);
+  assertEquals(all.transactions.find((t: any) => t.id === ids[6]).splitOf, ids[4]);
+
+  // Undo takes back only the new parts.
+  await ops(...auto.inverse);
+  const undone = await list("account=checking");
+  assertEquals(undone.incomeCents - undone.expenseCents, before.incomeCents - before.expenseCents);
+  assertEquals(undone.transactions.find((t: any) => t.id === ids[5]).splitOf, ids[4]);
 });
 
 Deno.test("auto-combine turns a voucher wrongly combined as a transfer into a part", async () => {
