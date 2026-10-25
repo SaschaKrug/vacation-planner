@@ -45,6 +45,11 @@ export type Item =
   }
   | { kind: "error"; text: string };
 
+/** What a running turn is doing right now, for the status line under the chat. */
+export type Activity =
+  | { kind: "thinking" | "writing" | "tool"; at: number }
+  | { kind: "retrying"; at: number; attempt: number; max: number };
+
 export interface Chat {
   id: string;
   title: string;
@@ -113,6 +118,8 @@ export class ChatStore {
   chats: Chat[];
   currentId: string | null = null;
   busy = false;
+  /** Set while busy; `at` is when the last event arrived. */
+  activity: Activity | null = null;
   rev = 0;
   private listeners = new Set<() => void>();
   private abort: AbortController | null = null;
@@ -245,6 +252,7 @@ export class ChatStore {
     }];
     c.updatedAt = Date.now();
     this.busy = true;
+    this.activity = { kind: "thinking", at: Date.now() };
     this.save();
     this.emit();
 
@@ -262,9 +270,13 @@ export class ChatStore {
       c.items = fn([...c.items]);
       this.emit();
     };
+    const doing = (kind: "thinking" | "writing" | "tool") => {
+      this.activity = { kind, at: Date.now() };
+    };
     const onEvent = (e: ChatEvent) => {
       switch (e.event) {
         case "text":
+          doing("writing");
           if (!answer) {
             answer = { kind: "assistant", text: "" };
             update((items) => [...items, answer!]);
@@ -274,6 +286,7 @@ export class ChatStore {
           update((items) => items);
           break;
         case "tool":
+          doing("tool");
           answer = null; // text after the tool goes into a new bubble
           step.calls.push({
             id: e.data.id,
@@ -286,6 +299,12 @@ export class ChatStore {
           break;
         case "tool_result":
           step.results.set(e.data.id, JSON.stringify({ ok: e.data.ok, summary: e.data.summary }));
+          // Once its tools are done, the model reads the results and decides what's next.
+          if (
+            !c.items.some((it) =>
+              it.kind === "tool" && it.status === "running" && it.id !== e.data.id
+            )
+          ) doing("thinking");
           update((items) =>
             items.map((it) =>
               it.kind === "tool" && it.id === e.data.id
@@ -309,6 +328,7 @@ export class ChatStore {
           this.onChange(e.data.kind);
           break;
         case "messages":
+          doing("thinking");
           c.history = [...c.history, ...e.data.messages];
           answer = null;
           step = { text: "", calls: [], results: new Map() };
@@ -396,6 +416,7 @@ export class ChatStore {
       }
       recover();
       if (fatal || ++tries > MAX_RETRIES) {
+        this.activity = null;
         const text = failure;
         update((items) => [...items, { kind: "error", text }]);
         // The server never answered this turn: drop the message from the history so the next
@@ -403,7 +424,10 @@ export class ChatStore {
         if (c.history.at(-1)?.role === "user") c.history = c.history.slice(0, -1);
         break;
       }
+      this.activity = { kind: "retrying", at: Date.now(), attempt: tries, max: MAX_RETRIES };
+      this.emit();
       await pause(tries * 1000, abort.signal);
+      doing("thinking");
     }
     const last = c.history.at(-1);
     if (last && (last.role !== "assistant" || last.tool_calls?.length)) {
@@ -418,6 +442,7 @@ export class ChatStore {
         : m
     );
     this.busy = false;
+    this.activity = null;
     this.abort = null;
     c.updatedAt = Date.now();
     this.save();
