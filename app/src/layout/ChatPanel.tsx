@@ -348,7 +348,7 @@ function ChatView({ onClose }: { onClose: () => void }) {
       </div>
 
       <form
-        className="shrink-0 border-t p-3"
+        className="shrink-0 border-t p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
         onSubmit={(e) => {
           e.preventDefault();
           send();
@@ -407,7 +407,7 @@ function ChatView({ onClose }: { onClose: () => void }) {
               disabled={!ready}
               aria-label={t("chat.placeholder")}
               placeholder={ready ? t("chat.placeholder") : t("chat.setup_first")}
-              className="max-h-40 min-h-9 resize-none border-0 bg-transparent p-1.5 shadow-none focus-visible:ring-0 dark:bg-transparent"
+              className="max-h-40 min-h-9 resize-none border-0 bg-transparent p-1.5 shadow-none placeholder:truncate focus-visible:ring-0 dark:bg-transparent"
               onChange={(e) => setText(e.target.value)}
               onPaste={(e) => {
                 // Screenshots arrive as image files; plain text pastes as usual.
@@ -453,7 +453,8 @@ function ChatView({ onClose }: { onClose: () => void }) {
               )}
           </div>
         </div>
-        <p className="mt-1.5 px-1 text-[11px] text-muted-foreground max-sm:text-xs">
+        {/* Keyboard hints mean nothing on a touch screen. */}
+        <p className="mt-1.5 px-1 text-[11px] text-muted-foreground pointer-coarse:hidden">
           {t("chat.hint")}
         </p>
       </form>
