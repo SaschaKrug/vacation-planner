@@ -244,6 +244,32 @@ Deno.test("analyzes transactions per month, category and payee, counted like the
   assertMatch(bad.result.error, /at most 2/);
   const unknown = await tool("analyze_transactions", { groupBy: ["color"] });
   assertMatch(unknown.result.error, /groupBy can only hold/);
+
+  // Several analyses in one call: shared options, each its own filters; a bad one doesn't spoil
+  // the others.
+  const batch = await tool("analyze_transactions", {
+    groupBy: ["category"],
+    kind: "expense",
+    queries: [
+      { label: "January", from: "2026-01-01", to: "2026-01-31" },
+      { label: "March", from: "2026-03-01", to: "2026-03-31", groupBy: ["payee"] },
+      { groupBy: ["color"] },
+    ],
+  });
+  assert(batch.ok, JSON.stringify(batch.result));
+  const [jan, mar, broken] = batch.result.results;
+  assertEquals(jan.label, "January");
+  assertEquals(jan.groupBy, ["category"]);
+  assertEquals(jan.groups.map((g: any) => [g.category, g.expenseCents]), [["groceries", 12000]]);
+  assertEquals(mar.label, "March");
+  assertEquals(mar.groups.map((g: any) => [g.payee, g.expenseCents]), [["Lidl", 3000]]);
+  assertMatch(broken.error, /groupBy can only hold/);
+  assert(!("label" in broken));
+
+  const none = await tool("analyze_transactions", { queries: [] });
+  assertMatch(none.result.error, /queries must be a list/);
+  const many = await tool("analyze_transactions", { queries: Array(11).fill({}) });
+  assertMatch(many.result.error, /queries must be a list/);
 });
 
 Deno.test("counts calendar days per type, month or weekday", async () => {

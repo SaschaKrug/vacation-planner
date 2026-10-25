@@ -19,7 +19,7 @@ import {
   transferPairs,
 } from "../finance.ts";
 import { cleanName, HttpError, objectOf, slug } from "../http.ts";
-import type { CategoryRow, SearchProvider, Store, TypeRow } from "../store.ts";
+import type { AccountRow, CategoryRow, SearchProvider, Store, TypeRow } from "../store.ts";
 import {
   applyEntryOps,
   applyNoteOps,
@@ -131,6 +131,9 @@ const MAX_TX_DESCRIPTION = 100;
 /** analyze_transactions: groups per call at most (fewer when they don't fit). */
 const MAX_GROUPS = 1000;
 const DEFAULT_GROUPS = 100;
+/** analyze_transactions: analyses per call (queries), and characters of a query's label. */
+const MAX_QUERIES = 10;
+const MAX_LABEL = 60;
 /** analyze_calendar: days per call at most (about ten years). */
 const MAX_ANALYZE_DAYS = 3700;
 /** ask_user: options per question, and characters of the question and of an option. */
@@ -227,13 +230,14 @@ function choices<T extends string>(
   return out;
 }
 
-/** The first elements of `items` whose JSON, with `head`, stays below the tool result limit. */
-function fitting<T>(head: unknown, items: T[]): T[] {
+/** The first elements of `items` whose JSON, with `head`, stays below `max` characters (the tool
+ *  result limit). */
+function fitting<T>(head: unknown, items: T[], max = MAX_TOOL_RESULT): T[] {
   let size = JSON.stringify(head).length + 60;
   const out: T[] = [];
   for (const item of items) {
     size += JSON.stringify(item).length + 1;
-    if (size > MAX_TOOL_RESULT && out.length) break;
+    if (size > max && out.length) break;
     out.push(item);
   }
   return out;
@@ -281,6 +285,78 @@ const daysProps = {
   to: { type: "string", description: "Last day of the range (YYYY-MM-DD)." },
   skipWeekends: { type: "boolean", description: "Leave out Saturdays and Sundays." },
 };
+
+/** The filters and options of one analysis (analyze_transactions, also per query). */
+const ANALYSIS_PROPERTIES = {
+  from: { type: "string" },
+  to: { type: "string" },
+  account: { type: "string" },
+  category: { type: "string" },
+  kind: { type: "string", enum: ["income", "expense", "transfer"] },
+  q: { type: "string" },
+  groupBy: {
+    type: "array",
+    items: { type: "string", enum: [...TX_DIMENSIONS] },
+    description: "Default: month",
+  },
+  categoryLevel: {
+    type: "integer",
+    description: "With groupBy category: count each transaction for its category's " +
+      "ancestor at this level (1 = top level). Default: its own category",
+  },
+  stats: { type: "array", items: { type: "string", enum: [...TX_STATS] } },
+  sortBy: { type: "string", enum: [...TX_SORTS] },
+  order: { type: "string", enum: ["asc", "desc"] },
+  limit: { type: "integer", description: `Groups at most, default ${DEFAULT_GROUPS}` },
+};
+
+/** One analysis of analyze_transactions, its groups cut to fit into `max` characters. */
+async function analysis(
+  store: Store,
+  familyId: string,
+  args: Record<string, unknown>,
+  categories: CategoryRow[],
+  accounts: AccountRow[],
+  max = MAX_TOOL_RESULT,
+) {
+  const query = new URLSearchParams();
+  for (const k of ["from", "to", "account", "category", "kind", "q"]) {
+    if (typeof args[k] === "string" && args[k]) query.set(k, args[k] as string);
+  }
+  const asked = choices(args.groupBy, TX_DIMENSIONS, "groupBy", 2);
+  const groupBy = asked?.length ? asked : ["month" as const];
+  const stats = choices(args.stats, TX_STATS, "stats") ?? [];
+  const [sortBy] = choices(args.sortBy, TX_SORTS, "sortBy", 1) ?? [];
+  const [order] = choices(args.order, ["asc", "desc"] as const, "order", 1) ?? [];
+  const level = args.categoryLevel;
+  if (level !== undefined && level !== null && (!Number.isInteger(level) || +level < 1)) {
+    throw new HttpError(400, "categoryLevel must be a whole number from 1");
+  }
+  const { rows, links } = await findTransactions(store, familyId, query);
+  const res = analyzeTransactions({
+    items: netItems(rows, links),
+    groupBy,
+    stats,
+    sortBy,
+    order,
+    categoryLevel: (level as number | null) ?? undefined,
+    categories,
+    accounts,
+    from: query.get("from") ?? undefined,
+    to: query.get("to") ?? undefined,
+  });
+  const limit = Math.min(MAX_GROUPS, Math.max(1, Number(args.limit) || DEFAULT_GROUPS));
+  const head = { groupBy, total: res.total, perGroup: res.perGroup, groupCount: 0 };
+  const groups = fitting(head, res.groups.slice(0, limit), max);
+  return {
+    groupBy,
+    total: res.total,
+    ...(res.perGroup ? { perGroup: res.perGroup } : {}),
+    groupCount: res.groups.length,
+    groups,
+    ...(groups.length < res.groups.length ? { more: res.groups.length - groups.length } : {}),
+  };
+}
 
 export const TOOLS: Record<string, Tool> = {
   get_calendar: {
@@ -709,77 +785,56 @@ export const TOOLS: Record<string, Tool> = {
     spec: {
       name: "analyze_transactions",
       description:
-        "Totals and statistics of transactions per group, computed exactly (use it instead of adding up list_transactions): up to 2 of groupBy: month, quarter, year, week (ISO), weekday, day, category, account, payee (similar spellings together), kind (income / expense). Each group has count, incomeCents, expenseCents, netCents, and the asked stats of its single amounts (avg, median, min, max, stddev; in cents, negative = out). With one groupBy, perGroup has the average and median group (e.g. the average month; empty months count as 0). Counted like all totals: a transfer between the family's accounts once by its net, a split booking by its parts. Categories nest (\"Food > Groceries\"): by default a transaction counts for its own category; with categoryLevel (1 = top level, 2 = second level …) for its category's ancestor at that level, or its own category if that isn't as deep; nested groups have categoryPath. Same filters as list_transactions (from, to, account, category with its subcategories, kind, q). Time groups come in order, others largest first; sortBy: key, total (income + expenses), count, income, expense, net; order: asc or desc.",
+        'Totals and statistics of transactions per group, computed exactly (use it instead of adding up list_transactions): up to 2 of groupBy: month, quarter, year, week (ISO), weekday, day, category, account, payee (similar spellings together), kind (income / expense). Each group has count, incomeCents, expenseCents, netCents, and the asked stats of its single amounts (avg, median, min, max, stddev; in cents, negative = out). With one groupBy, perGroup has the average and median group (e.g. the average month; empty months count as 0). Counted like all totals: a transfer between the family\'s accounts once by its net, a split booking by its parts. Categories nest ("Food > Groceries"): by default a transaction counts for its own category; with categoryLevel (1 = top level, 2 = second level …) for its category\'s ancestor at that level, or its own category if that isn\'t as deep; nested groups have categoryPath. Same filters as list_transactions (from, to, account, category with its subcategories, kind, q). Time groups come in order, others largest first; sortBy: key, total (income + expenses), count, income, expense, net; order: asc or desc. One call usually covers a whole question: groupBy category, account or kind gives every category, account or kind at once (with year or month as the second dimension, per period). To compare different periods or filters, don\'t call once each: give `queries`, up to 10 analyses with their own filters and options (and a label, given back) in one call; what is set outside queries applies to all of them, e.g. {"groupBy": ["category"], "categoryLevel": 1, "kind": "expense", "queries": [{"label": "2025", "from": "2025-01-01", "to": "2025-10-25"}, {"label": "2026", "from": "2026-01-01", "to": "2026-10-25"}]}. The result then has results: one per query, in order.',
       parameters: {
         type: "object",
         properties: {
-          from: { type: "string" },
-          to: { type: "string" },
-          account: { type: "string" },
-          category: { type: "string" },
-          kind: { type: "string", enum: ["income", "expense", "transfer"] },
-          q: { type: "string" },
-          groupBy: {
+          ...ANALYSIS_PROPERTIES,
+          queries: {
             type: "array",
-            items: { type: "string", enum: [...TX_DIMENSIONS] },
-            description: "Default: month",
+            description: `Up to ${MAX_QUERIES} analyses in one call, each with any of the ` +
+              "options above and a label",
+            items: {
+              type: "object",
+              properties: { label: { type: "string" }, ...ANALYSIS_PROPERTIES },
+            },
           },
-          categoryLevel: {
-            type: "integer",
-            description: "With groupBy category: count each transaction for its category's " +
-              "ancestor at this level (1 = top level). Default: its own category",
-          },
-          stats: { type: "array", items: { type: "string", enum: [...TX_STATS] } },
-          sortBy: { type: "string", enum: [...TX_SORTS] },
-          order: { type: "string", enum: ["asc", "desc"] },
-          limit: { type: "integer", description: `Groups at most, default ${DEFAULT_GROUPS}` },
         },
       },
     },
     async run(args, { store, familyId }) {
-      const query = new URLSearchParams();
-      for (const k of ["from", "to", "account", "category", "kind", "q"]) {
-        if (typeof args[k] === "string" && args[k]) query.set(k, args[k] as string);
-      }
-      const asked = choices(args.groupBy, TX_DIMENSIONS, "groupBy", 2);
-      const groupBy = asked?.length ? asked : ["month" as const];
-      const stats = choices(args.stats, TX_STATS, "stats") ?? [];
-      const [sortBy] = choices(args.sortBy, TX_SORTS, "sortBy", 1) ?? [];
-      const [order] = choices(args.order, ["asc", "desc"] as const, "order", 1) ?? [];
-      const level = args.categoryLevel;
-      if (level !== undefined && level !== null && (!Number.isInteger(level) || +level < 1)) {
-        throw new HttpError(400, "categoryLevel must be a whole number from 1");
-      }
-      const [{ rows, links }, categories, accounts] = await Promise.all([
-        findTransactions(store, familyId, query),
+      const [categories, accounts] = await Promise.all([
         store.listCategories(familyId),
         store.listAccounts(familyId),
       ]);
-      const res = analyzeTransactions({
-        items: netItems(rows, links),
-        groupBy,
-        stats,
-        sortBy,
-        order,
-        categoryLevel: (level as number | null) ?? undefined,
-        categories,
-        accounts,
-        from: query.get("from") ?? undefined,
-        to: query.get("to") ?? undefined,
-      });
-      const limit = Math.min(MAX_GROUPS, Math.max(1, Number(args.limit) || DEFAULT_GROUPS));
-      const head = { groupBy, total: res.total, perGroup: res.perGroup, groupCount: 0 };
-      const groups = fitting(head, res.groups.slice(0, limit));
+      const analyze = (a: Record<string, unknown>, max?: number) =>
+        analysis(store, familyId, a, categories, accounts, max);
+      if (args.queries === undefined || args.queries === null) {
+        const result = await analyze(args);
+        return { result, summary: `${result.groupCount} groups` };
+      }
+      const { queries, ...shared } = args;
+      if (!Array.isArray(queries) || !queries.length || queries.length > MAX_QUERIES) {
+        throw new HttpError(400, `queries must be a list of 1 to ${MAX_QUERIES} analyses`);
+      }
+      const list = queries.map((q) => ({ ...shared, ...objectOf(q, "Each query") }));
+      // The analyses share the tool result.
+      const max = Math.floor(MAX_TOOL_RESULT / list.length) - 40;
+      const results = await Promise.all(list.map(async (q) => {
+        const label = typeof q.label === "string" && q.label.trim()
+          ? { label: q.label.trim().slice(0, MAX_LABEL) }
+          : {};
+        try {
+          return { ...label, ...(await analyze(q, max)) };
+        } catch (err) {
+          // One bad query doesn't spoil the others.
+          if (err instanceof HttpError) return { ...label, error: err.message };
+          throw err;
+        }
+      }));
       return {
-        result: {
-          groupBy,
-          total: res.total,
-          ...(res.perGroup ? { perGroup: res.perGroup } : {}),
-          groupCount: res.groups.length,
-          groups,
-          ...(groups.length < res.groups.length ? { more: res.groups.length - groups.length } : {}),
-        },
-        summary: `${res.groups.length} groups`,
+        result: { results },
+        summary: `${results.length} ${results.length === 1 ? "analysis" : "analyses"}`,
       };
     },
   },
@@ -981,7 +1036,7 @@ export const TOOLS: Record<string, Tool> = {
     spec: {
       name: "calculate",
       description:
-        'Calculates exactly; use it for any arithmetic instead of working it out yourself. Numbers, lists [1, 2, 3], + - * / % ^ (element by element on lists), parentheses, "name = …" to reuse a result in later expressions, and functions: abs sqrt exp ln log(x, base=10) round(x, digits) floor ceil pow; sum count min max avg median stddev variance percentile(list, p 0–100) product; sort cumsum diff growth (relative change per step) seq(from, to, step); slope(y, x?) intercept(y, x?) correl(x, y) forecast(y, k) (the linear trend k steps after the last value); money, like spreadsheets (rate per period, money paid out negative): pmt(rate, nper, pv, fv?, type?) fv(rate, nper, pmt, pv?, type?) pv(rate, nper, pmt, fv?, type?) nper(rate, pmt, pv, fv?) npv(rate, flows) irr(flows) cagr(start, end, years). Constants pi, e. Each expression gets its value or an error.',
+        'Calculates exactly; use it for any arithmetic instead of working it out yourself. Numbers, lists [1, 2, 3], + - * / % ^ (element by element on lists), parentheses, "name = …" to reuse a result in later expressions, and functions: abs sqrt exp ln log(x, base=10) round(x, digits) floor ceil pow; sum count min max avg median stddev variance percentile(list, p 0–100) product; sort cumsum diff growth (relative change per step) seq(from, to, step); slope(y, x?) intercept(y, x?) correl(x, y) forecast(y, k) (the linear trend k steps after the last value); money, like spreadsheets (rate per period, money paid out negative): pmt(rate, nper, pv, fv?, type?) fv(rate, nper, pmt, pv?, type?) pv(rate, nper, pmt, fv?, type?) nper(rate, pmt, pv, fv?) npv(rate, flows) irr(flows) cagr(start, end, years). Constants pi, e. Each expression gets its value or an error. Put all the math of an answer into one call: later expressions can use earlier names.',
       parameters: {
         type: "object",
         properties: {
@@ -1165,6 +1220,11 @@ export function toolsFor(opts: { writes: boolean; search: boolean }): ToolSpec[]
   return Object.values(TOOLS)
     .filter((t) => (opts.writes || !t.write) && (opts.search || !t.needsSearch))
     .map((t) => ({ type: "function", function: t.spec }));
+}
+
+/** A tool that only reads, so calls of it can run side by side (unknown ones fail right away). */
+export function readsOnly(name: string): boolean {
+  return !TOOLS[name]?.write && name !== "ask_user";
 }
 
 /** Runs a tool call; errors come back to the model as {"error": "..."} so it can react. */

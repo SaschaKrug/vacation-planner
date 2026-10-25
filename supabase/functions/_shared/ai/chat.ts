@@ -22,7 +22,14 @@ import {
   streamChat,
   type ToolCall,
 } from "./provider.ts";
-import { MAX_TOOL_RESULT, type Question, runTool, type ToolContext, toolsFor } from "./tools.ts";
+import {
+  MAX_TOOL_RESULT,
+  type Question,
+  readsOnly,
+  runTool,
+  type ToolContext,
+  toolsFor,
+} from "./tools.ts";
 
 /** Messages of a history the caller keeps (POST /ai/chat); stored chats are condensed instead
  *  (see context.ts). */
@@ -162,8 +169,12 @@ ${
       ? "- For facts from the web (school and public holidays, opening times, prices), search, read the best sources with fetch_page, and name them."
       : "- Web search isn't set up; you can still read pages with fetch_page when the user gives a URL."
   }
-- Call tools that don't depend on each other together, and put many changes into one call's
-  ops: an answer can only take a limited number of steps.
+- Work in few steps: first think which numbers the answer needs, then get them together.
+  One analyze_transactions call groups by up to two dimensions (e.g. year and category, so
+  every category at once) and takes several queries (periods, accounts, filters) at once:
+  don't call it once per category, account or period. Put all the math into one calculate
+  call. Call tools that don't depend on each other in the same step, and put many changes
+  into one call's ops.
 - Dates are YYYY-MM-DD. Keep answers short; use Markdown lists or tables only where they help.
 
 ## Ask instead of guessing
@@ -462,7 +473,21 @@ export async function runChat(opts: {
       push({ role: "assistant", content: content || null, tool_calls: calls });
       // A question waits for the user: its result is their answer, added by the app.
       let question: ({ id: string } & Question) | null = null;
-      for (const call of calls) {
+      const argsOf = (call: ToolCall): unknown => {
+        try {
+          return JSON.parse(call.function.arguments || "{}");
+        } catch {
+          return call.function.arguments;
+        }
+      };
+      // Calls that only read run side by side; changes run one after another, in order.
+      const running = calls.every((c) => readsOnly(c.function.name))
+        ? calls.map((call) => {
+          emit("tool", { id: call.id, name: call.function.name, args: argsOf(call) });
+          return runTool(call.function.name, call.function.arguments, ctx, allowed);
+        })
+        : null;
+      for (const [i, call] of calls.entries()) {
         if (call.function.name === "ask_user" && question) {
           push({
             role: "tool",
@@ -471,16 +496,12 @@ export async function runChat(opts: {
           });
           continue;
         }
-        let args: unknown = {};
-        try {
-          args = JSON.parse(call.function.arguments || "{}");
-        } catch {
-          args = call.function.arguments;
-        }
+        const args = argsOf(call);
         // A question shows up as the question itself (not as a tool call), once it's valid.
         const ask = call.function.name === "ask_user";
-        if (!ask) emit("tool", { id: call.id, name: call.function.name, args });
-        const res = await runTool(call.function.name, call.function.arguments, ctx, allowed);
+        if (!ask && !running) emit("tool", { id: call.id, name: call.function.name, args });
+        const res = await (running?.[i] ??
+          runTool(call.function.name, call.function.arguments, ctx, allowed));
         if (res.question) {
           question = { id: call.id, ...res.question };
           continue;
