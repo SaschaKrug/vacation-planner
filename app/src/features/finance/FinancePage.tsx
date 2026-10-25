@@ -45,7 +45,8 @@ export function FinancePage() {
   return (
     <>
       <PageHeader title={t("nav.finance")}>
-        <PeriodNav />
+        {/* Phones have no room for it next to the buttons: it gets its own row below. */}
+        <PeriodNav className="max-sm:hidden" />
         <div className="flex-1" />
         {edit && (
           <>
@@ -59,6 +60,7 @@ export function FinancePage() {
         )}
       </PageHeader>
       <div className="mx-auto w-full max-w-6xl space-y-4 p-4 md:p-6">
+        <PeriodNav className="justify-between sm:hidden" />
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList>
             <TabsTrigger value="transactions">{t("finance.transactions")}</TabsTrigger>
@@ -93,7 +95,7 @@ export function FinancePage() {
 
 // Account cards and stat tiles share one grid and one tile shape, so the two rows line up.
 const tileGrid = "grid grid-cols-3 gap-2 sm:gap-3";
-const tileBox = "min-w-0 rounded-xl border bg-card p-2.5 text-left sm:px-4 sm:py-3";
+const tileBox = "min-w-0 rounded-xl border bg-card px-2 py-2.5 text-left sm:px-4 sm:py-3";
 const tileValue = "mt-0.5 truncate text-[13px] font-semibold tabular-nums sm:text-xl";
 
 /** Income, expenses and the difference, as headline numbers. */
@@ -218,7 +220,7 @@ function AccountCards() {
   );
 }
 
-function PeriodNav() {
+function PeriodNav({ className }: { className?: string }) {
   const finance = useFinance();
   const { mode, year } = finance.period;
   const lang = getLang();
@@ -233,7 +235,7 @@ function PeriodNav() {
     </>
   );
   return (
-    <div className="flex min-w-0 items-center gap-1">
+    <div className={cn("flex min-w-0 items-center gap-1", className)}>
       <Select value={mode} onValueChange={(v) => finance.setPeriod({ mode: v as PeriodMode })}>
         <SelectTrigger className="h-8 w-auto gap-1.5" aria-label={t("finance.period")}>
           <SelectValue />
@@ -245,7 +247,7 @@ function PeriodNav() {
         </SelectContent>
       </Select>
       {mode !== "all" && (
-        <>
+        <div className="flex min-w-0 items-center gap-1">
           <Button
             variant="ghost"
             size="icon"
@@ -270,7 +272,7 @@ function PeriodNav() {
           >
             <ChevronRight />
           </Button>
-        </>
+        </div>
       )}
     </div>
   );

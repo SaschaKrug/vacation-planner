@@ -228,7 +228,9 @@ export function VacationPage() {
             <Coverage onJump={jumpToGap} />
           </div>
         )}
-        {narrow && <Coverage onJump={jumpToGap} className="mx-3 mt-1 mb-2 self-start" />}
+        {narrow && (
+          <Coverage onJump={jumpToGap} className="mx-3 mt-1 mb-2 justify-between self-stretch" />
+        )}
         {store.readOnly && store.family && (
           <p className="mx-3 mb-3 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-sm sm:mx-0">
             {t("readonly.banner")}
@@ -273,11 +275,13 @@ function YearNav(
   const years = new Set<number>();
   for (let y = now - 5; y <= now + 5; y++) years.add(y);
   years.add(year);
+  // On phones the header has no room for the arrows; the year list does the same.
   return (
     <div className="flex items-center gap-0.5">
       <Button
         variant="ghost"
         size="icon"
+        className="max-sm:hidden"
         title={t("top.prev_year_title")}
         aria-label={t("top.prev_year")}
         onClick={() => onChange(year - 1)}
@@ -298,6 +302,7 @@ function YearNav(
       <Button
         variant="ghost"
         size="icon"
+        className="max-sm:hidden"
         title={t("top.next_year_title")}
         aria-label={t("top.next_year")}
         onClick={() => onChange(year + 1)}

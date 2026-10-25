@@ -1,3 +1,4 @@
+import { ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { usePlanner } from "@/features/family/context";
 import { gapDays } from "@/lib/core";
@@ -16,7 +17,7 @@ export function Coverage(
   return (
     <div
       className={cn(
-        "flex h-[34px] shrink-0 items-center gap-2.5 rounded-full border px-3 text-[13px] font-medium whitespace-nowrap",
+        "flex h-[34px] shrink-0 items-center gap-2.5 rounded-full border px-3 text-[13px] font-medium whitespace-nowrap max-sm:text-sm",
         gaps.length ? "border-gap/35 bg-gap/10 pr-[3px]" : "border-ok/30 bg-ok/10",
         className,
       )}
@@ -27,21 +28,24 @@ export function Coverage(
       {gaps.length
         ? (
           <>
-            <span className="font-semibold text-gap">
+            <span className="min-w-0 truncate font-semibold text-gap">
               {t("coverage.gaps", { n: gaps.length })}
             </span>
             <Button
               size="sm"
               variant="outline"
-              className="h-7 rounded-full"
+              className="h-7 rounded-full max-sm:w-7 max-sm:px-0"
               title={t("coverage.next_title")}
+              aria-label={t("coverage.next")}
               onClick={onJump}
             >
-              {t("coverage.next")}
+              {/* Phones: just the arrow, so the count keeps its room. */}
+              <span className="max-sm:hidden">{t("coverage.next")}</span>
+              <ArrowRight className="sm:hidden" />
             </Button>
           </>
         )
-        : <span className="text-ok">{t("coverage.ok")}</span>}
+        : <span className="min-w-0 truncate text-ok">{t("coverage.ok")}</span>}
     </div>
   );
 }

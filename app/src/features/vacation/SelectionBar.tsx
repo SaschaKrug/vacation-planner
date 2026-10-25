@@ -54,7 +54,7 @@ export function SelectionBar(
   return (
     <div
       className={cn(
-        "flex min-h-[46px] items-center gap-2.5 rounded-lg border border-transparent py-1.5 pr-1.5 pl-3.5 text-[13px] text-muted-foreground",
+        "flex min-h-[46px] items-center gap-2.5 rounded-lg border border-transparent py-1.5 pr-1.5 pl-3.5 text-[13px] text-muted-foreground max-sm:text-sm",
         has && !compact && "border-border bg-card shadow-xs",
         compact && "min-h-0 flex-wrap gap-x-2 gap-y-1.5 py-0 pr-2",
       )}
