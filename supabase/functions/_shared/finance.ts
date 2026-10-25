@@ -1,8 +1,10 @@
 // Finances: categories, accounts, a transactions log (entered by hand or imported from bank CSV
 // files) and summaries per month and category. Amounts are integer cents, negative for money
 // going out. Transactions sharing a transfer id are the legs of one transfer between the
-// family's own accounts: totals count such a group once, by its net (see netItems). Reading
-// needs the view link, changing the edit link.
+// family's own accounts: totals count such a group once, by its net. A transaction can also be
+// a part of another one, its booking (a split booking, like an Amazon "Splitbuchung" whose order
+// lines the bank lists too): totals count the parts and what is left of the booking (see
+// netItems). Reading needs the view link, changing the edit link.
 
 import type { Ctx } from "./context.ts";
 import { addDays, diffDays, isValidDate } from "./dates.ts";
@@ -29,6 +31,8 @@ const MAX_LIST = 1000;
 const MAX_MAPPINGS = 20;
 const MAX_SUGGESTIONS = 200;
 const TRANSFER_DAYS = 4; // how far apart the two legs of a suggested transfer may be
+const SPLIT_RE = /split-?buchung/i; // how banks mark a booking whose parts they list as well
+const MAX_SPLIT_SEARCH = 16; // parts that a booking's exact sum is searched among
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const CATEGORY_ID_RE = /^[a-z0-9][a-z0-9-]{0,47}$/;
@@ -176,11 +180,11 @@ function cleanAmount(v: unknown, field = "amountCents"): number {
   return v;
 }
 
-/** A transfer id: a uuid; null / "" clears it. */
-function cleanTransferId(v: unknown): string | null {
+/** A transfer id or a booking's id: a uuid; null / "" clears it. */
+function cleanUuid(v: unknown, field = "transferId"): string | null {
   if (v === null || v === "" || v === undefined) return null;
   if (typeof v !== "string" || !UUID_RE.test(v)) {
-    throw new HttpError(400, "transferId must be a uuid");
+    throw new HttpError(400, `${field} must be a uuid`);
   }
   return v;
 }
@@ -297,9 +301,10 @@ export async function listAccounts(store: Store, familyId: string) {
   return accounts.map((a) => publicAccount(a, totals));
 }
 
-/** With `groups`, transferId is only set for legs of groups with at least two legs; without
- *  it (export), it is the stored one. */
-export function publicTransaction(t: TransactionRow, groups?: Groups) {
+/** With `links`, transferId is only set for legs of groups with at least two legs, and `split`
+ *  tells a booking's parts and remainder; without them (export), transferId is the stored one. */
+export function publicTransaction(t: TransactionRow, links?: Links) {
+  const parts = links?.splits.get(t.id);
   return {
     id: t.id,
     date: t.day,
@@ -308,7 +313,9 @@ export function publicTransaction(t: TransactionRow, groups?: Groups) {
     description: t.description,
     categoryId: t.category_id,
     accountId: t.account_id,
-    transferId: groups && !groupOf(t, groups) ? null : t.transfer_id,
+    transferId: links && !groupOf(t, links.groups) ? null : t.transfer_id,
+    splitOf: t.split_of,
+    split: parts ? { parts: parts.length, remainderCents: remainderOf(t, parts) } : null,
     note: t.note,
     imported: !!t.import_hash,
   };
@@ -411,6 +418,7 @@ export function parseFinanceImport(raw: unknown, familyId: string): FinanceConte
     if (account !== null && (typeof account !== "string" || !accountIds.has(account))) {
       throw new HttpError(400, `Unknown account "${account}"`);
     }
+    const splitOf = cleanUuid(t.splitOf, "splitOf");
     let hash = typeof t.importHash === "string" ? t.importHash.slice(0, 80) : null;
     if (hash && hashes.has(hash)) hash = null;
     if (hash) hashes.add(hash);
@@ -425,10 +433,19 @@ export function parseFinanceImport(raw: unknown, familyId: string): FinanceConte
       note: text(t.note, "note", 500),
       import_hash: hash,
       account_id: account as string | null,
-      transfer_id: cleanTransferId(t.transferId),
+      transfer_id: cleanUuid(t.transferId),
+      split_of: splitOf,
       created_at: now,
     };
   });
+  // A part's booking must be in the file, and not be a part itself.
+  const byId = new Map(transactions.map((t: TransactionRow) => [t.id, t]));
+  for (const t of transactions) {
+    const booking = t.split_of ? byId.get(t.split_of) : undefined;
+    if (t.split_of && (!booking || booking === t || booking.split_of)) {
+      throw new HttpError(400, `Unknown split booking "${t.split_of}"`);
+    }
+  }
   return {
     currency: f.currency === undefined ? "EUR" : cleanCurrency(f.currency),
     categories,
@@ -448,19 +465,20 @@ export async function copyFinance(store: Store, from: string, to: string) {
   if (settings) await store.saveFinanceSettings({ ...settings, family_id: to });
   await store.upsertCategories(categories.map((c) => ({ ...c, family_id: to })));
   await store.upsertAccounts(accounts.map((a) => ({ ...a, family_id: to })));
-  // The copies get new ids, and their transfer groups too.
-  const transfers = new Map<string, string>();
-  const newTransfer = (id: string | null) => {
+  // The copies get new ids, and their transfer groups too; parts point to the booking's copy.
+  const fresh = new Map<string, string>();
+  const newId = (id: string | null) => {
     if (!id) return null;
-    if (!transfers.has(id)) transfers.set(id, crypto.randomUUID());
-    return transfers.get(id)!;
+    if (!fresh.has(id)) fresh.set(id, crypto.randomUUID());
+    return fresh.get(id)!;
   };
   await store.upsertTransactions(
     transactions.map((t) => ({
       ...t,
       family_id: to,
-      id: crypto.randomUUID(),
-      transfer_id: newTransfer(t.transfer_id),
+      id: newId(t.id)!,
+      transfer_id: newId(t.transfer_id),
+      split_of: newId(t.split_of),
     })),
   );
 }
@@ -500,11 +518,19 @@ export async function importHashes(
   return out;
 }
 
-// ------------------------------------------------------------------ transfers and net counting
+// ------------------------------------------------------------------ transfers, splits, net counting
 
 /** Transfer groups by transfer id, each with its legs in lead order. Only groups with at least
  *  two legs: a lone leg counts as a normal transaction. */
 export type Groups = Map<string, TransactionRow[]>;
+
+/** The parts of split bookings by booking id. */
+export type Splits = Map<string, TransactionRow[]>;
+
+/** How transactions are tied together: transfer groups and split bookings. */
+export type Links = { groups: Groups; splits: Splits };
+
+const NO_LINKS: Links = { groups: new Map(), splits: new Map() };
 
 /** Lead order: the earliest day first, ties by id. */
 function byLead(a: TransactionRow, b: TransactionRow): number {
@@ -533,6 +559,28 @@ export async function loadGroups(
   return groups;
 }
 
+/** All split bookings of the family with their parts (there are few). */
+async function loadSplits(store: Store, familyId: string): Promise<Splits> {
+  const splits: Splits = new Map();
+  for (const t of await store.listSplitParts(familyId)) {
+    splits.set(t.split_of!, [...(splits.get(t.split_of!) ?? []), t]);
+  }
+  return splits;
+}
+
+/** The transfer groups the rows touch and all split bookings. */
+export async function loadLinks(
+  store: Store,
+  familyId: string,
+  rows: TransactionRow[],
+): Promise<Links> {
+  const [groups, splits] = await Promise.all([
+    loadGroups(store, familyId, rows),
+    loadSplits(store, familyId),
+  ]);
+  return { groups, splits };
+}
+
 /** The legs of the transaction's transfer group, if it is a leg of one. */
 function groupOf(t: TransactionRow, groups: Groups): TransactionRow[] | undefined {
   return t.transfer_id ? groups.get(t.transfer_id) : undefined;
@@ -544,18 +592,33 @@ function netOf(t: TransactionRow, groups: Groups): number {
   return legs ? legs.reduce((sum, l) => sum + l.amount_cents, 0) : t.amount_cents;
 }
 
+/** What a split booking still counts as itself: its amount minus its parts (shipping, say). */
+function remainderOf(booking: TransactionRow, parts: TransactionRow[]): number {
+  return parts.reduce((rest, p) => rest - p.amount_cents, booking.amount_cents);
+}
+
+/** Whether the transaction is a part or a booking of a split. */
+function inSplit(t: TransactionRow, splits: Splits): boolean {
+  return !!t.split_of || splits.has(t.id);
+}
+
 /**
  * Net counting, used by every income / expense total. A transaction counts with its amount; a
  * transfer group counts once, by its net: on its lead leg's day, with the first category of
  * its legs (lead first), and only if the lead leg is among the rows. So moving 500 from one
  * account to another counts nothing (net 0), and only money that leaves the family (or comes
- * in) counts.
+ * in) counts. A split booking's parts count with their own amounts and categories, and the
+ * booking only with what is left of it, so the totals still match the statement.
  */
-export function netItems(rows: TransactionRow[], groups: Groups) {
+export function netItems(rows: TransactionRow[], { groups, splits }: Links) {
   const out: { day: string; amountCents: number; categoryId: string | null }[] = [];
   for (const t of rows) {
+    const parts = splits.get(t.id);
     const legs = groupOf(t, groups);
-    if (!legs) {
+    if (parts) {
+      const rest = remainderOf(t, parts);
+      if (rest !== 0) out.push({ day: t.day, amountCents: rest, categoryId: t.category_id });
+    } else if (!legs) {
       out.push({ day: t.day, amountCents: t.amount_cents, categoryId: t.category_id });
     } else if (legs[0].id === t.id) {
       const net = netOf(t, groups);
@@ -576,21 +639,124 @@ function netTotals(items: { amountCents: number }[]) {
   return { incomeCents, expenseCents };
 }
 
+type SplitMatch = { booking: TransactionRow; parts: TransactionRow[] };
+
+/** The merchant a transaction is with, roughly: the first word of its payee (or description,
+ *  without the split mark), so "AMAZON PAYMENTS EUROPE" and "Amazon.de" are both "amazon". */
+function merchantOf(t: TransactionRow): string {
+  for (const text of [t.payee, t.description]) {
+    const words = text.replace(SPLIT_RE, " ").toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) ?? [];
+    const word = words.find((w) => w !== "www");
+    if (word) return word;
+  }
+  return "";
+}
+
+/** The smallest set of `parts` whose amounts add up to `cents` exactly, if any. */
+function exactParts(parts: TransactionRow[], cents: number): TransactionRow[] | undefined {
+  if (!parts.length || parts.length > MAX_SPLIT_SEARCH) return;
+  let best: TransactionRow[] | undefined;
+  for (let mask = 1; mask < 1 << parts.length; mask++) {
+    const pick = parts.filter((_, i) => mask & (1 << i));
+    if (best && pick.length >= best.length) continue;
+    if (pick.reduce((sum, t) => sum + t.amount_cents, 0) === cents) best = pick;
+  }
+  return best;
+}
+
+/**
+ * Split bookings among transactions that aren't parts or bookings yet: a transaction marked
+ * "Splitbuchung" (in payee or description) takes the other transactions of the same day,
+ * account and merchant as its parts, as long as they add up to at most its amount in the same
+ * direction (the rest being shipping, say). With several such bookings, each first takes the
+ * parts that add up to it exactly; the parts left over go to the one booking without an exact
+ * match, if there is just one.
+ */
+export function matchSplits(rows: TransactionRow[]): SplitMatch[] {
+  const byKey = new Map<string, TransactionRow[]>();
+  for (const t of rows) {
+    const key = `${t.day}|${t.account_id ?? ""}|${merchantOf(t)}`;
+    byKey.set(key, [...(byKey.get(key) ?? []), t]);
+  }
+  const out: SplitMatch[] = [];
+  for (const same of byKey.values()) {
+    const bookings = same.filter((t) => SPLIT_RE.test(t.payee) || SPLIT_RE.test(t.description))
+      .sort((a, b) => Math.abs(b.amount_cents) - Math.abs(a.amount_cents) || byLead(a, b));
+    let left = same.filter((t) => !bookings.includes(t)).sort(byLead);
+    if (!bookings.length || !left.length) continue;
+    const unmatched: TransactionRow[] = [];
+    for (const booking of bookings) {
+      const parts = bookings.length > 1 ? exactParts(left, booking.amount_cents) : undefined;
+      if (!parts) unmatched.push(booking);
+      else {
+        out.push({ booking, parts });
+        left = left.filter((t) => !parts.includes(t));
+      }
+    }
+    if (unmatched.length !== 1 || !left.length) continue;
+    const [booking] = unmatched;
+    const sum = left.reduce((s, t) => s + t.amount_cents, 0);
+    if (
+      Math.sign(sum) === Math.sign(booking.amount_cents) &&
+      Math.abs(sum) <= Math.abs(booking.amount_cents)
+    ) {
+      out.push({ booking, parts: left });
+    }
+  }
+  return out.sort((a, b) => byLead(b.booking, a.booking));
+}
+
+/** Makes the matches' parts parts of their bookings; they and the bookings leave the transfers
+ *  they were in. `inverse` undoes it: one "unsplit" op, then puts back the transfer ids. */
+async function linkSplits(store: Store, familyId: string, matches: SplitMatch[]) {
+  const pick: SplitMatch[] = [];
+  let count = 0;
+  for (const m of matches) {
+    if (count + m.parts.length + 1 > MAX_OPS) break;
+    pick.push(m);
+    count += m.parts.length + 1;
+  }
+  const before = pick.flatMap((m) => [m.booking, ...m.parts]);
+  await store.upsertTransactions(
+    pick.flatMap((m) => [
+      { ...m.booking, transfer_id: null },
+      ...m.parts.map((p) => ({ ...p, transfer_id: null, split_of: m.booking.id })),
+    ]),
+  );
+  const lone = await clearLoneLegs(store, familyId, before);
+  const parts = pick.flatMap((m) => m.parts.map((p) => p.id));
+  return {
+    changed: before.length,
+    inverse: pick.length
+      ? [
+        { action: "unsplit", ids: parts },
+        ...[...before, ...lone].filter((t) => t.transfer_id).map(restoreOp),
+      ]
+      : [],
+    splits: pick.length,
+  };
+}
+
 type TransferPair = { out: TransactionRow; in: TransactionRow };
 
 /**
- * Candidate transfers among transactions that aren't in a group: money out of one account
- * and the same amount into another (not both without an account), at most TRANSFER_DAYS
- * apart. Greedy one-to-one matching, closest days first; newest first.
+ * Candidate transfers among transactions that aren't in a group or a split: money out of one
+ * account and the same amount into another (not both without an account), at most
+ * TRANSFER_DAYS apart. Rows that look like the parts of a split booking (see matchSplits)
+ * aren't transfers either, like an Amazon voucher among the order lines. Greedy one-to-one
+ * matching, closest days first; newest first.
  */
 export function matchTransfers(rows: TransactionRow[]): TransferPair[] {
+  const split = new Set(matchSplits(rows).flatMap((m) => [m.booking, ...m.parts]));
   const ins = new Map<number, TransactionRow[]>();
   for (const t of rows) {
-    if (t.amount_cents > 0) ins.set(t.amount_cents, [...(ins.get(t.amount_cents) ?? []), t]);
+    if (t.amount_cents > 0 && !split.has(t)) {
+      ins.set(t.amount_cents, [...(ins.get(t.amount_cents) ?? []), t]);
+    }
   }
   const candidates: (TransferPair & { gap: number })[] = [];
   for (const out of rows) {
-    if (out.amount_cents >= 0) continue;
+    if (out.amount_cents >= 0 || split.has(out)) continue;
     for (const into of ins.get(-out.amount_cents) ?? []) {
       if (out.account_id === into.account_id) continue;
       const gap = Math.abs(diffDays(out.day, into.day));
@@ -615,16 +781,24 @@ export function matchTransfers(rows: TransactionRow[]): TransferPair[] {
   );
 }
 
-/** Transactions in the range (all without one) that aren't legs of a group. */
-async function ungrouped(store: Store, familyId: string, from?: string, to?: string) {
+/** Transactions in the range (all without one) that aren't legs of a group or in a split. */
+async function unlinked(store: Store, familyId: string, from?: string, to?: string) {
   const rows = await store.listTransactions(familyId, from, to);
-  const groups = await loadGroups(store, familyId, rows);
-  return rows.filter((t) => !groupOf(t, groups));
+  const { groups, splits } = await loadLinks(store, familyId, rows);
+  return rows.filter((t) => !groupOf(t, groups) && !inSplit(t, splits));
+}
+
+/** Transactions in the range (all without one) that aren't in a split yet: legs of transfers
+ *  too, as a wrongly combined "transfer" may well be a split booking's part. */
+async function splitCandidates(store: Store, familyId: string, from?: string, to?: string) {
+  const rows = await store.listTransactions(familyId, from, to);
+  const splits = await loadSplits(store, familyId);
+  return rows.filter((t) => !inSplit(t, splits));
 }
 
 /** The pairs that look like transfers in the range (all without one), newest first. */
 export async function transferPairs(store: Store, familyId: string, from?: string, to?: string) {
-  return matchTransfers(await ungrouped(store, familyId, from, to));
+  return matchTransfers(await unlinked(store, familyId, from, to));
 }
 
 /** Links each pair (of ungrouped transactions) as its own group; `inverse` undoes it: one
@@ -648,6 +822,36 @@ export async function linkTransferPairs(store: Store, pairs: TransferPair[]) {
       ]
       : [],
     linked: pick.length,
+  };
+}
+
+/**
+ * Auto-combine in the range (all without one): first the split bookings, then the transfers
+ * among what is left. `only` limits it to splits and transfers with one of these transactions
+ * (fresh imports). `inverse` undoes both.
+ */
+export async function autoCombine(
+  store: Store,
+  familyId: string,
+  from?: string,
+  to?: string,
+  only?: Set<string>,
+) {
+  const touches = (ts: TransactionRow[]) => !only || ts.some((t) => only.has(t.id));
+  const matches = matchSplits(await splitCandidates(store, familyId, from, to))
+    .filter((m) => touches([m.booking, ...m.parts]));
+  const splits = await linkSplits(store, familyId, matches);
+  const pairs = matchTransfers(await unlinked(store, familyId, from, to))
+    .filter((p) => touches([p.out, p.in]));
+  const transfers = await linkTransferPairs(store, pairs);
+  return {
+    ok: true,
+    changed: splits.changed + transfers.changed,
+    added: [] as string[],
+    // The transfers are undone first, as they were linked last.
+    inverse: [...transfers.inverse, ...splits.inverse],
+    linked: transfers.linked,
+    splits: splits.splits,
   };
 }
 
@@ -830,8 +1034,8 @@ function rangeOf(query: URLSearchParams) {
 }
 
 /**
- * Transactions matching ?from&to&account&category&q&kind (newest first), their transfer
- * groups, and the income and expense totals of the rows (net counting).
+ * Transactions matching ?from&to&account&category&q&kind (newest first), their links
+ * (transfer groups and splits), and the income and expense totals of the rows (net counting).
  */
 export async function findTransactions(store: Store, familyId: string, query: URLSearchParams) {
   const { from, to } = rangeOf(query);
@@ -855,20 +1059,21 @@ export async function findTransactions(store: Store, familyId: string, query: UR
       t.note.toLowerCase().includes(q)
     );
   }
-  const groups = await loadGroups(store, familyId, rows);
+  const links = await loadLinks(store, familyId, rows);
+  const { groups } = links;
   // Legs of a group go by the group's net: a net-0 transfer is neither income nor expense.
   const kind = query.get("kind");
   if (kind === "transfer") rows = rows.filter((t) => !!groupOf(t, groups));
   else if (kind === "income") rows = rows.filter((t) => netOf(t, groups) > 0);
   else if (kind === "expense") rows = rows.filter((t) => netOf(t, groups) < 0);
-  return { rows, groups, ...netTotals(netItems(rows, groups)) };
+  return { rows, links, ...netTotals(netItems(rows, links)) };
 }
 
 /** GET /finance/transactions?from&to&account=<id|none>&category=<id|none>&q
  *  &kind=income|expense|transfer&limit&offset */
 async function listRoute({ store, url, load }: Ctx): Promise<Response> {
   const { family } = await load("view");
-  const { rows, groups, incomeCents, expenseCents } = await findTransactions(
+  const { rows, links, incomeCents, expenseCents } = await findTransactions(
     store,
     family.id,
     url.searchParams,
@@ -876,7 +1081,7 @@ async function listRoute({ store, url, load }: Ctx): Promise<Response> {
   const limit = Math.min(MAX_LIST, Math.max(1, Number(url.searchParams.get("limit")) || 200));
   const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0);
   return json({
-    transactions: rows.slice(offset, offset + limit).map((t) => publicTransaction(t, groups)),
+    transactions: rows.slice(offset, offset + limit).map((t) => publicTransaction(t, links)),
     total: rows.length,
     incomeCents,
     expenseCents,
@@ -886,8 +1091,9 @@ async function listRoute({ store, url, load }: Ctx): Promise<Response> {
 type TxOp =
   | { action: "add"; row: TransactionRow }
   | { action: "update"; id: string; patch: Partial<TransactionRow> }
-  | { action: "delete" | "unlink"; ids: string[] }
-  | { action: "link"; ids: string[] };
+  | { action: "delete" | "unlink" | "unsplit"; ids: string[] }
+  | { action: "link"; ids: string[] }
+  | { action: "split"; id: string; ids: string[] };
 
 /** The op's "ids" (or "id"), at least `min` distinct uuids. */
 function idsOf(o: Record<string, unknown>, action: string, min: number): string[] {
@@ -930,7 +1136,8 @@ function parseTxOp(
         note: text(o.note, "note", 500),
         import_hash: null,
         account_id: resolveAccount(accounts, o.accountId),
-        transfer_id: cleanTransferId(o.transferId),
+        transfer_id: cleanUuid(o.transferId),
+        split_of: cleanUuid(o.splitOf, "splitOf"),
         created_at: new Date().toISOString(),
       },
     };
@@ -946,13 +1153,23 @@ function parseTxOp(
     if (o.description !== undefined) patch.description = text(o.description, "description", 500);
     if (o.categoryId !== undefined) patch.category_id = resolveCategory(categories, o.categoryId);
     if (o.accountId !== undefined) patch.account_id = resolveAccount(accounts, o.accountId);
-    if (o.transferId !== undefined) patch.transfer_id = cleanTransferId(o.transferId);
+    if (o.transferId !== undefined) patch.transfer_id = cleanUuid(o.transferId);
     if (o.note !== undefined) patch.note = text(o.note, "note", 500);
     return { action, id: o.id, patch };
   }
-  if (action === "delete" || action === "unlink") return { action, ids: idsOf(o, action, 1) };
+  if (action === "delete" || action === "unlink" || action === "unsplit") {
+    return { action, ids: idsOf(o, action, 1) };
+  }
   if (action === "link") return { action, ids: idsOf(o, action, 2) };
-  throw new HttpError(400, "action must be add, update, delete, link or unlink");
+  if (action === "split") {
+    if (typeof o.id !== "string" || !UUID_RE.test(o.id)) {
+      throw new HttpError(400, '"split" needs "id": the booking\'s uuid');
+    }
+    const ids = idsOf({ ids: o.ids }, action, 1);
+    if (ids.includes(o.id)) throw new HttpError(400, "A booking can't be a part of itself");
+    return { action, id: o.id, ids };
+  }
+  throw new HttpError(400, "action must be add, update, delete, link, unlink, split or unsplit");
 }
 
 /** The op that puts a transaction back the way it was (for undo). */
@@ -967,6 +1184,7 @@ function restoreOp(t: TransactionRow) {
     categoryId: t.category_id,
     accountId: t.account_id,
     transferId: t.transfer_id,
+    splitOf: t.split_of,
     note: t.note,
   };
 }
@@ -994,6 +1212,32 @@ async function clearLoneLegs(store: Store, familyId: string, rows: TransactionRo
   return lone;
 }
 
+/** Bookings before parts, so restoring them never points a part at a missing booking. */
+function bookingsFirst(rows: TransactionRow[]) {
+  return [...rows].sort((a, b) => Number(!!a.split_of) - Number(!!b.split_of));
+}
+
+/** 400 if the row can't be stored like this: a part's booking must exist and not be a part
+ *  or a transfer leg itself, and neither parts nor bookings can be transfer legs. */
+async function checkSplit(store: Store, familyId: string, row: TransactionRow) {
+  if (!row.split_of && !row.transfer_id) return;
+  const splits = await loadSplits(store, familyId);
+  const isBooking = (splits.get(row.id) ?? []).some((p) => p.id !== row.id);
+  if (row.transfer_id && (row.split_of || isBooking)) {
+    throw new HttpError(400, "A split booking or its part can't be a leg of a transfer");
+  }
+  if (!row.split_of) return;
+  if (isBooking) throw new HttpError(400, "A split booking can't be a part of another one");
+  const [booking] = await store.getTransactions(familyId, [row.split_of]);
+  if (!booking || booking.id === row.id) {
+    throw new HttpError(404, `Unknown split booking "${row.split_of}"`);
+  }
+  if (booking.split_of) throw new HttpError(400, "A part can't have parts of its own");
+  if (booking.transfer_id) {
+    throw new HttpError(400, "A leg of a transfer can't be a split booking");
+  }
+}
+
 /**
  * Applies transaction ops in order and returns `inverse`: the ops that undo them (send them
  * to the same endpoint). Shared with the AI assistant's tools.
@@ -1011,6 +1255,7 @@ export async function applyTransactionOps(store: Store, familyId: string, rawOps
   for (const op of ops) {
     if (op.action === "add") {
       const [before] = await store.getTransactions(familyId, [op.row.id]);
+      await checkSplit(store, familyId, op.row);
       await store.upsertTransactions([{ ...op.row, import_hash: before?.import_hash ?? null }]);
       inverse.unshift(before ? restoreOp(before) : { action: "delete", ids: [op.row.id] });
       added.push(op.row.id);
@@ -1018,24 +1263,34 @@ export async function applyTransactionOps(store: Store, familyId: string, rawOps
     } else if (op.action === "update") {
       const [before] = await store.getTransactions(familyId, [op.id]);
       if (!before) throw new HttpError(404, `Unknown transaction "${op.id}"`);
-      await store.upsertTransactions([{ ...before, ...op.patch }]);
+      const next = { ...before, ...op.patch };
+      if (op.patch.transfer_id) await checkSplit(store, familyId, next);
+      await store.upsertTransactions([next]);
       inverse.unshift(restoreOp(before));
       changed++;
     } else if (op.action === "delete") {
+      // Parts of a deleted booking stay as normal transactions; undo makes them parts again.
       const before = await store.getTransactions(familyId, op.ids);
+      const gone = new Set(op.ids);
+      const orphans = [...(await loadSplits(store, familyId)).entries()]
+        .flatMap(([id, parts]) => gone.has(id) ? parts.filter((p) => !gone.has(p.id)) : []);
       await store.deleteTransactions(familyId, op.ids);
       const lone = await clearLoneLegs(store, familyId, before);
-      inverse.unshift(...[...before, ...lone].map(restoreOp));
+      inverse.unshift(...[...bookingsFirst(before), ...lone, ...orphans].map(restoreOp));
       changed += before.length;
     } else if (op.action === "link") {
       // The transactions leave the groups they were in and form a new one.
       const before = await existing(store, familyId, op.ids);
+      const splits = await loadSplits(store, familyId);
+      if (before.some((t) => inSplit(t, splits))) {
+        throw new HttpError(400, "A split booking or its part can't be a leg of a transfer");
+      }
       const transferId = crypto.randomUUID();
       await store.upsertTransactions(before.map((t) => ({ ...t, transfer_id: transferId })));
       const lone = await clearLoneLegs(store, familyId, before);
       inverse.unshift(...[...before, ...lone].map(restoreOp));
       changed += before.length;
-    } else {
+    } else if (op.action === "unlink") {
       // Unlinking a leg dissolves its whole group.
       const rows = await existing(store, familyId, op.ids);
       const ids = [...new Set(rows.flatMap((t) => t.transfer_id ? [t.transfer_id] : []))];
@@ -1043,6 +1298,36 @@ export async function applyTransactionOps(store: Store, familyId: string, rawOps
       await store.upsertTransactions(legs.map((t) => ({ ...t, transfer_id: null })));
       inverse.unshift(...legs.map(restoreOp));
       changed += legs.length;
+    } else if (op.action === "split") {
+      // The parts (and the booking) leave the transfers they were in; parts of another
+      // booking move to this one.
+      const [booking] = await existing(store, familyId, [op.id]);
+      const parts = await existing(store, familyId, op.ids);
+      const splits = await loadSplits(store, familyId);
+      if (booking.split_of) throw new HttpError(400, "A part can't have parts of its own");
+      if (parts.some((t) => splits.has(t.id))) {
+        throw new HttpError(400, "A split booking can't be a part of another one");
+      }
+      await store.upsertTransactions([
+        { ...booking, transfer_id: null },
+        ...parts.map((t) => ({ ...t, transfer_id: null, split_of: booking.id })),
+      ]);
+      const lone = await clearLoneLegs(store, familyId, [booking, ...parts]);
+      // Parts first: a booking gets its transfer back only once it has no parts.
+      inverse.unshift(...[...parts, booking, ...lone].map(restoreOp));
+      changed += parts.length + 1;
+    } else {
+      // Unsplitting a booking makes all of its parts normal transactions again.
+      const rows = await existing(store, familyId, op.ids);
+      const splits = await loadSplits(store, familyId);
+      const parts = new Map<string, TransactionRow>();
+      for (const t of rows) {
+        if (t.split_of) parts.set(t.id, t);
+        for (const p of splits.get(t.id) ?? []) parts.set(p.id, p);
+      }
+      await store.upsertTransactions([...parts.values()].map((t) => ({ ...t, split_of: null })));
+      inverse.unshift(...[...parts.values()].map(restoreOp));
+      changed += parts.size;
     }
   }
   return { ok: true, changed, added, inverse };
@@ -1064,26 +1349,28 @@ async function suggestionsRoute({ store, url, load }: Ctx): Promise<Response> {
   const pairs = await transferPairs(store, family.id, from, to);
   return json({
     pairs: pairs.slice(0, MAX_SUGGESTIONS).map((p) => ({
-      out: publicTransaction(p.out, new Map()),
-      in: publicTransaction(p.in, new Map()),
+      out: publicTransaction(p.out, NO_LINKS),
+      in: publicTransaction(p.in, NO_LINKS),
     })),
   });
 }
 
-/** POST /finance/transfers/auto {"from", "to"} (both optional: all of the history): links
- *  every suggested pair in the range, like "link" ops; `inverse` undoes it. */
+/** POST /finance/transfers/auto {"from", "to"} (both optional: all of the history): combines
+ *  the split bookings ("Splitbuchung", see matchSplits) and then every suggested transfer pair
+ *  in the range, like "split" and "link" ops; `splits` and `linked` count them, `inverse`
+ *  undoes it. */
 async function autoTransfersRoute({ store, req, load }: Ctx): Promise<Response> {
   const { family } = await load("edit");
   const body = await readBody(req);
   const { from, to } = cleanRange(body.from ?? undefined, body.to ?? undefined);
-  const pairs = await transferPairs(store, family.id, from, to);
-  return json(await linkTransferPairs(store, pairs));
+  return json(await autoCombine(store, family.id, from, to));
 }
 
 /** POST /finance/import {"rows": [{date, amountCents, payee, description, categoryId}],
  *  "accountId", "autoTransfers": true, "dryRun": true}: adds the rows that aren't imported
- *  yet, all to the account if given. With autoTransfers, fresh rows that look like one leg of
- *  a transfer (see matchTransfers) get linked to the other leg; `transfers` counts them. */
+ *  yet, all to the account if given. With autoTransfers, fresh rows that make up a split
+ *  booking get combined (see matchSplits), and fresh rows that look like one leg of a transfer
+ *  (see matchTransfers) get linked to the other leg; `splits` and `transfers` count them. */
 async function importRoute({ store, req, load }: Ctx): Promise<Response> {
   const { family } = await load("edit");
   const body = await readBody(req);
@@ -1109,6 +1396,7 @@ async function importRoute({ store, req, load }: Ctx): Promise<Response> {
       import_hash: null,
       account_id: accountId,
       transfer_id: null,
+      split_of: null,
       created_at: now,
     };
   });
@@ -1122,36 +1410,47 @@ async function importRoute({ store, req, load }: Ctx): Promise<Response> {
   });
   const dryRun = body.dryRun === true;
   if (!dryRun) await store.upsertTransactions(fresh);
-  let transfers = 0;
+  let transfers = 0, splits = 0;
   if (body.autoTransfers === true && fresh.length) {
-    // Pairs among the ungrouped transactions around the fresh rows, with a fresh leg. A dry
-    // run adds the fresh rows in memory.
+    // Splits and transfers among the transactions around the fresh rows, with a fresh one. A
+    // dry run adds the fresh rows in memory.
     const days = fresh.map((t) => t.day).sort();
     const from = addDays(days[0], -TRANSFER_DAYS);
     const to = addDays(days.at(-1)!, TRANSFER_DAYS);
-    const around = await ungrouped(store, family.id, from, to);
     const ids = new Set(fresh.map((t) => t.id));
-    const pairs = matchTransfers(dryRun ? [...fresh, ...around] : around)
-      .filter((p) => ids.has(p.out.id) || ids.has(p.in.id));
-    transfers = dryRun ? Math.min(pairs.length, MAX_OPS) : (await linkTransferPairs(store, pairs))
-      .linked;
+    if (dryRun) {
+      const touches = (ts: TransactionRow[]) => ts.some((t) => ids.has(t.id));
+      const [candidates, around] = await Promise.all([
+        splitCandidates(store, family.id, from, to),
+        unlinked(store, family.id, from, to),
+      ]);
+      splits = matchSplits([...fresh, ...candidates])
+        .filter((m) => touches([m.booking, ...m.parts])).length;
+      transfers = Math.min(
+        matchTransfers([...fresh, ...around]).filter((p) => touches([p.out, p.in])).length,
+        MAX_OPS,
+      );
+    } else {
+      ({ linked: transfers, splits } = await autoCombine(store, family.id, from, to, ids));
+    }
   }
   return json({
     added: dryRun ? 0 : fresh.length,
     duplicates,
     ids: dryRun ? [] : fresh.map((t) => t.id),
     transfers,
+    splits,
   });
 }
 
 /** Income and expenses per month and per category in the range (net counting: a transfer
- *  group is one item, in its lead leg's month). */
+ *  group is one item, in its lead leg's month; a split booking counts by its parts). */
 export async function financeSummary(store: Store, familyId: string, from?: string, to?: string) {
   const [settings, rows] = await Promise.all([
     store.getFinanceSettings(familyId),
     store.listTransactions(familyId, from, to),
   ]);
-  const items = netItems(rows, await loadGroups(store, familyId, rows));
+  const items = netItems(rows, await loadLinks(store, familyId, rows));
   const months = new Map<string, { month: string; incomeCents: number; expenseCents: number }>();
   const cats = new Map<
     string | null,

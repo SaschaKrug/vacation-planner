@@ -284,13 +284,28 @@ export class SupabaseStore implements Store {
     return out;
   }
 
+  async listSplitParts(familyId: string) {
+    const out: TransactionRow[] = [];
+    for (let offset = 0;; offset += PAGE) {
+      const rows = check(
+        await this.db.from("transactions").select("*").eq("family_id", familyId)
+          .not("split_of", "is", null).order("id").range(offset, offset + PAGE - 1),
+      ) as TransactionRow[];
+      out.push(...rows.map(txRow));
+      if (rows.length < PAGE) return out;
+    }
+  }
+
   async upsertTransactions(rows: TransactionRow[]) {
-    for (const part of chunks(rows, 500)) {
+    // Bookings before their parts, so a part's foreign key never points ahead of its chunk.
+    const ordered = [...rows].sort((a, b) => Number(!!a.split_of) - Number(!!b.split_of));
+    for (const part of chunks(ordered, 500)) {
       check(await this.db.from("transactions").upsert(part, { onConflict: "family_id,id" }));
     }
   }
 
   async deleteTransactions(familyId: string, ids: string[]) {
+    // Parts of a deleted booking stay: ON DELETE SET NULL clears their split_of.
     for (const part of chunks(ids, CHUNK)) {
       check(await this.db.from("transactions").delete().eq("family_id", familyId).in("id", part));
     }

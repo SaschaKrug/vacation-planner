@@ -188,7 +188,10 @@ going out (\`-4599\` = −45.99 in the family's currency). A transaction can bel
 the family's **accounts** (\`accountId\`). Transactions sharing a \`transferId\` are the legs of
 one **transfer** between the family's own accounts (e.g. 500 out of checking, 500 into
 savings): every income / expense total counts a transfer once by its net (here 0), in the
-month of its earliest leg, so only money leaving or reaching the family counts.
+month of its earliest leg, so only money leaving or reaching the family counts. A transaction
+with a \`splitOf\` is a **part** of that split booking (e.g. an order line the bank lists next
+to an Amazon "Splitbuchung"); a booking has \`split\` (\`parts\`, \`remainderCents\`). Totals
+count the parts with their own categories and only the remainder of the booking.
 
 - Currency, categories and accounts (with \`balanceCents\`): ${f}
 - Transactions (newest first): ${f}/transactions?from=${year}-01-01&to=${year}-12-31 –
@@ -209,15 +212,20 @@ Changing: \`POST ${f}/transactions\` with \`{"ops": [...]}\` (applied in order):
 - \`{"action": "delete", "ids": ["<uuid>", ...]}\`
 - \`{"action": "link", "ids": ["<uuid>", "<uuid>", ...]}\`: combines the transactions into one
   transfer
-- \`{"action": "unlink", "ids": ["<uuid>"]}\`: splits the transfers they belong to again
+- \`{"action": "unlink", "ids": ["<uuid>"]}\`: dissolves the transfers they belong to
+- \`{"action": "split", "id": "<booking uuid>", "ids": ["<uuid>", ...]}\`: makes the
+  transactions parts of the booking
+- \`{"action": "unsplit", "ids": ["<uuid>"]}\`: parts become normal transactions again (for a
+  booking: all of its parts)
 
 The response has \`inverse\`: ops that undo the request (send them to the same endpoint).
 Categories and accounts are referenced by id or name. Ask before deleting or changing many
 transactions.
 
 \`POST ${f}/transfers/auto\` with \`{"from": "${year}-01-01", "to": "${year}-12-31"}\` (both
-optional) combines every suggested transfer in the range; the response has \`linked\` and
-\`inverse\` like above.
+optional) combines the split bookings ("Splitbuchung" and the transactions of the same day,
+account and merchant) and then every suggested transfer in the range; the response has
+\`splits\`, \`linked\` and \`inverse\` like above.
 
 Accounts: \`POST ${f}/accounts\` \`{"name", "color": "#22c55e", "icon", "openingCents"}\`,
 \`PATCH ${f}/accounts/<id>\` with any of these and \`position\`, \`DELETE ${f}/accounts/<id>\`

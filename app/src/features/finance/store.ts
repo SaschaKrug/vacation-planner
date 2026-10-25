@@ -52,7 +52,7 @@ export class FinanceStore {
   period: Period;
   filter: Filter = { q: "", category: "", account: "", kind: "" };
   limit = PAGE;
-  /** Transactions ticked in the list, to combine them into a transfer. */
+  /** Transactions ticked in the list, to combine them into a transfer or a split booking. */
   selected = new Set<string>();
   rev = 0;
   /** How far the AI is with sorting transactions into categories (null when idle). */
@@ -277,6 +277,28 @@ export class FinanceStore {
     }
   }
 
+  // ------------------------------------------------------------- split bookings
+
+  /** Makes transactions parts of a booking (e.g. an order's items of a "Splitbuchung"): they
+   *  count on their own, the booking only with what they leave over. */
+  async split(bookingId: string, partIds: string[]) {
+    const ok = await this.change(
+      [{ action: "split", id: bookingId, ids: partIds }],
+      t("finance.split_done"),
+    );
+    if (ok) this.clearSelection();
+    return ok;
+  }
+
+  /** Takes a part out of its booking, or (on a booking) all of its parts. */
+  unsplit(id: string) {
+    const part = this.list?.transactions.find((tx) => tx.id === id)?.splitOf;
+    return this.change(
+      [{ action: "unsplit", ids: [id] }],
+      t(part ? "finance.unsplit_part_done" : "finance.unsplit_done"),
+    );
+  }
+
   // ------------------------------------------------------------- transfers
 
   /** Combines transactions into one transfer: they count once, as their sum. */
@@ -299,16 +321,17 @@ export class FinanceStore {
     return this.change([{ action: "unlink", id }], t("finance.unlinked"));
   }
 
-  /** Combines every likely transfer of the period at once; the toast can undo it. */
+  /** Combines the period's split bookings with their parts, then every likely transfer, at
+   *  once; the toast can undo it. */
   async autoCombineTransfers() {
     try {
       const res = await api.autoTransfers(this.token, this.range());
-      if (!res.linked) {
-        toast(t("finance.no_transfers_found"));
+      if (!res.linked && !res.splits) {
+        toast(t("finance.nothing_to_combine"));
         return res;
       }
       this.changed();
-      toast(t("finance.linked_pairs", { n: res.linked }), {
+      toast(t("finance.auto_combined", { transfers: res.linked, splits: res.splits }), {
         action: {
           label: t("finance.undo"),
           onClick: () => this.undo(res.inverse),
@@ -339,8 +362,12 @@ export class FinanceStore {
     this.changed();
     if (res.ids.length) {
       const imported = t("finance.imported", { n: res.added, skipped: res.duplicates.length });
-      const linked = res.transfers ? t("finance.imported_transfers", { n: res.transfers }) : "";
-      toast(imported + linked, {
+      const transfers = res.transfers ?? 0;
+      const splits = res.splits ?? 0;
+      const combined = transfers || splits
+        ? " · " + t("finance.auto_combined", { transfers, splits })
+        : "";
+      toast(imported + combined, {
         action: {
           label: t("finance.undo"),
           onClick: () => this.undo([{ action: "delete", ids: res.ids }]),
