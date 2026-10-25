@@ -75,8 +75,9 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   again; identical rows on one day (two coffees) stay apart. Pick the account the statement
   belongs to; transfers to and from the family's other accounts can be combined right away.
   The format, account and that choice are remembered per bank.
-- **Overview:** income, expenses and the balance, a chart per month and the spending (or
-  income) per category, also as a table.
+- **Overview:** for the chosen month, year or all time: income, expenses and the balance, the
+  spending (or income) per category and, for a year or all time, a chart per month, also as a
+  table.
 - The view-only link shows the finances read-only; the legacy view link and the calendar feed
   never do.
 

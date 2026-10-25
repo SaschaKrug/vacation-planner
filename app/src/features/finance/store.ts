@@ -154,13 +154,6 @@ export class FinanceStore {
     return from <= now && now <= to ? now : to;
   }
 
-  /** The summary covers the year of a month (a chart of one month says little). */
-  summaryRange() {
-    return this.range(
-      this.period.mode === "month" ? { ...this.period, mode: "year" } : this.period,
-    );
-  }
-
   async loadList() {
     const seq = ++this.listSeq;
     this.loadingList = true;
@@ -213,7 +206,7 @@ export class FinanceStore {
 
   async loadSummary() {
     const seq = ++this.summarySeq;
-    const { from, to } = this.summaryRange();
+    const { from, to } = this.range();
     const query: Record<string, string> = {};
     if (from) query.from = from;
     if (to) query.to = to;

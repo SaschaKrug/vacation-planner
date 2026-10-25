@@ -6,7 +6,8 @@ import { getLang, t } from "@/lib/i18n";
 import { formatMoney } from "@/lib/money";
 import { StatTiles } from "./FinancePage";
 
-/** Income and expenses per month, and where the money went, for the summary range. */
+/** Income and expenses per month, and where the money went, for the chosen period (a single
+ *  month has no chart per month). */
 export function SummaryView() {
   const finance = useFinance();
   const summary = finance.summary;
@@ -27,7 +28,7 @@ export function SummaryView() {
         expense={summary.expenseCents}
         currency={summary.currency}
       />
-      <MonthlyChart summary={summary} />
+      {finance.period.mode !== "month" && <MonthlyChart summary={summary} />}
       <CategoryBreakdown summary={summary} />
     </div>
   );
