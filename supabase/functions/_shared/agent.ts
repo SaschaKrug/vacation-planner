@@ -192,11 +192,12 @@ with a \`splitOf\` is a **part** of that split booking (e.g. an order line the b
 to an Amazon "Splitbuchung"); a booking has \`split\` (\`parts\`, \`remainderCents\`). Totals
 count the parts with their own categories and only the remainder of the booking.
 
-- Currency, categories and accounts (with \`balanceCents\`): ${f}
+- Currency, categories and accounts (with \`balanceCents\`): ${f} – categories nest to any
+  depth: a category's \`parentId\` is the one it is a subcategory of (null: top level)
 - The accounts' balances at the end of a day: ${f}/accounts?at=${year}-06-30 –
   \`{"at", "accounts": [...]}\`
 - Transactions (newest first): ${f}/transactions?from=${year}-01-01&to=${year}-12-31 –
-  also \`account=<id>\` (or \`none\`), \`category=<id>\` (or \`none\`),
+  also \`account=<id>\` (or \`none\`), \`category=<id>\` (with its subcategories, or \`none\`),
   \`kind=income|expense|transfer\`, \`q=<text>\`, \`limit\`, \`offset\`.
   Returns \`{"transactions": [...], "total", "incomeCents", "expenseCents"}\`.
 - Per month and category: ${f}/summary?from=${year}-01-01&to=${year}-12-31
@@ -220,7 +221,8 @@ Changing: \`POST ${f}/transactions\` with \`{"ops": [...]}\` (applied in order):
   booking: all of its parts)
 
 The response has \`inverse\`: ops that undo the request (send them to the same endpoint).
-Categories and accounts are referenced by id or name. Ask before deleting or changing many
+Categories and accounts are referenced by id or name (a category also by its path, like
+\`Food > Groceries\`). Ask before deleting or changing many
 transactions.
 
 \`POST ${f}/transfers/auto\` with \`{"from": "${year}-01-01", "to": "${year}-12-31"}\` (both

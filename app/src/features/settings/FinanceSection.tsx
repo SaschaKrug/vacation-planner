@@ -1,7 +1,17 @@
-import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, CornerDownRight, MoreHorizontal, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { confirm } from "@/components/confirm";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -33,6 +43,8 @@ const CURRENCIES = [
   "AUD",
 ];
 const KINDS: CategoryKind[] = ["expense", "income", "both"];
+/** Indentation per level, up to this many levels (deeper ones line up with the last). */
+const MAX_INDENT = 6;
 
 export function FinanceSection() {
   const planner = usePlanner();
@@ -45,6 +57,7 @@ export function FinanceSection() {
   if (!planner.family) return null;
   const edit = !planner.readOnly;
   const cats = finance.categories;
+  const tree = finance.categoryTree;
   const accounts = finance.accounts;
 
   async function clearAll() {
@@ -52,14 +65,22 @@ export function FinanceSection() {
   }
 
   async function remove(c: Category) {
-    if (
-      await confirm(
-        t("finance.category_delete_confirm", { name: c.name }),
-        t("types.delete"),
-      )
-    ) {
-      finance.deleteCategory(c.id);
-    }
+    const parent = tree.parentOf(c.id);
+    const text = parent
+      ? t("finance.subcategory_delete_confirm", { name: c.name, parent: parent.name })
+      : t("finance.category_delete_confirm", { name: c.name });
+    if (await confirm(text, t("types.delete"))) finance.deleteCategory(c.id);
+  }
+
+  /** A new category, at the top level or (with its color and kind) under `parent`. */
+  function addCategory(parent?: Category) {
+    finance.addCategory({
+      name: t("finance.new_category", { n: cats.length + 1 }),
+      color: parent?.color ?? nextColor(cats.map((c) => ({ ...c, role: "none" }))),
+      icon: "",
+      kind: parent?.kind ?? "expense",
+      parentId: parent?.id ?? null,
+    });
   }
 
   async function removeAccount(a: Account) {
@@ -126,31 +147,34 @@ export function FinanceSection() {
         description={t("finance.categories_help")}
       >
         <div className="space-y-2">
-          {cats.map((c, i) => (
-            <CategoryRow
-              key={c.id}
-              category={c}
-              first={i === 0}
-              last={i === cats.length - 1}
-              disabled={!edit}
-              onChange={(patch) => finance.updateCategory(c.id, patch)}
-              onMove={(dir) => finance.moveCategory(i, dir)}
-              onDelete={() => remove(c)}
-            />
-          ))}
+          {tree.ordered.map(({ category: c, depth }) => {
+            const parent = tree.parentOf(c.id);
+            const siblings = parent ? tree.byId.get(parent.id)!.children : tree.roots;
+            const i = siblings.findIndex((n) => n.category.id === c.id);
+            // Anywhere but into itself or one of its subcategories.
+            const inside = tree.subtree(c.id);
+            const targets = tree.ordered.filter((n) => !inside.has(n.category.id));
+            return (
+              <CategoryRow
+                key={c.id}
+                category={c}
+                depth={depth}
+                first={i === 0}
+                last={i === siblings.length - 1}
+                disabled={!edit}
+                targets={targets.map((n) => ({ category: n.category, depth: n.depth }))}
+                onChange={(patch) => finance.updateCategory(c.id, patch)}
+                onMove={(dir) => finance.moveCategory(c.id, dir)}
+                onMoveTo={(parentId) => finance.moveCategoryTo(c.id, parentId)}
+                onAddChild={() => addCategory(c)}
+                onDelete={() => remove(c)}
+              />
+            );
+          })}
         </div>
         {edit && (
           <div className="flex flex-wrap gap-2">
-            <Button
-              variant="outline"
-              onClick={() =>
-                finance.addCategory({
-                  name: t("finance.new_category", { n: cats.length + 1 }),
-                  color: nextColor(cats.map((c) => ({ ...c, role: "none" }))),
-                  icon: "",
-                  kind: "expense",
-                })}
-            >
+            <Button variant="outline" onClick={() => addCategory()}>
               <Plus /> {t("finance.add_category")}
             </Button>
             <Button
@@ -207,14 +231,34 @@ export function FinanceSection() {
   );
 }
 
+/** A category: color, icon, name and (top level only; subcategories have their top
+ *  category's) kind; moved among its siblings with the arrows, elsewhere in the tree from the
+ *  menu, where subcategories are added too. Indented by its depth. */
 function CategoryRow(
-  { category, first, last, disabled, onChange, onMove, onDelete }: {
+  {
+    category,
+    depth,
+    first,
+    last,
+    disabled,
+    targets,
+    onChange,
+    onMove,
+    onMoveTo,
+    onAddChild,
+    onDelete,
+  }: {
     category: Category;
+    depth: number;
     first: boolean;
     last: boolean;
     disabled: boolean;
+    /** Where it can move to (not into itself or its subcategories). */
+    targets: { category: Category; depth: number }[];
     onChange: (patch: Partial<Category>) => void;
     onMove: (dir: -1 | 1) => void;
+    onMoveTo: (parentId: string | null) => void;
+    onAddChild: () => void;
     onDelete: () => void;
   },
 ) {
@@ -224,7 +268,11 @@ function CategoryRow(
   useEffect(() => setIcon(category.icon), [category.icon]);
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5 border-b pb-2 last:border-0 sm:flex-nowrap sm:border-0 sm:pb-0">
+    <div
+      className="flex flex-wrap items-center gap-1.5 border-b pb-2 last:border-0 sm:flex-nowrap sm:border-0 sm:pb-0"
+      style={{ marginInlineStart: `${Math.min(depth, MAX_INDENT) * 1.25}rem` }}
+    >
+      {depth > 0 && <CornerDownRight className="size-4 shrink-0 text-muted-foreground" />}
       <input
         type="color"
         className="h-9 w-10 shrink-0 cursor-pointer rounded-md border bg-card p-1 disabled:cursor-default"
@@ -256,21 +304,23 @@ function CategoryRow(
         }}
         onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
       />
-      <Select
-        value={category.kind}
-        disabled={disabled}
-        onValueChange={(v) => onChange({ kind: v as CategoryKind })}
-      >
-        <SelectTrigger
-          className="min-w-0 flex-1 sm:w-36 sm:flex-none"
-          aria-label={t("finance.kind")}
+      {depth === 0 && (
+        <Select
+          value={category.kind}
+          disabled={disabled}
+          onValueChange={(v) => onChange({ kind: v as CategoryKind })}
         >
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {KINDS.map((k) => <SelectItem key={k} value={k}>{t(`finance.kind_${k}`)}</SelectItem>)}
-        </SelectContent>
-      </Select>
+          <SelectTrigger
+            className="min-w-0 flex-1 sm:w-36 sm:flex-none"
+            aria-label={t("finance.kind")}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {KINDS.map((k) => <SelectItem key={k} value={k}>{t(`finance.kind_${k}`)}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      )}
       {!disabled && (
         <>
           <Button
@@ -293,6 +343,48 @@ function CategoryRow(
           >
             <ArrowDown />
           </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8"
+                title={t("finance.category_actions")}
+                aria-label={t("finance.category_actions")}
+              >
+                <MoreHorizontal />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={onAddChild}>
+                <Plus /> {t("finance.add_subcategory")}
+              </DropdownMenuItem>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>
+                  <CornerDownRight /> {t("finance.move_to")}
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="max-h-80 overflow-y-auto">
+                  <DropdownMenuItem
+                    disabled={!category.parentId}
+                    onSelect={() => onMoveTo(null)}
+                  >
+                    {t("finance.top_level")}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  {targets.map(({ category: c, depth }) => (
+                    <DropdownMenuItem
+                      key={c.id}
+                      disabled={c.id === category.parentId}
+                      style={{ paddingLeft: `${0.5 + Math.min(depth, MAX_INDENT) * 0.875}rem` }}
+                      onSelect={() => onMoveTo(c.id)}
+                    >
+                      {c.icon} {c.name}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button
             variant="ghost"
             size="icon"

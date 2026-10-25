@@ -30,13 +30,19 @@ import type { Account, Category, Transaction } from "@/lib/api";
 import { getLang, t } from "@/lib/i18n";
 import { formatMoney } from "@/lib/money";
 import { cn } from "@/lib/utils";
+import { CategoryOptions } from "./CategoryOptions";
 import type { Filter } from "./store";
 import { TransferDialog } from "./TransferDialog";
 
+/** The category's color, icon and name; its path (with the parents) on hover. */
 export function CategoryLabel({ category }: { category?: Category }) {
+  const finance = useFinance();
   if (!category) return <span className="text-muted-foreground">{t("finance.uncategorized")}</span>;
   return (
-    <span className="inline-flex min-w-0 items-center gap-1.5">
+    <span
+      className="inline-flex min-w-0 items-center gap-1.5"
+      title={finance.categoryTree.path(category.id)}
+    >
       <span
         className="size-2.5 shrink-0 rounded-full"
         style={{ backgroundColor: category.color }}
@@ -207,9 +213,7 @@ export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void
           <SelectContent position="popper" className="max-h-80">
             <SelectItem value="all">{t("finance.all_categories")}</SelectItem>
             <SelectItem value="none">{t("finance.uncategorized")}</SelectItem>
-            {finance.categories.map((c) => (
-              <SelectItem key={c.id} value={c.id}>{c.icon} {c.name}</SelectItem>
-            ))}
+            <CategoryOptions />
           </SelectContent>
         </Select>
         <Select
@@ -344,13 +348,10 @@ export function TransactionsView({ onEdit }: { onEdit?: (t: Transaction) => void
                       </SelectTrigger>
                       <SelectContent position="popper" className="max-h-80">
                         <SelectItem value="none">{t("finance.uncategorized")}</SelectItem>
-                        {finance.categories
-                          .filter((c) =>
-                            c.kind === "both" || (c.kind === "income") === tx.amountCents > 0
-                          )
-                          .map((c) => (
-                            <SelectItem key={c.id} value={c.id}>{c.icon} {c.name}</SelectItem>
-                          ))}
+                        <CategoryOptions
+                          fits={(c) =>
+                            c.kind === "both" || (c.kind === "income") === tx.amountCents > 0}
+                        />
                       </SelectContent>
                     </Select>
                   )

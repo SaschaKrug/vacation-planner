@@ -18,6 +18,7 @@ import {
 } from "@/lib/api";
 import type { CsvMapping } from "@/lib/csv";
 import { getLang, t } from "@/lib/i18n";
+import { buildCategoryTree, type CategoryTree } from "./categoryTree";
 
 export type PeriodMode = "month" | "year" | "all";
 export interface Period {
@@ -27,7 +28,7 @@ export interface Period {
 }
 export interface Filter {
   q: string;
-  category: string; // "" = all, "none" = uncategorized, else a category id
+  category: string; // "" = all, "none" = uncategorized, else a category id (with its subcategories)
   account: string; // "" = all, "none" = without an account, else an account id
   kind: "" | "income" | "expense" | "transfer";
 }
@@ -96,6 +97,17 @@ export class FinanceStore {
 
   get categories(): Category[] {
     return this.overview?.categories ?? [];
+  }
+
+  private treeOf: { categories: Category[]; tree: CategoryTree } | null = null;
+
+  /** The categories as a tree (depth first in `ordered`). */
+  get categoryTree(): CategoryTree {
+    const categories = this.categories;
+    if (this.treeOf?.categories !== categories) {
+      this.treeOf = { categories, tree: buildCategoryTree(categories) };
+    }
+    return this.treeOf.tree;
   }
 
   categoryById(id: string | null) {
@@ -511,7 +523,7 @@ export class FinanceStore {
     }
   }
 
-  addCategory(c: Omit<Category, "id" | "position">) {
+  addCategory(c: Parameters<typeof api.addCategory>[1]) {
     return this.withOverview(() => api.addCategory(this.token, c));
   }
 
@@ -527,23 +539,44 @@ export class FinanceStore {
     return this.withOverview(() => api.updateCategory(this.token, id, patch));
   }
 
-  moveCategory(i: number, dir: -1 | 1) {
-    const list = [...this.categories];
+  /** Moves the category up or down among its siblings. */
+  moveCategory(id: string, dir: -1 | 1) {
+    const tree = this.categoryTree;
+    const parent = tree.parentOf(id);
+    const siblings = (parent ? tree.byId.get(parent.id)!.children : tree.roots)
+      .map((n) => n.category);
+    const i = siblings.findIndex((c) => c.id === id);
     const j = i + dir;
-    [list[i], list[j]] = [list[j], list[i]];
-    if (this.overview) this.overview = { ...this.overview, categories: list };
+    if (i < 0 || j < 0 || j >= siblings.length) return Promise.resolve(null);
+    [siblings[i], siblings[j]] = [siblings[j], siblings[i]];
+    // Siblings get the positions 0, 1, 2 …: only those that change are saved.
+    const changed = siblings.map((c, position) => ({ ...c, position }))
+      .filter((c, k) => c.position !== siblings[k].position);
+    const byId = new Map(changed.map((c) => [c.id, c]));
+    if (this.overview) {
+      this.overview = {
+        ...this.overview,
+        categories: this.categories.map((c) => byId.get(c.id) ?? c),
+      };
+    }
     this.emit();
     return this.withOverview(() =>
-      Promise.all([
-        api.updateCategory(this.token, list[i].id, { position: i }),
-        api.updateCategory(this.token, list[j].id, { position: j }),
-      ])
+      Promise.all(
+        changed.map((c) => api.updateCategory(this.token, c.id, { position: c.position })),
+      )
     );
   }
 
+  /** Makes the category a subcategory of `parentId` (null: top level), with its own. */
+  async moveCategoryTo(id: string, parentId: string | null) {
+    await this.withOverview(() => api.updateCategory(this.token, id, { parentId }));
+  }
+
+  /** Deletes the category; its subcategories and transactions move to its parent. */
   async deleteCategory(id: string) {
     await this.withOverview(() => api.deleteCategory(this.token, id));
-    this.reload();
+    if (this.filter.category === id) this.setFilter({ category: "" });
+    else this.reload();
   }
 
   // ------------------------------------------------------------- accounts

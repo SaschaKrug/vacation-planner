@@ -70,6 +70,11 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   Salary; edit them in *Settings* → *Finance*). Pick a month, a year or all time; search, filter
   by category (or *Uncategorized*) and by in / out; change a category right in the list. Every
   change can be undone from its message.
+- **Nested categories:** a category can have subcategories, as deep as you like (Food ›
+  Groceries › Bakery); add and move them in *Settings* → *Finance* (the ⋯ menu of a category)
+  or ask the assistant. Transactions can be in any of them; a category's totals and its filter
+  include its subcategories. A subcategory has the kind (income / expense) of its top category.
+  Deleting a category moves its subcategories and transactions up to its parent.
 - **Accounts:** bank accounts, cash or cards, each with an opening balance; a transaction can
   belong to one. The balances show above the list (click one to see only its transactions):
   for a past month or year the balances at its end, with today's below them; for the running
@@ -96,7 +101,8 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   belongs to; transfers to and from the family's other accounts can be combined right away.
   The format, account and that choice are remembered per bank.
 - **Overview:** for the chosen month, year or all time: income, expenses and the balance, the
-  spending (or income) per category and, for a year or all time, a chart per month, also as a
+  spending (or income) per category (top-level categories with their subcategories, which
+  unfold to show what is in them) and, for a year or all time, a chart per month, also as a
   table.
 - Viewers see the finances read-only; the calendar feed never shows them.
 
@@ -107,7 +113,7 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   picked from the API's list. Keys are stored encrypted and never shown again; all editors of
   the family use the setup (viewers have no chat).
 - It **looks things up** in the calendar and the finances, **changes** them (entries, notes,
-  types, categories, transactions), **searches the web** (Tavily or Brave, with their own key)
+  types, categories and how they nest, transactions), **searches the web** (Tavily or Brave, with their own key)
   and **reads pages**. Every change shows up in the chat with **Undo**; bigger changes (more than
   31 days, deleting types, categories or transactions) need the user's OK first. *Allow changes*
   off makes it read-only.
@@ -116,7 +122,8 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   median, min, max, standard deviation) per month, quarter, year, week, weekday, day, category,
   account, payee (similar spellings together) or income / expense, up to two at once (e.g. per
   month and category), counted like all totals (transfers by their net, split bookings by
-  their parts); grouped by one, also the average and median group (e.g. the average month,
+  their parts); categories by their own or rolled up to a level of the tree (e.g. only
+  top-level categories); grouped by one, also the average and median group (e.g. the average month,
   empty months counting as 0). *Count calendar
   days* gives days per entry type, year, month or weekday, optionally only weekdays and without
   vacation days on public holidays. *Calculate* evaluates expressions (no code is run):
@@ -319,21 +326,21 @@ change.
 
 | Method & path | Description |
 | --- | --- |
-| `GET /families/{id}/finance` | `{"currency", "csvMappings", "accounts": [{"id", "name", "color", "icon", "openingCents", "position", "balanceCents"}], "categories": [{"id", "name", "color", "icon", "kind", "position"}]}` |
+| `GET /families/{id}/finance` | `{"currency", "csvMappings", "accounts": [{"id", "name", "color", "icon", "openingCents", "position", "balanceCents"}], "categories": [{"id", "name", "color", "icon", "kind", "position", "parentId"}]}`; `parentId` is the category a subcategory belongs to (null: top level) |
 | `DELETE /families/{id}/finance` | Delete all transactions, accounts, categories, saved CSV mappings and the currency; returns the (empty) overview |
 | `PATCH /families/{id}/finance/settings` | `{"currency": "EUR"}` (ISO 4217) and/or `{"csvMappings": [...]}` |
 | `GET /families/{id}/finance/accounts?at=YYYY-MM-DD` | `{"at", "accounts": [...]}`: the accounts with their balances at the end of that day (opening balance plus the transactions up to it); without `at`, now |
 | `POST /families/{id}/finance/accounts` | Add `{"name", "color", "icon", "openingCents"}` |
 | `PATCH` / `DELETE /families/{id}/finance/accounts/{account}` | Change or delete (deletes its transactions too; the response has their count); by id or name |
-| `POST /families/{id}/finance/categories` | Add `{"name", "color", "icon", "kind": "income" \| "expense" \| "both"}` |
-| `PATCH` / `DELETE /families/{id}/finance/categories/{category}` | Change or delete (its transactions become uncategorized); by id or name |
+| `POST /families/{id}/finance/categories` | Add `{"name", "color", "icon", "kind": "income" \| "expense" \| "both", "parentId"}`; with `parentId` (id, name or path) a subcategory, which gets its top-level category's kind |
+| `PATCH` / `DELETE /families/{id}/finance/categories/{category}` | Change or delete; by id, name or path (`Food > Groceries`, needed when several have the name). `parentId` moves it with its subcategories (null: top level; not into itself or its subcategories); `kind` can only be set on a top-level category and goes down to its subcategories. Deleting moves its subcategories and transactions to its parent (top level: the subcategories become top-level ones, the transactions uncategorized) |
 | `POST /families/{id}/finance/categories/defaults` | Add the default categories the family doesn't have: `{"lang": "de"}` |
-| `GET /families/{id}/finance/transactions` | `?from=&to=&category=<id or none>&account=<id or none>&kind=income\|expense\|transfer&q=&limit=&offset=` → `{"transactions": [{"id", "date", "amountCents", "payee", "description", "categoryId", "accountId", "transferId", "note", "imported"}], "total", "incomeCents", "expenseCents"}`, newest first. Transactions sharing a `transferId` (a transfer) count once in the totals, by their sum |
+| `GET /families/{id}/finance/transactions` | `?from=&to=&category=<id or none, with its subcategories>&account=<id or none>&kind=income\|expense\|transfer&q=&limit=&offset=` → `{"transactions": [{"id", "date", "amountCents", "payee", "description", "categoryId", "accountId", "transferId", "note", "imported"}], "total", "incomeCents", "expenseCents"}`, newest first. Transactions sharing a `transferId` (a transfer) count once in the totals, by their sum |
 | `POST /families/{id}/finance/transactions` | `{"ops": [...]}`: `{"action": "add", "date", "amountCents", "payee", "description", "categoryId", "note"}`, `{"action": "update", "id", ...fields}`, `{"action": "delete", "ids": [...]}`, `{"action": "link", "ids": [...]}` (combine into one transfer), `{"action": "unlink", "ids": [...]}`; add / update also take `accountId` and `transferId`. Returns `inverse`, the ops that undo the request |
 | `POST /families/{id}/finance/import` | `{"rows": [{"date", "amountCents", "payee", "description", "categoryId"}], "dryRun": true, "accountId", "autoTransfers": true}`: adds the rows that weren't imported before (to the account) and, with `autoTransfers`, combines them with matching bookings on other accounts; returns `added`, `duplicates` (row indexes), the new `ids` and `transfers` (pairs combined) |
 | `GET /families/{id}/finance/transfers/suggestions?from=&to=` | `{"pairs": [{"out", "in"}]}`: transactions that look like a transfer between two accounts (same amount out and in, at most 4 days apart, not combined yet) |
 | `POST /families/{id}/finance/transfers/auto` | `{"from", "to"}` (optional): combines all those pairs; returns `linked` and `inverse` like the transactions endpoint |
-| `GET /families/{id}/finance/summary?from=&to=` | `{"currency", "incomeCents", "expenseCents", "count", "months": [{"month", "incomeCents", "expenseCents"}], "categories": [{"categoryId", "incomeCents", "expenseCents", "count"}]}` |
+| `GET /families/{id}/finance/summary?from=&to=` | `{"currency", "incomeCents", "expenseCents", "count", "months": [{"month", "incomeCents", "expenseCents"}], "categories": [{"categoryId", "incomeCents", "expenseCents", "count"}]}`: per category its own transactions (a category with its subcategories adds up its subtree) |
 
 ### AI assistant
 

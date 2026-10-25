@@ -4,6 +4,7 @@
 // payees it doesn't know on the web (when search is set up). Its answer is a JSON object of row
 // number -> category id. Only categories that fit (income / expense) count.
 
+import { categoryTree } from "../category_tree.ts";
 import { similarKey } from "../finance.ts";
 import { HttpError } from "../http.ts";
 import type { Lang } from "../ics.ts";
@@ -97,13 +98,15 @@ export function categorizePrompt(
   search = false,
 ): string {
   const ex = examples(sorted, categories);
+  const tree = categoryTree(categories);
   return [
     MARKER,
     `The statements are probably ${LANGUAGES[lang]}. Each row is: number | date | amount ` +
     "(negative = money going out) | payee | description.",
-    "Categories (id: name, for which amounts):",
-    ...categories.map((c) =>
-      `- ${c.id}: ${c.icon ? c.icon + " " : ""}${c.name} (${
+    'Categories (id: name after its parent categories, as in "Food > Groceries"; for which ' +
+    "amounts):",
+    ...tree.ordered.map((c) =>
+      `- ${c.id}: ${c.icon ? c.icon + " " : ""}${tree.path(c.id)} (${
         c.kind === "both" ? "income and expenses" : c.kind === "income" ? "income" : "expenses"
       })`
     ),

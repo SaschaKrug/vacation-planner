@@ -6,6 +6,7 @@
 // lines the bank lists too): totals count the parts and what is left of the booking (see
 // netItems). Viewers and editors read, editors change.
 
+import { categoryTree, PATH_SEPARATOR } from "./category_tree.ts";
 import type { Ctx } from "./context.ts";
 import { addDays, diffDays, isValidDate } from "./dates.ts";
 import { cleanName, HttpError, json, objectOf, readBody, slug } from "./http.ts";
@@ -21,7 +22,7 @@ import {
   type TransactionRow,
 } from "./store.ts";
 
-export const MAX_CATEGORIES = 100;
+export const MAX_CATEGORIES = 250;
 export const MAX_ACCOUNTS = 50;
 const MAX_OPS = 2000;
 const MAX_IMPORT_ROWS = 5000;
@@ -142,6 +143,7 @@ export function defaultCategories(familyId: string, lang: Lang): CategoryRow[] {
     icon: c.icon,
     kind: c.kind,
     position,
+    parent_id: null,
   }));
 }
 
@@ -198,14 +200,31 @@ function cleanCurrency(v: unknown): string {
   return v;
 }
 
-/** A category reference by id or (case-insensitive) name; null / "" clears it. */
+/** A category reference by id, (case-insensitive) path ("Food > Groceries") or name; null /
+ *  "" clears it. A name that several categories have needs the path. */
 function resolveCategory(categories: CategoryRow[], ref: unknown): string | null {
   if (ref === null || ref === "" || ref === undefined) return null;
   if (typeof ref !== "string") throw new HttpError(400, "categoryId must be a string");
-  const c = categories.find((c) => c.id === ref) ??
-    categories.find((c) => c.name.toLowerCase() === ref.trim().toLowerCase());
-  if (!c) throw new HttpError(404, `Unknown category "${ref}"`);
-  return c.id;
+  const byId = categories.find((c) => c.id === ref);
+  if (byId) return byId.id;
+  const tree = categoryTree(categories);
+  const want = ref.split(">").map((n) => n.trim().toLowerCase()).join(PATH_SEPARATOR);
+  const byPath = ref.includes(">")
+    ? categories.filter((c) => tree.path(c.id).toLowerCase() === want)
+    : [];
+  const named = byPath.length
+    ? byPath
+    : categories.filter((c) => c.name.toLowerCase() === ref.trim().toLowerCase());
+  if (named.length > 1) {
+    throw new HttpError(
+      400,
+      `Several categories are called "${ref}": use the path (${
+        named.map((c) => `"${tree.path(c.id)}"`).join(", ")
+      })`,
+    );
+  }
+  if (!named.length) throw new HttpError(404, `Unknown category "${ref}"`);
+  return named[0].id;
 }
 
 /** A category by id or (case-insensitive) name. */
@@ -216,7 +235,13 @@ export function findCategory(categories: CategoryRow[], ref: unknown): CategoryR
   return c;
 }
 
-/** A new category from {name, color, icon, kind}, added after the family's others. */
+/** The kind of a top-level category: a subcategory has its top-level category's. */
+function kindUnder(categories: CategoryRow[], parentId: string | null, kind: CategoryKind) {
+  return parentId ? categoryTree(categories).atLevel(parentId, 1).kind : kind;
+}
+
+/** A new category from {name, color, icon, kind, parentId (id, name or path; none: top
+ *  level)}, added after the family's others. A subcategory gets the kind of its parent. */
 export function newCategory(
   familyId: string,
   categories: CategoryRow[],
@@ -224,31 +249,60 @@ export function newCategory(
 ): CategoryRow {
   if (categories.length >= MAX_CATEGORIES) throw new HttpError(400, "Too many categories");
   const name = cleanName(body.name);
+  const parent = resolveCategory(categories, body.parentId);
   return {
     family_id: familyId,
     id: uniqueId(slug(name), new Set(categories.map((c) => c.id))),
     name,
     color: cleanColor(body.color),
     icon: text(body.icon, "icon", 16),
-    kind: cleanKind(body.kind),
+    kind: kindUnder(categories, parent, cleanKind(body.kind)),
     position: categories.reduce((m, c) => Math.max(m, c.position + 1), 0),
+    parent_id: parent,
   };
 }
 
-/** The category with any of {name, color, icon, kind, position} changed. */
-export function changedCategory(current: CategoryRow, body: Record<string, unknown>): CategoryRow {
+/**
+ * The category with any of {name, color, icon, kind, position, parentId} changed, first, and
+ * its subcategories whose kind changes with it. parentId (id, name or path; null / "": top
+ * level) moves it with its subcategories, to the end of its new siblings unless position is
+ * given; not into itself or one of its subcategories. Only a top-level category's kind can be
+ * set; a subcategory has its top-level category's.
+ */
+export function changedCategories(
+  categories: CategoryRow[],
+  current: CategoryRow,
+  body: Record<string, unknown>,
+): CategoryRow[] {
   const next = { ...current };
   if (body.name !== undefined) next.name = cleanName(body.name);
   if (body.color !== undefined) next.color = cleanColor(body.color);
   if (body.icon !== undefined) next.icon = text(body.icon, "icon", 16);
-  if (body.kind !== undefined) next.kind = cleanKind(body.kind);
+  const tree = categoryTree(categories);
+  if (body.parentId !== undefined) {
+    const parent = resolveCategory(categories, body.parentId);
+    if (parent && tree.subtree(current.id).has(parent)) {
+      throw new HttpError(400, "A category can't go into itself or one of its subcategories");
+    }
+    if (parent !== (current.parent_id ?? null)) {
+      next.parent_id = parent;
+      next.position = categories.reduce((m, c) => Math.max(m, c.position + 1), 0);
+    }
+  }
   if (body.position !== undefined) {
     if (!Number.isInteger(body.position)) {
       throw new HttpError(400, "position must be an integer");
     }
     next.position = body.position as number;
   }
-  return next;
+  const kind = body.kind === undefined ? current.kind : cleanKind(body.kind);
+  next.kind = kindUnder(categories, next.parent_id ?? null, kind);
+  const out = [next];
+  for (const id of tree.subtree(current.id)) {
+    const c = tree.byId.get(id)!;
+    if (id !== current.id && c.kind !== next.kind) out.push({ ...c, kind: next.kind });
+  }
+  return out;
 }
 
 /** An account reference by id or (case-insensitive) name; null / "" clears it. */
@@ -278,6 +332,7 @@ export function publicCategory(c: CategoryRow) {
     icon: c.icon,
     kind: c.kind,
     position: c.position,
+    parentId: c.parent_id ?? null,
   };
 }
 
@@ -382,8 +437,17 @@ export function parseFinanceImport(raw: unknown, familyId: string): FinanceConte
       icon: text(c.icon, "icon", 16),
       kind: cleanKind(c.kind),
       position: Number.isInteger(c.position) ? c.position as number : i,
+      parent_id: c.parentId === undefined || c.parentId === null ? null : String(c.parentId),
     };
   });
+  // Parents must be in the file, without loops; subcategories get their top level's kind.
+  const tree = categoryTree(categories);
+  for (const c of categories) {
+    if (c.parent_id && (!ids.has(c.parent_id) || tree.parentOf(c.id)?.id !== c.parent_id)) {
+      throw new HttpError(400, `Invalid parent "${c.parent_id}" of category "${c.id}"`);
+    }
+    c.kind = tree.atLevel(c.id, 1).kind;
+  }
   const accountsRaw = f.accounts ?? [];
   if (!Array.isArray(accountsRaw)) throw new HttpError(400, "finance.accounts must be an array");
   if (accountsRaw.length > MAX_ACCOUNTS) throw new HttpError(400, "Too many accounts");
@@ -1071,9 +1135,9 @@ async function categoriesRoute(ctx: Ctx, id: string | undefined): Promise<Respon
   if (id !== undefined) {
     const current = findCategory(categories, id);
     if (method === "PATCH") {
-      const next = changedCategory(current, body);
-      await store.upsertCategories([next]);
-      return json(publicCategory(next));
+      const changed = changedCategories(categories, current, body);
+      await store.upsertCategories(changed);
+      return json(publicCategory(changed[0]));
     }
     if (method === "DELETE") {
       await store.deleteCategory(family.id, current.id);
@@ -1176,8 +1240,10 @@ export async function findTransactions(store: Store, familyId: string, query: UR
   const category = query.get("category");
   if (category === "none") rows = rows.filter((t) => !t.category_id);
   else if (category) {
-    const id = resolveCategory(await store.listCategories(familyId), category);
-    rows = rows.filter((t) => t.category_id === id);
+    // A category with its subcategories.
+    const categories = await store.listCategories(familyId);
+    const ids = categoryTree(categories).subtree(resolveCategory(categories, category)!);
+    rows = rows.filter((t) => t.category_id && ids.has(t.category_id));
   }
   const q = query.get("q")?.trim().toLowerCase();
   if (q) {

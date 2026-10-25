@@ -339,7 +339,7 @@ const STRINGS: Record<Lang, Dict> = {
     "finance.category": "Category",
     "finance.categories": "Categories",
     "finance.categories_help":
-      "Used to sort transactions. Income categories show for money coming in, expense categories for money going out, “both” for either.",
+      "Used to sort transactions. Income categories show for money coming in, expense categories for money going out, “both” for either. Categories can have subcategories, as deep as you like: a subcategory has the kind of its top category, and a category's totals include its subcategories.",
     "finance.all_categories": "All categories",
     "finance.uncategorized": "Uncategorized",
     "finance.kind": "Kind",
@@ -375,8 +375,17 @@ const STRINGS: Record<Lang, Dict> = {
     "finance.add_category": "Add category",
     "finance.add_defaults": "Add the default categories",
     "finance.new_category": "Category {n}",
+    "finance.add_subcategory": "Add subcategory",
+    "finance.move_to": "Move to",
+    "finance.top_level": "Top level",
+    "finance.category_actions": "More for this category",
+    "finance.show_subcategories": "Show subcategories",
+    "finance.hide_subcategories": "Hide subcategories",
+    "finance.directly_in": "Directly in “{name}”",
     "finance.category_delete_confirm":
-      "Delete the category “{name}”?\n\nIts transactions stay, without a category.",
+      "Delete the category “{name}”?\n\nIts transactions stay, without a category. Its subcategories move up to the top level.",
+    "finance.subcategory_delete_confirm":
+      "Delete the category “{name}”?\n\nIts transactions and subcategories move to “{parent}”.",
     "finance.mappings": "Saved bank formats",
     "finance.mappings_help":
       "How the columns of a bank's CSV files map, remembered by their header row. Remove one to set it up again on the next import.",
@@ -1062,7 +1071,7 @@ const STRINGS: Record<Lang, Dict> = {
     "finance.category": "Kategorie",
     "finance.categories": "Kategorien",
     "finance.categories_help":
-      "Zum Einordnen der Buchungen. Einnahme-Kategorien erscheinen bei Geld, das hereinkommt, Ausgabe-Kategorien bei Geld, das hinausgeht, „beides“ bei beidem.",
+      "Zum Einordnen der Buchungen. Einnahme-Kategorien erscheinen bei Geld, das hereinkommt, Ausgabe-Kategorien bei Geld, das hinausgeht, „beides“ bei beidem. Kategorien können Unterkategorien haben, beliebig tief: Eine Unterkategorie hat die Art ihrer obersten Kategorie, und die Summen einer Kategorie enthalten ihre Unterkategorien.",
     "finance.all_categories": "Alle Kategorien",
     "finance.uncategorized": "Ohne Kategorie",
     "finance.kind": "Art",
@@ -1099,8 +1108,17 @@ const STRINGS: Record<Lang, Dict> = {
     "finance.add_category": "Kategorie hinzufügen",
     "finance.add_defaults": "Standard-Kategorien hinzufügen",
     "finance.new_category": "Kategorie {n}",
+    "finance.add_subcategory": "Unterkategorie hinzufügen",
+    "finance.move_to": "Verschieben nach",
+    "finance.top_level": "Oberste Ebene",
+    "finance.category_actions": "Mehr zu dieser Kategorie",
+    "finance.show_subcategories": "Unterkategorien zeigen",
+    "finance.hide_subcategories": "Unterkategorien ausblenden",
+    "finance.directly_in": "Direkt in „{name}“",
     "finance.category_delete_confirm":
-      "Die Kategorie „{name}“ löschen?\n\nIhre Buchungen bleiben erhalten, ohne Kategorie.",
+      "Die Kategorie „{name}“ löschen?\n\nIhre Buchungen bleiben erhalten, ohne Kategorie. Ihre Unterkategorien rücken auf die oberste Ebene.",
+    "finance.subcategory_delete_confirm":
+      "Die Kategorie „{name}“ löschen?\n\nIhre Buchungen und Unterkategorien wandern nach „{parent}“.",
     "finance.mappings": "Gespeicherte Bankformate",
     "finance.mappings_help":
       "Wie die Spalten der CSV-Dateien einer Bank zugeordnet werden, erkannt an der Kopfzeile. Entferne eins, um es beim nächsten Import neu einzustellen.",
