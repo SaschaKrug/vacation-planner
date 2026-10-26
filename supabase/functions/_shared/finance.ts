@@ -13,6 +13,7 @@ import { cleanName, HttpError, json, objectOf, readBody, slug } from "./http.ts"
 import type { Lang } from "./ics.ts";
 import {
   type AccountRow,
+  type Benchmark,
   CATEGORY_KINDS,
   type CategoryKind,
   type CategoryRow,
@@ -30,6 +31,7 @@ const MAX_IMPORT_TRANSACTIONS = 100_000; // in an export file
 const MAX_AMOUNT = 100_000_000_000_000; // cents
 const MAX_LIST = 1000;
 const MAX_MAPPINGS = 20;
+const MAX_BENCHMARK_LABEL = 120;
 const MAX_SUGGESTIONS = 200;
 const TRANSFER_DAYS = 4; // how far apart the two legs of a suggested transfer may be
 const SPLIT_RE = /split-?buchung/i; // how banks mark a booking whose parts they list as well
@@ -379,7 +381,54 @@ export function publicTransaction(t: TransactionRow, links?: Links) {
 }
 
 function settingsOf(familyId: string, row: FinanceSettingsRow | null): FinanceSettingsRow {
-  return row ?? { family_id: familyId, currency: "EUR", csv_mappings: [] };
+  return row ?? { family_id: familyId, currency: "EUR", csv_mappings: [], benchmark: null };
+}
+
+/**
+ * A statistic average from {label, incomeCents, expenseCents, categories: [{categoryId (id,
+ * name or path), cents}]}, all per month and not negative; null (or one without any amount)
+ * clears it. A category given twice keeps its last amount.
+ */
+export function cleanBenchmark(raw: unknown, categories: CategoryRow[]): Benchmark | null {
+  if (raw === null) return null;
+  const b = objectOf(raw, "benchmark");
+  const cents = (v: unknown, field: string) => {
+    if (v === null || v === undefined || v === "") return null;
+    const n = cleanAmount(v, field);
+    if (n < 0) throw new HttpError(400, `${field} must not be negative`);
+    return n;
+  };
+  if (b.label !== undefined && typeof b.label !== "string") {
+    throw new HttpError(400, "benchmark.label must be a string");
+  }
+  if (b.categories !== undefined && b.categories !== null && !Array.isArray(b.categories)) {
+    throw new HttpError(400, "benchmark.categories must be an array");
+  }
+  const byCategory = new Map<string, number>();
+  for (const raw of (b.categories ?? []) as unknown[]) {
+    const c = objectOf(raw, "Each benchmark category");
+    const id = findCategory(categories, c.categoryId ?? c.category).id;
+    const n = cents(c.cents, "benchmark.categories.cents");
+    if (n === null) byCategory.delete(id);
+    else byCategory.set(id, n);
+  }
+  const out: Benchmark = {
+    label: ((b.label as string | undefined) ?? "").trim().slice(0, MAX_BENCHMARK_LABEL),
+    incomeCents: cents(b.incomeCents, "benchmark.incomeCents"),
+    expenseCents: cents(b.expenseCents, "benchmark.expenseCents"),
+    categories: [...byCategory].map(([categoryId, cents]) => ({ categoryId, cents })),
+  };
+  return out.incomeCents === null && out.expenseCents === null && !out.categories.length
+    ? null
+    : out;
+}
+
+/** The statistic average without categories that are gone since. */
+export function benchmarkOf(settings: FinanceSettingsRow | null, categories: CategoryRow[]) {
+  const b = settings?.benchmark;
+  if (!b) return null;
+  const ids = new Set(categories.map((c) => c.id));
+  return { ...b, categories: b.categories.filter((c) => ids.has(c.categoryId)) };
 }
 
 // ------------------------------------------------------------------ export / import
@@ -1071,12 +1120,14 @@ async function overviewData(store: Store, familyId: string) {
   return {
     currency: s.currency,
     csvMappings: s.csv_mappings,
+    benchmark: benchmarkOf(s, categories),
     categories: categories.map(publicCategory),
     accounts,
   };
 }
 
-/** GET /finance: currency, saved CSV mappings, the categories and the accounts. */
+/** GET /finance: currency, saved CSV mappings, the statistic average, the categories and the
+ *  accounts. */
 async function overview({ store, load }: Ctx): Promise<Response> {
   const { family } = await load("view");
   return json(await overviewData(store, family.id));
@@ -1089,7 +1140,8 @@ async function clearRoute({ store, load }: Ctx): Promise<Response> {
   return json(await overviewData(store, family.id));
 }
 
-/** PATCH /finance/settings {"currency": "EUR", "csvMappings": [...]} */
+/** PATCH /finance/settings {"currency": "EUR", "csvMappings": [...], "benchmark": {...}}
+ *  (benchmark: see cleanBenchmark; null clears it) */
 async function updateSettings({ store, req, load }: Ctx): Promise<Response> {
   const { family } = await load("edit");
   const body = await readBody(req);
@@ -1103,6 +1155,9 @@ async function updateSettings({ store, req, load }: Ctx): Promise<Response> {
       throw new HttpError(400, "csvMappings is too large");
     }
     row.csv_mappings = body.csvMappings;
+  }
+  if (body.benchmark !== undefined) {
+    row.benchmark = cleanBenchmark(body.benchmark, await store.listCategories(family.id));
   }
   await store.saveFinanceSettings(row);
   return json(await overviewData(store, family.id));

@@ -7,10 +7,11 @@ import { getLang, t } from "@/lib/i18n";
 import { formatMoney } from "@/lib/money";
 import { cn } from "@/lib/utils";
 import type { CategoryNode } from "./categoryTree";
+import { ComparisonView } from "./ComparisonView";
 import { StatTiles } from "./FinancePage";
 
-/** Income and expenses per month, and where the money went, for the chosen period (a single
- *  month has no chart per month). */
+/** Income and expenses per month, how they compare with other periods, and where the money
+ *  went, for the chosen period (a single month has no chart per month). */
 export function SummaryView() {
   const finance = useFinance();
   const summary = finance.summary;
@@ -18,10 +19,14 @@ export function SummaryView() {
     return <div className="h-64 animate-pulse rounded-xl bg-muted" />;
   }
   if (!summary.count) {
+    // Nothing in the period, but maybe in those it is compared with.
     return (
-      <p className="rounded-xl border bg-card p-8 text-center text-sm text-muted-foreground">
-        {t("finance.no_data")}
-      </p>
+      <div className="space-y-4">
+        <p className="rounded-xl border bg-card p-8 text-center text-sm text-muted-foreground">
+          {t("finance.no_data")}
+        </p>
+        <ComparisonView />
+      </div>
     );
   }
   return (
@@ -31,6 +36,7 @@ export function SummaryView() {
         expense={summary.expenseCents}
         currency={summary.currency}
       />
+      <ComparisonView />
       {finance.period.mode !== "month" && <MonthlyChart summary={summary} />}
       <CategoryBreakdown summary={summary} />
     </div>

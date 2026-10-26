@@ -628,6 +628,54 @@ Deno.test("the assistant adds categories, with undo, and deletes them only when 
   assert(!(await chat(ro, "add category Pets")).some((e) => e.event === "tool"));
 });
 
+Deno.test("the assistant sets the statistic average, with undo", async () => {
+  const t = await configured();
+  const ctx = { lang: "en", store: t.store, familyId: t.f.id } as any;
+  const allowed = new Set(["set_statistic_average"]);
+  const set = (args: unknown) =>
+    runTool("set_statistic_average", JSON.stringify(args), ctx, allowed);
+  const benchmark = async () => (await t.call("GET", `/families/${t.f.id}/finance`)).data.benchmark;
+  const undo = async (steps: any[]) => {
+    for (const step of steps) {
+      const res = await t.call(step.method, `/families/${t.f.id}${step.path}`, step.body);
+      assertEquals(res.status, 200, res.data);
+    }
+  };
+
+  const first = await set({
+    label: "Destatis 2024",
+    expenseCents: 380000,
+    categories: [{ category: "Groceries", cents: 70000 }],
+  });
+  assertEquals(first.ok, true, JSON.stringify(first.result));
+  assertEquals([first.change!.kind, first.change!.summary], [
+    "benchmark",
+    "Set the statistic average",
+  ]);
+  assertEquals(await benchmark(), {
+    label: "Destatis 2024",
+    incomeCents: null,
+    expenseCents: 380000,
+    categories: [{ categoryId: "groceries", cents: 70000 }],
+  });
+
+  const second = await set({ incomeCents: 500000 });
+  assertEquals((await benchmark()).incomeCents, 500000);
+  await undo(second.change!.undo);
+  assertEquals((await benchmark()).expenseCents, 380000);
+
+  const cleared = await set({ clear: true });
+  assertEquals(cleared.change!.summary, "Removed the statistic average");
+  assertEquals(await benchmark(), null);
+  await undo(cleared.change!.undo);
+  assertEquals((await benchmark()).label, "Destatis 2024");
+  await undo(first.change!.undo);
+  assertEquals(await benchmark(), null);
+
+  assertEquals((await set({ categories: [{ category: "Nope", cents: 1 }] })).ok, false);
+  assertEquals((await set({ expenseCents: -5 })).ok, false);
+});
+
 /** Adds transactions; returns their ids in order. */
 async function addTransactions(t: Awaited<ReturnType<typeof family>>, ops: unknown[]) {
   const res = await t.call("POST", `/families/${t.f.id}/finance/transactions`, { ops });

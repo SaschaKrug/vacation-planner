@@ -24,7 +24,7 @@ import {
 import { handleChats, type Turn } from "./ai/chats.ts";
 import type { Ctx } from "./context.ts";
 import { isValidDate } from "./dates.ts";
-import { applyTransactionOps } from "./finance.ts";
+import { applyTransactionOps, benchmarkOf } from "./finance.ts";
 import { CORS, HttpError, json, NO_STORE, readBody } from "./http.ts";
 import type { SecretBox } from "./secrets.ts";
 import {
@@ -296,6 +296,7 @@ async function prepareTurn(
     categories,
     accounts,
     currency: settings?.currency ?? "EUR",
+    benchmark: benchmarkOf(settings, categories),
     ...context,
     writes: row.allow_writes,
     search: !!search,

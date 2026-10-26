@@ -81,9 +81,20 @@ export interface TransferPair {
   in: Transaction;
 }
 
+/** A statistic average to compare with (e.g. a statistics office's household spending): income,
+ *  expenses and amounts per category, all per month. */
+export interface Benchmark {
+  label: string;
+  incomeCents: number | null;
+  expenseCents: number | null;
+  categories: { categoryId: string; cents: number }[];
+}
+
 export interface FinanceOverview {
   currency: string;
   csvMappings: unknown[];
+  /** Not set: null. */
+  benchmark: Benchmark | null;
   categories: Category[];
   accounts: Account[];
 }
@@ -514,7 +525,7 @@ export const api = {
   clearFinance: (token: string) => request<FinanceOverview>("DELETE", `${fam(token)}/finance`),
   financeSettings: (
     token: string,
-    patch: { currency?: string; csvMappings?: unknown[] },
+    patch: { currency?: string; csvMappings?: unknown[]; benchmark?: Benchmark | null },
   ) => request<FinanceOverview>("PATCH", `${fam(token)}/finance/settings`, patch),
   addCategory: (
     token: string,

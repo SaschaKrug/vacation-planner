@@ -7,7 +7,9 @@ import { dateRange, diffDays, isValidDate, isWeekend } from "../dates.ts";
 import {
   applyTransactionOps,
   autoCombine,
+  benchmarkOf,
   changedCategories,
+  cleanBenchmark,
   financeSummary,
   findCategory,
   findTransactions,
@@ -52,7 +54,7 @@ export interface UndoStep {
 }
 
 export interface Change {
-  kind: "entries" | "notes" | "types" | "categories" | "transactions";
+  kind: "entries" | "notes" | "types" | "categories" | "transactions" | "benchmark";
   summary: string;
   undo: UndoStep[];
 }
@@ -101,6 +103,8 @@ const PHRASES = {
     transactions: (n: number) => `${n} ${n === 1 ? "transaction" : "transactions"} changed`,
     transfers: (n: number) => `${n} ${n === 1 ? "transfer" : "transfers"} combined`,
     splits: (n: number) => `${n} split ${n === 1 ? "booking" : "bookings"} combined`,
+    benchmarkSet: "Set the statistic average",
+    benchmarkCleared: "Removed the statistic average",
   },
   de: {
     days: (n: number) => `${n} ${n === 1 ? "Tag" : "Tage"} geändert`,
@@ -114,6 +118,8 @@ const PHRASES = {
     transactions: (n: number) => `${n} ${n === 1 ? "Buchung" : "Buchungen"} geändert`,
     transfers: (n: number) => `${n} ${n === 1 ? "Umbuchung" : "Umbuchungen"} zusammengefasst`,
     splits: (n: number) => `${n} ${n === 1 ? "Aufteilung" : "Aufteilungen"} zusammengefasst`,
+    benchmarkSet: "Statistischen Durchschnitt festgelegt",
+    benchmarkCleared: "Statistischen Durchschnitt entfernt",
   },
 };
 
@@ -927,6 +933,67 @@ export const TOOLS: Record<string, Tool> = {
         }
       }
       throw new HttpError(400, "action must be add, update or delete");
+    },
+  },
+
+  set_statistic_average: {
+    write: true,
+    spec: {
+      name: "set_statistic_average",
+      description:
+        "Sets the statistic average that the finance overview compares the family's months with, e.g. a statistics office's average household income and spending for a household like this one (search the web for current figures and name the source and year in label). All amounts are integer cents per month, not negative: incomeCents, expenseCents, and categories: [{category (id, name or path), cents}] for the family's categories (top-level ones show in the comparison; one without an own amount sums up those of its subcategories). Leave out what isn't known. It replaces the whole average; clear: true removes it (the overview then doesn't show it).",
+      parameters: {
+        type: "object",
+        properties: {
+          label: { type: "string", description: "Where the numbers come from, e.g. the source" },
+          incomeCents: { type: "integer" },
+          expenseCents: { type: "integer" },
+          categories: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: { category: { type: "string" }, cents: { type: "integer" } },
+              required: ["category", "cents"],
+            },
+          },
+          clear: { type: "boolean" },
+        },
+      },
+    },
+    async run(args, { store, familyId, lang }) {
+      const [settings, categories] = await Promise.all([
+        store.getFinanceSettings(familyId),
+        store.listCategories(familyId),
+      ]);
+      const benchmark = args.clear === true ? null : cleanBenchmark(
+        {
+          label: args.label,
+          incomeCents: args.incomeCents,
+          expenseCents: args.expenseCents,
+          categories: args.categories,
+        },
+        categories,
+      );
+      await store.saveFinanceSettings({
+        family_id: familyId,
+        currency: "EUR",
+        csv_mappings: [],
+        ...settings,
+        benchmark,
+      });
+      return {
+        result: { benchmark },
+        summary: benchmark ? "Set" : "Removed",
+        change: {
+          kind: "benchmark",
+          summary: PHRASES[lang][benchmark ? "benchmarkSet" : "benchmarkCleared"],
+          undo: [{
+            method: "PATCH",
+            path: "/finance/settings",
+            body: { benchmark: benchmarkOf(settings, categories) },
+          }],
+        },
+      };
     },
   },
 

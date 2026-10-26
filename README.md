@@ -104,6 +104,13 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   spending (or income) per category (top-level categories with their subcategories, which
   unfold to show what is in them) and, for a year or all time, a chart per month, also as a
   table.
+- **Comparison:** the overview sets the chosen period next to others, all **per month**: a month
+  next to the month before; a year's average month (only completed months, from the first one
+  with transactions) next to the year before's; all time's average completed month. Income,
+  expenses, the balance and every top-level category, with how far the period is above or below
+  each of them. A **statistic average** (e.g. the household spending of a statistics office:
+  income, expenses and amounts per category, per month) shows as one more column once it is set
+  up in *Settings* → *Finance* or by the assistant; until then it is hidden.
 - Viewers see the finances read-only; the calendar feed never shows them.
 
 ### AI assistant
@@ -114,9 +121,10 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   the family use the setup (viewers have no chat).
 - It **looks things up** in the calendar and the finances, **changes** them (entries, notes,
   types, categories and how they nest, transactions), **searches the web** (Tavily or Brave, with their own key)
-  and **reads pages**. Every change shows up in the chat with **Undo**; bigger changes (more than
-  31 days, deleting types, categories or transactions) need the user's OK first. *Allow changes*
-  off makes it read-only.
+  and **reads pages**. It can also look up a fitting **statistic average** (e.g. what a family
+  like yours spends per month) and set it for the comparison. Every change shows up in the chat
+  with **Undo**; bigger changes (more than 31 days, deleting types, categories or transactions)
+  need the user's OK first. *Allow changes* off makes it read-only.
 - **Calculations and analytics:** the assistant doesn't add up numbers itself. *Analyze
   transactions* gives exact totals and statistics (count, income, expenses, net, average,
   median, min, max, standard deviation) per month, quarter, year, week, weekday, day, category,
@@ -176,7 +184,9 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   link* replaces it when it got around.
 - **Vacation:** the entry types of each year, and the calendar options of this device.
 - **Finance:** the currency, the accounts (name, color, icon, opening balance), the categories
-  (name, color, icon, income / expense / both) and the remembered bank formats.
+  (name, color, icon, income / expense / both), the statistic average to compare with (source,
+  income, expenses and amounts per top-level category, per month) and the remembered bank
+  formats.
 - **AI assistant:** the model, web search and whether the assistant may change things.
 - **Data:** *Export (JSON)* downloads the whole family (all years, types, entries, notes and
   finances, but not its ids) as a file; *Import from file…* (editors only) replaces all of that

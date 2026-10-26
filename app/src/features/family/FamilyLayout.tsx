@@ -36,6 +36,7 @@ export function FamilyLayout() {
         (kind) => {
           // The assistant changed something: show it right away.
           if (kind === "categories") finance.refreshCategories();
+          else if (kind === "benchmark") finance.loadOverview();
           else if (kind === "transactions") finance.refresh();
           else store.load({ quiet: true });
         },

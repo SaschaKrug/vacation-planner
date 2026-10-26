@@ -21,7 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useFinance, usePlanner } from "@/features/family/context";
-import type { Account, Category, CategoryKind } from "@/lib/api";
+import type { Account, Benchmark, Category, CategoryKind } from "@/lib/api";
 import { nextColor } from "@/lib/core";
 import { getLang, t } from "@/lib/i18n";
 import { centsToInput, formatMoney, parseMoney } from "@/lib/money";
@@ -186,6 +186,7 @@ export function FinanceSection() {
           </div>
         )}
       </SettingsCard>
+      <BenchmarkCard edit={edit} />
       {edit && finance.mappings.length > 0 && (
         <SettingsCard
           title={t("finance.mappings")}
@@ -511,5 +512,157 @@ function AccountRow(
         </>
       )}
     </div>
+  );
+}
+
+/** An amount per month as typed: "" for none. */
+function amountInput(cents: number | null | undefined) {
+  return cents === null || cents === undefined ? "" : centsToInput(cents, getLang());
+}
+
+/**
+ * The statistic average the overview compares with (e.g. a statistics office's household
+ * spending): a source, income and expenses, and amounts for the top-level categories, all per
+ * month. Amounts the assistant set on subcategories stay as they are; a top-level category
+ * without its own shows their sum. Saved with the button; without any amount it is removed.
+ */
+function BenchmarkCard({ edit }: { edit: boolean }) {
+  const finance = useFinance();
+  const lang = getLang();
+  const saved = finance.overview?.benchmark ?? null;
+  const tree = finance.categoryTree;
+  const fromSaved = () => ({
+    label: saved?.label ?? "",
+    income: amountInput(saved?.incomeCents),
+    expense: amountInput(saved?.expenseCents),
+    categories: Object.fromEntries(
+      (saved?.categories ?? []).map((c) => [c.categoryId, amountInput(c.cents)]),
+    ) as Record<string, string>,
+  });
+  const [draft, setDraft] = useState(fromSaved);
+  const [saving, setSaving] = useState(false);
+  const savedKey = JSON.stringify(saved);
+  useEffect(() => setDraft(fromSaved()), [savedKey]);
+
+  const parse = (v: string) => (v.trim() ? parseMoney(v) : null);
+  const invalid = [draft.income, draft.expense, ...Object.values(draft.categories)]
+    .some((v) => v.trim() && (parse(v) === null || parse(v)! < 0));
+  const next: Benchmark = {
+    label: draft.label.trim(),
+    incomeCents: parse(draft.income),
+    expenseCents: parse(draft.expense),
+    categories: Object.entries(draft.categories)
+      .filter(([id, v]) => tree.byId.has(id) && parse(v) !== null)
+      .map(([categoryId, v]) => ({ categoryId, cents: parse(v)! })),
+  };
+  const dirty = JSON.stringify(draft) !== JSON.stringify(fromSaved());
+  const empty = next.incomeCents === null && next.expenseCents === null &&
+    !next.categories.length;
+
+  if (!edit && !saved) return null; // viewers see it only when it is set
+
+  async function save(b: Benchmark | null) {
+    setSaving(true);
+    await finance.setBenchmark(b);
+    setSaving(false);
+  }
+
+  /** What a top-level category without its own amount shows: its subcategories' sum. */
+  const rolledUp = (id: string) => {
+    const sum = [...tree.subtree(id)].reduce((n, k) => {
+      const v = k === id ? null : parse(draft.categories[k] ?? "");
+      return n + (v ?? 0);
+    }, 0);
+    return sum ? centsToInput(sum, lang) : "";
+  };
+
+  const money = (field: "income" | "expense", label: string) => (
+    <label className="grid gap-1 text-sm">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <Input
+        className="w-36 text-right tabular-nums"
+        inputMode="decimal"
+        value={draft[field]}
+        disabled={!edit}
+        onChange={(e) => setDraft({ ...draft, [field]: e.target.value })}
+      />
+    </label>
+  );
+
+  return (
+    <SettingsCard
+      title={t("finance.benchmark")}
+      scope="family"
+      description={t("finance.benchmark_help", { currency: finance.currency })}
+    >
+      <div className="grid gap-3">
+        <label className="grid gap-1 text-sm">
+          <span className="text-xs text-muted-foreground">{t("finance.benchmark_label")}</span>
+          <Input
+            maxLength={120}
+            placeholder={t("finance.benchmark_label_placeholder")}
+            value={draft.label}
+            disabled={!edit}
+            onChange={(e) => setDraft({ ...draft, label: e.target.value })}
+          />
+        </label>
+        <div className="flex flex-wrap gap-3">
+          {money("income", t("finance.benchmark_income"))}
+          {money("expense", t("finance.benchmark_expense"))}
+        </div>
+        {tree.roots.length > 0 && (
+          <details className="text-sm" open={!!saved?.categories.length}>
+            <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
+              {t("finance.benchmark_categories")}
+            </summary>
+            <div className="mt-2 grid gap-1.5">
+              {tree.roots.map(({ category: c }) => (
+                <label key={c.id} className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate">
+                    {c.icon ? `${c.icon} ` : ""}
+                    {c.name}
+                    {c.kind === "income" && (
+                      <span className="ml-1.5 text-xs text-muted-foreground">
+                        {t("finance.income")}
+                      </span>
+                    )}
+                  </span>
+                  <Input
+                    className="w-36 text-right tabular-nums"
+                    inputMode="decimal"
+                    aria-label={c.name}
+                    placeholder={rolledUp(c.id)}
+                    value={draft.categories[c.id] ?? ""}
+                    disabled={!edit}
+                    onChange={(e) =>
+                      setDraft({
+                        ...draft,
+                        categories: { ...draft.categories, [c.id]: e.target.value },
+                      })}
+                  />
+                </label>
+              ))}
+            </div>
+          </details>
+        )}
+        {edit && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              disabled={!dirty || invalid || saving}
+              onClick={() => save(empty ? null : next)}
+            >
+              {t("finance.benchmark_save")}
+            </Button>
+            {saved && (
+              <Button variant="outline" disabled={saving} onClick={() => save(null)}>
+                <Trash2 /> {t("finance.benchmark_remove")}
+              </Button>
+            )}
+            {invalid && <span className="text-xs text-gap">{t("finance.benchmark_invalid")}</span>}
+          </div>
+        )}
+        {edit && <p className="text-xs text-muted-foreground">{t("finance.benchmark_ai_hint")}</p>}
+      </div>
+    </SettingsCard>
   );
 }
