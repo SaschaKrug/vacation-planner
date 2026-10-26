@@ -194,6 +194,30 @@ Deno.test("a chat runs on the server and is kept for every device", async () => 
   assertEquals(replay(all).length, 7);
 });
 
+Deno.test("a chat stays on the page it started on until it is moved", async () => {
+  const t = await setup();
+  const { ev, id } = await start(t, "hello");
+  assertEquals(ev[0].data.page, "vacation");
+  await t.call("POST", `${t.ai}/chats/${id}/messages`, {
+    text: "again",
+    ...CONTEXT,
+    page: "finance",
+  });
+  assertMatch(aiBody.messages[0].content, /This chat belongs to the vacation page/);
+  assertEquals((await state(t, id)).chat.page, "vacation");
+
+  assertEquals(
+    (await t.call("POST", `${t.ai}/chats/${id}/page`, { page: "nowhere" })).status,
+    400,
+  );
+  const moved = await t.call("POST", `${t.ai}/chats/${id}/page`, { page: "finance" });
+  assertEquals(moved.status, 200);
+  assertEquals(moved.data.chat.page, "finance");
+  await t.call("POST", `${t.ai}/chats/${id}/messages`, { text: "and now?", ...CONTEXT });
+  assertMatch(aiBody.messages[0].content, /This chat belongs to the finance page/);
+  assertEquals((await t.call("GET", `${t.ai}/chats`)).data.chats[0].page, "finance");
+});
+
 Deno.test("the turn goes on when the app is closed", async () => {
   const t = await setup();
   assertEquals(
@@ -494,8 +518,8 @@ Deno.test("messages written while the assistant answers wait, then go next", asy
     "assistant",
     "user",
   ]);
-  // A turn goes with where the user was when they wrote its message.
-  assertEquals(t.store.chats.get(id)!.context.page, "finance");
+  // A message written on another page doesn't move the chat: it stays on its page.
+  assertEquals(t.store.chats.get(id)!.context.page, "vacation");
   const ev = (await following).data as Event[];
   assertEquals(ev.at(-1)!.event, "end");
   assertEquals(shown(replay(ev)), shown(s.items));

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Navigate, Outlet, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
-import { ChatStore } from "@/features/chat/store";
+import { ChatStore, pageOf } from "@/features/chat/store";
 import { FinanceStore } from "@/features/finance/store";
 import { PlannerStore } from "@/features/vacation/store";
 import { refreshMe } from "@/features/auth/RequireAuth";
@@ -40,8 +40,7 @@ export function FamilyLayout() {
           else store.load({ quiet: true });
         },
         () => ({
-          page: /\/(finance|settings)/.exec(location.pathname)?.[1] ??
-            "vacation",
+          page: pageOf(location.pathname),
           year: store.year,
         }),
       ),

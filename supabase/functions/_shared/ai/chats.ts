@@ -36,6 +36,7 @@ import {
   DEADLINE_MS,
   type Emit,
   HAND_OFF_MS,
+  PAGES,
   runChat,
   sseResponse,
   windowHistory,
@@ -199,9 +200,18 @@ export function summaryOf(c: ChatRow) {
     status: c.status,
     activity: c.status === "running" ? c.activity : null,
     usage: (c.usage ?? null) as Usage | null,
+    /** The page the chat belongs to (null for a chat from before chats kept one). */
+    page: ((c.context as Partial<ChatContext> | null)?.page ?? null) as string | null,
     queued: queuedOf(c),
     updatedAt: c.updated_at,
   };
+}
+
+/** Where the user is, for a message to `chat`: the chat stays on its page (moving it is a
+ *  request of its own); a chat without one takes the user's. */
+function onPage(chat: ChatRow, context: ChatContext): ChatContext {
+  const page = (chat.context as Partial<ChatContext> | null)?.page;
+  return page ? { ...context, page } : context;
 }
 
 /** The messages that wait, as the chat shows them (attachments by name only). */
@@ -446,11 +456,12 @@ class Runner {
         usage: this.usage,
       }, this.token);
       if (!row) return this.run.abort.abort("lost");
-      const queued = JSON.stringify(queuedOf(this.chat));
+      const seen = (c: ChatRow) => JSON.stringify([queuedOf(c), summaryOf(c).page]);
+      const before = seen(this.chat);
       this.chat = row;
       if (row.stop) this.run.abort.abort("stop");
-      // A message was queued or taken back meanwhile: followers see it.
-      if (JSON.stringify(queuedOf(row)) !== queued) this.publishChat();
+      // A message was queued or taken back, or the chat moved, meanwhile: followers see it.
+      if (seen(row) !== before) this.publishChat();
     });
   }
 
@@ -561,7 +572,7 @@ class Runner {
       await this.write(async () => {
         const after = await this.store.updateChat(
           this.id,
-          { context: { ...q.context }, notes: [] },
+          { context: { ...onPage(row, q.context) }, notes: [] },
           this.token,
         );
         if (!after) return this.run.abort.abort("lost");
@@ -959,6 +970,8 @@ export function handleChats(ctx: Ctx, aiEnv: AiEnv, prepare: Prepare): Promise<R
       return stop(ctx, env, id);
     case "POST :id/undone":
       return undone(ctx, id);
+    case "POST :id/page":
+      return move(ctx, id);
     case "POST :id/resume":
       return resume(ctx, env, id);
   }
@@ -1157,7 +1170,7 @@ async function send(ctx: Ctx, env: Env, id: string | null) {
     chat.notes,
     message,
   );
-  return begin(ctx, env, chat, token, { ...add, context });
+  return begin(ctx, env, chat, token, { ...add, context: onPage(chat, context) });
 }
 
 /** POST /ai/chats/{id}/queue {text, attachments?, page, year, lang, today}: a message written
@@ -1176,7 +1189,7 @@ async function queue(ctx: Ctx, env: Env, id: string) {
     id: crypto.randomUUID(),
     item: message.item as UserItem,
     content: message.content,
-    context: cleanContext(body),
+    context: onPage(chat, cleanContext(body)),
   };
   const row = await store.queueChatMessage(id, entry as unknown as Record<string, unknown>);
   if (!row) throw new HttpError(404, "Chat not found");
@@ -1237,13 +1250,25 @@ async function answer(ctx: Ctx, env: Env, id: string) {
         }),
       }],
       items: [{ seq: shown.indexOf(q), item: { ...q, answer } }],
-      context: cleanContext(body),
+      context: onPage(chat, cleanContext(body)),
     });
   } catch (err) {
     await store.updateChat(id, { status: "idle", run_token: null, run_until: null }, token)
       .catch(() => {});
     throw err;
   }
+}
+
+/** POST /ai/chats/{id}/page {page}: moves the chat to another page; its next turn is about
+ *  that page. Answers with the chat. */
+async function move(ctx: Ctx, id: string) {
+  const body = await readBody(ctx.req);
+  if (!PAGES.includes(body.page as string)) throw new HttpError(400, "Unknown page");
+  const { chat } = await ownChat(ctx, id);
+  const row = await ctx.store.updateChat(id, { context: { ...chat.context, page: body.page } });
+  if (!row) throw new HttpError(404, "Chat not found");
+  runs.get(id)?.refresh();
+  return json({ chat: summaryOf(row) });
 }
 
 /** POST /ai/chats/{id}/stop: the running turn stops after what it is doing; it ends with what

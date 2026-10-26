@@ -9,6 +9,7 @@ import {
   History,
   ImageIcon,
   Loader2,
+  MapPin,
   Paperclip,
   Plus,
   Search,
@@ -21,7 +22,7 @@ import {
   X,
 } from "lucide-react";
 import { type DragEvent, Fragment, useEffect, useRef, useState } from "react";
-import { Link } from "react-router";
+import { Link, useLocation } from "react-router";
 import { toast } from "sonner";
 import { copyText } from "@/components/CopyField";
 import { Button } from "@/components/ui/button";
@@ -47,7 +48,13 @@ import {
   MAX_ATTACHMENTS,
   readAttachment,
 } from "@/features/chat/attachments";
-import { type Item, type ItemAttachment, type QuestionItem, visible } from "@/features/chat/store";
+import {
+  type Item,
+  type ItemAttachment,
+  pageOf,
+  type QuestionItem,
+  visible,
+} from "@/features/chat/store";
 import type { ChatQueued } from "@/lib/api";
 import { toolDetail, toolLabel } from "@/features/chat/tools";
 import { transcript } from "@/features/chat/transcript";
@@ -148,6 +155,8 @@ function ChatView({ onClose }: { onClose: () => void }) {
   const listRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const current = chat.current;
+  // The page the user looks at; the open chat may belong to another one.
+  const here = pageOf(useLocation().pathname);
   /** Copies items of the open chat, with every tool call's arguments and result. */
   const copy = (items: Item[]) => {
     if (current) copyText(transcript(items, (id) => chat.toolResult(current, id)));
@@ -331,6 +340,23 @@ function ChatView({ onClose }: { onClose: () => void }) {
           <X />
         </Button>
       </header>
+      {current?.page && current.page !== here && (
+        <div className="flex shrink-0 items-center gap-2 border-b bg-muted/50 px-3 py-2 text-xs">
+          <MapPin className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1">
+            {t("chat.elsewhere", { page: t(`nav.${current.page}`) })}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 shrink-0 text-xs"
+            disabled={!current.id}
+            onClick={() => chat.moveHere()}
+          >
+            {t("chat.move_here", { page: t(`nav.${here}`) })}
+          </Button>
+        </div>
+      )}
 
       <div
         ref={listRef}
@@ -339,7 +365,9 @@ function ChatView({ onClose }: { onClose: () => void }) {
       >
         {settings && !ready && <SetupHint />}
         {chat.settingsError && <p className="text-gap">{chat.settingsError}</p>}
-        {ready && !current?.items.length && <Suggestions onPick={send} />}
+        {ready && !current?.items.length && (
+          <Suggestions page={current?.page ?? here} onPick={send} />
+        )}
         {current && visible(current.items).map((item, i, items) => {
           // An answer is everything between two messages of the user; once it's complete it
           // gets a copy button.
@@ -350,7 +378,10 @@ function ChatView({ onClose }: { onClose: () => void }) {
           while (complete && start > 0 && items[start - 1].kind !== "user") start--;
           return (
             <Fragment key={i}>
-              <ItemView item={item} onUndo={(id) => chat.undo(current.id, id)} />
+              <ItemView
+                item={item}
+                onUndo={(id) => chat.undo(current.id, id)}
+              />
               {complete && (
                 <Button
                   variant="ghost"
@@ -510,11 +541,18 @@ function SetupHint() {
   );
 }
 
-function Suggestions({ onPick }: { onPick: (text: string) => void }) {
+/** Examples for a new chat, fitting the page it starts on. */
+const EXAMPLES: Record<string, string[]> = {
+  vacation: ["chat.example_gaps", "chat.example_holidays"],
+  finance: ["chat.example_spending", "chat.example_uncategorized"],
+  settings: ["chat.example_types", "chat.example_categories"],
+};
+
+function Suggestions({ page, onPick }: { page: string; onPick: (text: string) => void }) {
   return (
     <div className="space-y-2">
       <p className="text-muted-foreground">{t("chat.intro")}</p>
-      {["chat.example_gaps", "chat.example_holidays", "chat.example_spending"]
+      {(EXAMPLES[page] ?? EXAMPLES.vacation)
         .map((k) => (
           <button
             key={k}

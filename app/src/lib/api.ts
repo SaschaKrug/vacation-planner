@@ -198,6 +198,8 @@ export interface ChatSummary {
   activity: ChatActivity | null;
   /** At its last step (null before the first). */
   usage: ChatUsage | null;
+  /** The page the chat belongs to: its turns are about that page (null for an old chat). */
+  page?: string | null;
   /** Messages waiting for the running turn to end, in order. */
   queued?: ChatQueued[];
   updatedAt: string;
@@ -696,6 +698,9 @@ export const api = {
       onEvent,
       signal,
     ),
+  /** Moves a chat to another page. */
+  moveChat: (token: string, id: string, page: string) =>
+    request<{ chat: ChatSummary }>("POST", `${fam(token)}/ai/chats/${enc(id)}/page`, { page }),
   stopChat: (token: string, id: string) =>
     request<unknown>("POST", `${fam(token)}/ai/chats/${enc(id)}/stop`, {}),
   deleteChat: (token: string, id: string) =>

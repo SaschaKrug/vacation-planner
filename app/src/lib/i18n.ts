@@ -548,6 +548,12 @@ const STRINGS: Record<Lang, Dict> = {
     "chat.example_holidays":
       "Look up next year's public holidays here and add them to the calendar.",
     "chat.example_spending": "How much did we spend on groceries this year, per month?",
+    "chat.example_uncategorized": "Sort our uncategorized transactions into categories.",
+    "chat.example_types":
+      "Set up this year's entry types: day care closed, each parent's vacation and public holidays.",
+    "chat.example_categories": "Suggest categories for our finances and add them.",
+    "chat.elsewhere": "This chat belongs to {page}.",
+    "chat.move_here": "Move to {page}",
     "chat.undone": "Undone",
     "chat.undo_failed": "Couldn't undo: {msg}",
     "chat.tool.web_search": "Searching the web: {q}",
@@ -1301,6 +1307,12 @@ const STRINGS: Record<Lang, Dict> = {
       "Such die Feiertage des nächsten Jahres hier heraus und trag sie in den Kalender ein.",
     "chat.example_spending":
       "Wie viel haben wir dieses Jahr pro Monat für Lebensmittel ausgegeben?",
+    "chat.example_uncategorized": "Ordne unsere Buchungen ohne Kategorie passenden Kategorien zu.",
+    "chat.example_types":
+      "Leg die Arten für dieses Jahr an: Kita geschlossen, Urlaub für jedes Elternteil und Feiertage.",
+    "chat.example_categories": "Schlag Kategorien für unsere Finanzen vor und leg sie an.",
+    "chat.elsewhere": "Dieser Chat gehört zu {page}.",
+    "chat.move_here": "Zu {page} verschieben",
     "chat.undone": "Rückgängig gemacht",
     "chat.undo_failed": "Rückgängig machen fehlgeschlagen: {msg}",
     "chat.tool.web_search": "Sucht im Web: {q}",

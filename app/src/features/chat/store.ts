@@ -80,6 +80,9 @@ export interface Chat {
   rev: number;
   /** How full the model's context is. */
   usage: ChatUsage | null;
+  /** The page the chat belongs to; it stays there until it is moved (null: it takes the page
+   *  of its next message). */
+  page: string | null;
   /** Messages waiting for the running turn to end (ids starting with "local-" are on their
    *  way to the server). */
   queued: ChatQueued[];
@@ -113,6 +116,10 @@ const queuedOf = (chat: ChatSummary, before: ChatQueued[]) => [
   ...(chat.queued ?? []),
   ...before.filter((q) => q.id.startsWith("local-")),
 ];
+
+/** The page of the app a path is on. */
+export const pageOf = (pathname: string) =>
+  /\/(finance|settings)/.exec(pathname)?.[1] ?? "vacation";
 
 /** Items the chat shows: blank answers (left by a step that is tried again) aren't. */
 export const visible = (items: Item[]) =>
@@ -256,6 +263,7 @@ export class ChatStore {
         items: s.items,
         rev: s.rev,
         usage: s.chat.usage ?? null,
+        page: s.chat.page ?? null,
         queued: s.chat.queued ?? [],
       };
       this.summary(s.chat);
@@ -299,7 +307,25 @@ export class ChatStore {
   }
 
   private input(): Omit<ChatInput, "text" | "attachments"> {
-    return { lang: getLang(), today: today(), ...this.context() };
+    const here = this.context();
+    return { lang: getLang(), today: today(), ...here, page: this.current?.page ?? here.page };
+  }
+
+  /** Moves the open chat to the page the user looks at: its next turns are about that page. */
+  async moveHere() {
+    const c = this.current;
+    // A new chat can move once the server named it.
+    if (!c?.page || !c.id) return;
+    const before = c.page;
+    c.page = this.context().page;
+    this.emit();
+    try {
+      this.summary((await api.moveChat(this.token, c.id, c.page)).chat);
+    } catch (err) {
+      c.page = before;
+      toast((err as Error).message);
+    }
+    this.emit();
   }
 
   /** Sends a message; while a turn runs, it waits and goes next (rejects if it couldn't). */
@@ -333,6 +359,7 @@ export class ChatStore {
         items: [],
         rev: 0,
         usage: null,
+        page: input.page,
         queued: [],
       };
     }
@@ -538,6 +565,7 @@ export class ChatStore {
         c.title = e.data.title;
         c.status = e.data.status;
         c.usage = e.data.usage ?? c.usage;
+        c.page = e.data.page ?? c.page;
         c.queued = queuedOf(e.data, c.queued);
         const a = e.data.activity;
         if (!a || e.data.status !== "running") this.activity = null;
