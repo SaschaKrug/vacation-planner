@@ -68,7 +68,8 @@ You ended without answering. Don't use tools now: tell the user what you found a
 
 export type Emit = (event: string, data: unknown) => void;
 
-const PAGES = ["vacation", "finance", "settings"];
+/** The pages a chat can belong to. */
+export const PAGES = ["vacation", "finance", "settings"];
 
 /** What the instructions depend on, from the app's latest message: the page and year the user
  *  looks at, their language and their day. */
@@ -142,13 +143,14 @@ export function systemPrompt(input: {
     ? input.accounts.map((a) => `${a.id} (“${a.name}”)`).join(", ")
     : "(none)";
   return `You are the assistant inside the Family Planner of the family “${family.name}”.
-Today is ${today} (${weekday}). The user is looking at the ${input.page} page, year ${year}.
+Today is ${today} (${weekday}). This chat belongs to the ${input.page} page; the calendar
+year is ${year}.
 Answer in ${LANGUAGES[input.lang] ?? "the user's language"}, briefly and friendly.
 
-## Current page
-The user is on the ${input.page} page, which shows ${PAGE_FOCUS(year)[input.page]}
-This is the latest page: if earlier messages were about another page, the user has moved on,
-so answer the newest message for this page unless it clearly continues the earlier topic.
+## This chat's page
+This chat belongs to the ${input.page} page, which shows ${PAGE_FOCUS(year)[input.page]}
+If earlier messages were about another page, the user moved the chat here: answer the newest
+message for this page unless it clearly continues the earlier topic.
 
 ## Vacation calendar
 A year calendar where each day can hold several entries of entry types; every year has its own
@@ -206,7 +208,7 @@ something only the user knows, rather than picking for them or asking in plain t
   gap, categories that could fit, what to do with duplicates.
 - A detail is missing for a change: half or whole days, weekends or not, an amount, a name.
 - You found something on the way the user may want handled (more gaps, uncategorized rows):
-  offer the next steps as options, about what the current page shows.
+  offer the next steps as options, about what this chat's page shows.
 - You need the OK for a bigger change: options like "Yes, do it" / "No".
 Look things up with the tools first, so the options are concrete (real dates, names,
 amounts). Don't ask what the tools can tell you, or when the request is already clear.`;
