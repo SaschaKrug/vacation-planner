@@ -15,7 +15,8 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
 - **Sign in** with a **passkey** (fingerprint, face or device PIN) or with your email and a
   **password**. You see the families you are a member of: as **editor** (change everything,
   add people) or **viewer** (only look). Only the calendar feed works without signing in (see
-  [Links](#links)). Old links (`/f/<id>`, `/?s=<id>`) still open the family, after signing in.
+  [Links](#links)). The app's addresses start with `/#/` (`/#/f/<id>/vacation`); old links
+  (`/f/<id>`, `/?s=<id>`) still open the family, after signing in.
 
 ### Accounts & administration
 
@@ -404,7 +405,7 @@ Only one link works without signing in: the **calendar feed**, as calendar apps 
 | Legacy id | `legacyId` | Only `calendar.ics`, without a token. Only planners from before families have one: their old view id, so calendar subscriptions made back then keep working |
 
 The family's old edit and view links stopped granting access with accounts: `/f/<id>` still
-opens the family in the app, for its members. Calendar subscriptions made with the edit id (from
+opens the family in the app (as `/#/f/<id>`), for its members. Calendar subscriptions made with the edit id (from
 before the feed id) need to be made again with the feed link.
 
 ### Account and administration
@@ -417,7 +418,7 @@ a session.
 | --- | --- |
 | `POST /auth/login` | `{"email", "password"}` |
 | `POST /auth/passkey/start` → `/auth/passkey/finish` | Passkey sign-in: options for `navigator.credentials.get`, then `{"challengeId", "response"}` |
-| `POST /auth/setup` | `{"token"}` from a setup link (`/setup/<token>`); works once |
+| `POST /auth/setup` | `{"token"}` from a setup link (`/#/setup/<token>`); works once |
 | `GET /auth/me` | `{"user": {"id", "email", "name", "isAdmin", "mustChangePassword", "hasPassword", "passkeys"}, "families": [{"id", "name", "role"}]}` |
 | `PATCH /auth/me` | `{"name", "email"}` |
 | `PUT /auth/password` | `{"password", "current"}` (`current` isn't needed without a password, or after a setup link); signs out the other sessions |

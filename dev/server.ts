@@ -286,7 +286,7 @@ function listFamilies() {
     args["mock-ai"] && "mock AI at /mock-ai/v1",
   ].filter(Boolean);
   console.log(`Family Planner on ${origin}${flags.length ? ` (${flags.join(", ")})` : ""}`);
-  for (const f of store.families.values()) console.log(`  ${f.name}: ${origin}/f/${f.id}`);
+  for (const f of store.families.values()) console.log(`  ${f.name}: ${origin}/#/f/${f.id}`);
   const admin = [...store.users.values()].find((u) => u.email === ADMIN_EMAIL);
   if (admin?.must_change_password) {
     console.log(`Sign in as "${ADMIN_EMAIL}" with the password "admin" (to be changed then).`);

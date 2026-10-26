@@ -48,7 +48,7 @@ function failed(err: unknown) {
 }
 
 function setupUrl(token: string) {
-  return `${location.origin}/setup/${token}`;
+  return `${location.origin}/#/setup/${token}`;
 }
 
 function roleLabel(role: MemberRole) {
