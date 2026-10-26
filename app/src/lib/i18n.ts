@@ -475,11 +475,34 @@ const STRINGS: Record<Lang, Dict> = {
     "finance.combine_n": ({ n }) => `Combine ${n}`,
     "finance.auto_combine": "Auto-combine",
     "finance.auto_combine_help":
-      "Combine every likely transfer between your accounts in this period, without a review",
-    "finance.no_transfers_found": "No transfers found",
-    "finance.import_auto_transfers": "Combine transfers between accounts automatically",
+      "Combine every likely transfer between your accounts and every split booking with its items in this period, without a review",
+    "finance.no_transfers_found": "No transfers or split bookings found",
+    "finance.auto_combined": ({ n, splits }) =>
+      [
+        Number(n) ? `${n} ${s(n, "transfer", "transfers")}` : "",
+        Number(splits) ? `${splits} ${s(splits, "split booking", "split bookings")}` : "",
+      ].filter(Boolean).join(" and ") + " combined",
+    "finance.import_auto_transfers":
+      "Combine transfers between accounts and split bookings automatically",
     "finance.import_transfers": ({ n }) => `${n} ${s(n, "transfer", "transfers")} will be combined`,
+    "finance.import_splits": ({ n }) =>
+      `${n} ${s(n, "split booking", "split bookings")} will be combined`,
     "finance.imported_transfers": ({ n }) => ` · ${n} ${s(n, "transfer", "transfers")} combined`,
+    "finance.imported_splits": ({ n }) =>
+      ` · ${n} ${s(n, "split booking", "split bookings")} combined`,
+    // Split bookings
+    "finance.split": "Split booking",
+    "finance.split_part_of": "Part of {name}",
+    "finance.split_part": "Part of a split booking",
+    "finance.split_into": ({ n }) => `Split into ${n} ${s(n, "part", "parts")}`,
+    "finance.split_remainder": "rest {amount}",
+    "finance.split_amount_hint":
+      "Split booking: it counts only through its parts, plus what they leave of it",
+    "finance.split_help":
+      "The ticked row with the largest amount becomes the booking, the others its parts: each part counts in its own category, the booking only with what is left",
+    "finance.split_done": "Combined as a split booking",
+    "finance.unsplit": "Undo the split",
+    "finance.unsplit_done": "Split undone",
     "finance.import_categorize":
       "Sort the new transactions into categories (like similar ones, the rest with AI)",
     "finance.import_categorize_similar":
@@ -1034,13 +1057,35 @@ const STRINGS: Record<Lang, Dict> = {
     "finance.combine_n": ({ n }) => `${n} zusammenfassen`,
     "finance.auto_combine": "Automatisch zusammenfassen",
     "finance.auto_combine_help":
-      "Alle wahrscheinlichen Umbuchungen zwischen euren Konten in diesem Zeitraum zusammenfassen, ohne Prüfung",
-    "finance.no_transfers_found": "Keine Umbuchungen gefunden",
-    "finance.import_auto_transfers": "Umbuchungen automatisch zusammenfassen",
+      "Alle wahrscheinlichen Umbuchungen zwischen euren Konten und alle Aufteilungen mit ihren Posten in diesem Zeitraum zusammenfassen, ohne Prüfung",
+    "finance.no_transfers_found": "Keine Umbuchungen oder Aufteilungen gefunden",
+    "finance.auto_combined": ({ n, splits }) =>
+      [
+        Number(n) ? `${n} ${s(n, "Umbuchung", "Umbuchungen")}` : "",
+        Number(splits) ? `${splits} ${s(splits, "Aufteilung", "Aufteilungen")}` : "",
+      ].filter(Boolean).join(" und ") + " zusammengefasst",
+    "finance.import_auto_transfers": "Umbuchungen und Aufteilungen automatisch zusammenfassen",
     "finance.import_transfers": ({ n }) =>
       `${n} ${s(n, "Umbuchung wird", "Umbuchungen werden")} zusammengefasst`,
+    "finance.import_splits": ({ n }) =>
+      `${n} ${s(n, "Aufteilung wird", "Aufteilungen werden")} zusammengefasst`,
     "finance.imported_transfers": ({ n }) =>
       ` · ${n} ${s(n, "Umbuchung", "Umbuchungen")} zusammengefasst`,
+    "finance.imported_splits": ({ n }) =>
+      ` · ${n} ${s(n, "Aufteilung", "Aufteilungen")} zusammengefasst`,
+    // Aufteilungen
+    "finance.split": "Als Aufteilung zusammenfassen",
+    "finance.split_part_of": "Teil von {name}",
+    "finance.split_part": "Teil einer Aufteilung",
+    "finance.split_into": ({ n }) => `Aufgeteilt in ${n} ${s(n, "Teil", "Teile")}`,
+    "finance.split_remainder": "Rest {amount}",
+    "finance.split_amount_hint":
+      "Aufgeteilte Buchung: sie zählt nur über ihre Teile, plus was diese von ihr übrig lassen",
+    "finance.split_help":
+      "Die ausgewählte Zeile mit dem größten Betrag wird zur Buchung, die anderen zu ihren Teilen: jeder Teil zählt in seiner eigenen Kategorie, die Buchung nur mit dem Rest",
+    "finance.split_done": "Als Aufteilung zusammengefasst",
+    "finance.unsplit": "Aufteilung aufheben",
+    "finance.unsplit_done": "Aufteilung aufgehoben",
     "finance.import_categorize":
       "Die neuen Buchungen in Kategorien einsortieren (wie ähnliche, den Rest mit KI)",
     "finance.import_categorize_similar":

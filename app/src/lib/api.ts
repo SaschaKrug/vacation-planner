@@ -61,6 +61,12 @@ export interface Transaction {
   accountId: string | null;
   /** Set on the legs of a transfer (≥ 2 transactions that count once, as their sum). */
   transferId: string | null;
+  /** Set on a part of a split booking: the booking's id. A part counts with its own category
+   *  (and not toward its account's balance). */
+  splitOf: string | null;
+  /** Set on a booking that has parts: how many, and what the booking itself still counts (its
+   *  amount minus the parts' sum, often 0). */
+  split: { parts: number; remainderCents: number } | null;
   note: string;
   imported: boolean;
 }
@@ -101,7 +107,7 @@ export interface FinanceSummary {
 
 /** An op for POST /finance/transactions; the response's `inverse` ops undo a request. */
 export type TransactionOp = Record<string, unknown> & {
-  action: "add" | "update" | "delete" | "link" | "unlink";
+  action: "add" | "update" | "delete" | "link" | "unlink" | "split" | "unsplit";
 };
 
 export interface TransactionResult {
@@ -299,7 +305,13 @@ export const api = {
     accountId?: string,
     autoTransfers = false,
   ) =>
-    request<{ added: number; duplicates: number[]; ids: string[]; transfers?: number }>(
+    request<{
+      added: number;
+      duplicates: number[];
+      ids: string[];
+      transfers?: number;
+      splits?: number;
+    }>(
       "POST",
       `${fam(token)}/finance/import`,
       {
@@ -314,9 +326,10 @@ export const api = {
       "GET",
       `${fam(token)}/finance/transfers/suggestions?${new URLSearchParams(query)}`,
     ),
-  /** Combines every likely transfer in the range (all time without one) into its own group. */
+  /** Gives the split bookings in the range (all time without one) their parts, then combines
+   *  every likely transfer into its own group. */
   autoTransfers: (token: string, range: { from?: string; to?: string }) =>
-    request<TransactionResult & { linked: number }>(
+    request<TransactionResult & { linked: number; splits: number }>(
       "POST",
       `${fam(token)}/finance/transfers/auto`,
       range,

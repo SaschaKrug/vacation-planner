@@ -1663,6 +1663,7 @@ Deno.test("auto-combines transfers, and the inverse splits them again", async ()
     added: [],
     inverse: [],
     linked: 0,
+    splits: 0,
   });
 });
 
@@ -1833,4 +1834,220 @@ Deno.test("the AI tools know accounts and transfers", async () => {
   const unlinked = await run("change_transactions", { ops: [{ action: "unlink", id: a }] });
   assertEquals((unlinked.result as any).changed, 2);
   assertEquals((await run("list_transactions", { kind: "transfer" }) as any).result.total, 0);
+});
+
+Deno.test("split bookings count their parts once and match the statement", async () => {
+  const { call, f, add, ops, list } = await accountsFamily();
+  // The statement says -24.98; the bank also lists the order line.
+  const [booking, line, coffee] = await add(
+    {
+      date: "2026-12-24",
+      amountCents: -2498,
+      payee: "Amazon",
+      description: "Splitbuchung",
+      accountId: "checking",
+      categoryId: "shopping",
+    },
+    {
+      date: "2026-12-24",
+      amountCents: -2199,
+      payee: "Amazon",
+      description: "Bestellnr. 1",
+      accountId: "checking",
+      categoryId: "kids",
+    },
+    { date: "2026-12-24", amountCents: -350, payee: "Café", accountId: "checking" },
+  );
+  assertEquals((await list()).expenseCents, 2498 + 2199 + 350);
+  const split = await ops({ action: "split", id: booking, ids: [line] });
+  assertEquals(split.changed, 1);
+  let all = await list();
+  assertEquals(all.expenseCents, 2498 + 350);
+  const byId = (id: string) => all.transactions.find((t: any) => t.id === id);
+  assertEquals(byId(line).splitOf, booking);
+  assertEquals(byId(booking).split, { parts: 1, remainderCents: -299 });
+  assertEquals([byId(coffee).splitOf, byId(coffee).split], [null, null]);
+  // Categories: the order line by its own, the booking keeps the shipping.
+  const summary = (await call("GET", `${f}/summary?from=2026-12-01&to=2026-12-31`)).data;
+  const cat = (id: string) => summary.categories.find((c: any) => c.categoryId === id);
+  assertEquals([cat("kids").expenseCents, cat("shopping").expenseCents], [2199, 299]);
+  assertEquals(summary.expenseCents, 2498 + 350);
+  // The balance counts the booking only, like the statement.
+  assertEquals((await call("GET", f)).data.accounts[0].balanceCents, 1000 - 2498 - 350);
+  // A category filter sees just its part.
+  assertEquals((await list("category=kids")).expenseCents, 2199);
+  // The parts add up to the booking: it counts nothing on its own.
+  await ops({ action: "update", id: line, amountCents: -2498 });
+  assertEquals(
+    (await list("kind=expense")).transactions.map((t: any) => t.id).sort(),
+    [
+      line,
+      coffee,
+    ].sort(),
+  );
+  await ops({ action: "update", id: line, amountCents: -2199 });
+
+  // Neither can be a transfer leg.
+  const status = async (body: unknown) => (await call("POST", `${f}/transactions`, body)).status;
+  assertEquals(await status({ action: "link", ids: [line, coffee] }), 400);
+  assertEquals(await status({ action: "link", ids: [booking, coffee] }), 400);
+  assertEquals(await status({ action: "split", id: line, ids: [coffee] }), 400);
+  assertEquals(await status({ action: "split", id: coffee, ids: [booking] }), 400);
+  assertEquals(await status({ action: "split", id: booking, ids: [booking] }), 400);
+  assertEquals(await status({ action: "split", id: booking, ids: [] }), 400);
+  assertEquals(await status({ action: "split", ids: [coffee] }), 400);
+  assertEquals(await status({ action: "split", id: booking, ids: [crypto.randomUUID()] }), 404);
+  assertEquals(await status({ action: "update", id: coffee, splitOf: "nope" }), 400);
+
+  // Deleting the booking frees its parts; undo makes them parts again.
+  const deleted = await ops({ action: "delete", ids: [booking] });
+  assertEquals((await list()).transactions.find((t: any) => t.id === line).splitOf, null);
+  await ops(...deleted.inverse);
+  all = await list();
+  assertEquals(byId(line).splitOf, booking);
+  assertEquals(all.expenseCents, 2498 + 350);
+
+  // Unsplitting the booking frees all of its parts; the inverse splits again.
+  const unsplit = await ops({ action: "unsplit", id: booking });
+  assertEquals(unsplit.changed, 1);
+  assertEquals((await list()).expenseCents, 2498 + 2199 + 350);
+  await ops(...unsplit.inverse);
+  assertEquals((await list()).expenseCents, 2498 + 350);
+  // The inverse of the split puts it back the way it was.
+  await ops(...split.inverse);
+  assertEquals((await list()).transactions.every((t: any) => t.splitOf === null), true);
+
+  // A transfer leg that becomes a part leaves its transfer.
+  const [other] = await add({ date: "2026-12-24", amountCents: 2199, accountId: "savings" });
+  await ops({ action: "link", ids: [line, other] });
+  await ops({ action: "split", id: booking, ids: [line] });
+  assertEquals((await list("kind=transfer")).total, 0);
+});
+
+Deno.test("auto-combine finds split bookings before transfers", async () => {
+  const { call, f, add, ops, list } = await accountsFamily();
+  const amazon = (date: string, amountCents: number, description: string) => ({
+    date,
+    amountCents,
+    payee: "AMAZON PAYMENTS EUROPE",
+    description,
+    accountId: "checking",
+  });
+  // December from the statement: three days with split bookings and their order lines.
+  const ids = await add(
+    amazon("2026-12-17", -355, "Splitbuchung"),
+    amazon("2026-12-17", -6491, "Splitbuchung"),
+    amazon("2026-12-17", -395, "Bestellnr. 1"),
+    amazon("2026-12-17", 40, "Bestellnr. 1 Gutschein"),
+    amazon("2026-12-17", -6491, "Bestellnr. 2 CASO"),
+    amazon("2026-12-24", -2498, "Splitbuchung"),
+    amazon("2026-12-24", -2199, "Bestellnr. 3 Geschenkbox"),
+    amazon("2026-12-30", -2495, "Splitbuchung"),
+    amazon("2026-12-30", -466, "Bestellnr. 4"),
+    amazon("2026-12-30", -2495, "Bestellnr. 5 Ginkgo"),
+    amazon("2026-12-30", 499, "Bestellnr. 6 Gutschein"),
+    // Not an order line: another shop on the same day.
+    { date: "2026-12-30", amountCents: -1234, payee: "Supermarket", accountId: "checking" },
+    // A card payment that looks like the other leg of the voucher.
+    { date: "2026-12-29", amountCents: -499, payee: "Amazon", accountId: "savings" },
+    // A real transfer.
+    { date: "2026-12-31", amountCents: -12000, payee: "Visa", accountId: "checking" },
+    { date: "2026-12-31", amountCents: 12000, payee: "Payment", accountId: "savings" },
+  );
+  const statement = 355 + 6491 + 2498 + 2495 + 1234 + 499;
+  const res = await call("POST", `${f}/transfers/auto`, {});
+  assertEquals([res.data.splits, res.data.linked, res.data.changed], [4, 1, 9]);
+  // Vouchers among the order lines count as income, like any refund: the net is the statement's.
+  let all = await list();
+  assertEquals([all.incomeCents, all.expenseCents - all.incomeCents], [40 + 499, statement]);
+  const splitOf = (i: number) => all.transactions.find((t: any) => t.id === ids[i]).splitOf;
+  assertEquals([2, 3, 4].map(splitOf), [ids[0], ids[0], ids[1]]);
+  assertEquals(splitOf(6), ids[5]);
+  assertEquals([8, 9, 10].map(splitOf), [ids[7], ids[7], ids[7]]);
+  assertEquals([splitOf(11), splitOf(12)], [null, null]);
+  assertEquals((await list("kind=transfer")).total, 2);
+  // Running it again finds nothing; the inverse undoes all of it.
+  assertEquals((await call("POST", `${f}/transfers/auto`, {})).data.changed, 0);
+  await ops(...res.data.inverse);
+  all = await list();
+  assertEquals(all.transactions.every((t: any) => !t.splitOf && !t.transferId), true);
+});
+
+Deno.test("an import combines split bookings before transfers", async () => {
+  const { call, f, add, list } = await accountsFamily();
+  await add({ date: "2026-12-29", amountCents: -499, payee: "Amazon", accountId: "savings" });
+  const rows = [
+    { date: "2026-12-30", amountCents: -2495, payee: "Amazon", description: "Splitbuchung" },
+    { date: "2026-12-30", amountCents: -2994, payee: "Amazon", description: "Bestellnr. 1" },
+    { date: "2026-12-30", amountCents: 499, payee: "Amazon", description: "Bestellnr. 2" },
+  ];
+  const body = { rows, accountId: "checking", autoTransfers: true };
+  const dry = await call("POST", `${f}/import`, { ...body, dryRun: true });
+  assertEquals([dry.data.splits, dry.data.transfers], [1, 0]);
+  const res = await call("POST", `${f}/import`, body);
+  assertEquals([res.data.added, res.data.splits, res.data.transfers], [3, 1, 0]);
+  const all = await list();
+  assertEquals(all.expenseCents - all.incomeCents, 2495 + 499);
+  assertEquals(all.transactions.filter((t: any) => t.splitOf === res.data.ids[0]).length, 2);
+  // Without the flag nothing is combined.
+  const plain = await call("POST", `${f}/import`, { rows, accountId: "savings" });
+  assertEquals(plain.data.splits, 0);
+});
+
+Deno.test("exports, imports and clones split bookings", async () => {
+  const { call, s, add, ops } = await accountsFamily();
+  const [booking, line] = await add(
+    { date: "2026-03-01", amountCents: -500, payee: "Amazon", accountId: "checking" },
+    { date: "2026-03-01", amountCents: -400, payee: "Amazon", accountId: "checking" },
+  );
+  await ops({ action: "split", id: booking, ids: [line] });
+  const file = (await call("GET", `/families/${s.id}/export`)).data;
+  assertEquals(file.finance.transactions.find((t: any) => t.id === line).splitOf, booking);
+
+  const target = (await call("POST", "/families", {})).data.family;
+  const t = `/families/${target.id}/finance`;
+  assertEquals((await call("POST", `/families/${target.id}/import`, file)).status, 200);
+  assertEquals((await call("GET", `${t}/transactions`)).data.expenseCents, 500);
+  // A part whose booking isn't in the file becomes a normal transaction.
+  const orphan = {
+    ...file,
+    finance: {
+      ...file.finance,
+      transactions: file.finance.transactions.filter((x: any) => x.id !== booking),
+    },
+  };
+  assertEquals((await call("POST", `/families/${target.id}/import`, orphan)).status, 200);
+  assertEquals((await call("GET", `${t}/transactions`)).data.transactions[0].splitOf, null);
+
+  // Clones point their parts at the copied booking.
+  const copy = (await call("POST", `/families/${s.readId}/clone`, {})).data.family;
+  const rows = (await call("GET", `/families/${copy.id}/finance/transactions`)).data;
+  assertEquals(rows.expenseCents, 500);
+  const part = rows.transactions.find((x: any) => x.splitOf);
+  assert(rows.transactions.some((x: any) => x.id === part.splitOf && x.id !== booking));
+});
+
+Deno.test("the AI tools know split bookings", async () => {
+  const { store, s, add, ops } = await accountsFamily();
+  const [booking] = await add(
+    { date: "2026-03-01", amountCents: -500, payee: "Amazon", description: "Splitbuchung" },
+    { date: "2026-03-01", amountCents: -500, payee: "Amazon", description: "Bestellnr. 1" },
+    { date: "2026-03-02", amountCents: -700, accountId: "checking" },
+    { date: "2026-03-02", amountCents: 700, accountId: "savings" },
+  );
+  const ctx = { lang: "de" as const, store, familyId: s.id, net: {} as any, search: null };
+  const allowed = new Set(Object.keys(TOOLS));
+  const run = async (name: string, args: unknown) =>
+    await runTool(name, JSON.stringify(args), ctx, allowed);
+  const combined = await run("combine_transfers", {});
+  assertEquals((combined.result as any).splits, 1);
+  assertEquals(combined.change?.summary, "1 Umbuchung und 1 Aufteilung zusammengefasst");
+  const listed = await run("list_transactions", {});
+  assertEquals((listed.result as any).expenseCents, 500);
+  assertEquals(
+    (listed.result as any).transactions.find((t: any) => t.id === booking).split,
+    { parts: 1, remainderCents: 0 },
+  );
+  await ops(...(combined.change!.undo[0].body as any).ops);
+  assertEquals(((await run("list_transactions", {})).result as any).expenseCents, 1700);
 });

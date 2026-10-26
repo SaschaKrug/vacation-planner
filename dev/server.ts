@@ -187,11 +187,20 @@ async function seed() {
       },
     );
   }
-  ops.push({
-    date: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-02`,
-    amountCents: -2350,
-    payee: "Bakery",
-  });
+  // A split booking with its order lines, as banks export it ("Combine automatically" makes
+  // them its parts).
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  ops.push(
+    { date: `${today}-02`, amountCents: -2350, payee: "Bakery" },
+    { date: `${today}-01`, amountCents: -2498, payee: "Amazon", description: "Splitbuchung" },
+    {
+      date: `${today}-01`,
+      amountCents: -2199,
+      payee: "Amazon",
+      description: "Bestellnr. 302-1234567 Gift box",
+      categoryId: "kids",
+    },
+  );
   await call("POST", `${s}/finance/transactions`, {
     ops: ops.filter((o) => (o.date as string) <= new Date().toISOString().slice(0, 10))
       .map((o) => ({ accountId: "checking", ...o })),

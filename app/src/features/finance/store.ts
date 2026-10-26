@@ -52,7 +52,7 @@ export class FinanceStore {
   period: Period;
   filter: Filter = { q: "", category: "", account: "", kind: "" };
   limit = PAGE;
-  /** Transactions ticked in the list, to combine them into a transfer. */
+  /** Transactions ticked in the list, to combine them into a transfer or a split booking. */
   selected = new Set<string>();
   rev = 0;
   /** How far the AI is with sorting transactions into categories (null when idle). */
@@ -299,16 +299,17 @@ export class FinanceStore {
     return this.change([{ action: "unlink", id }], t("finance.unlinked"));
   }
 
-  /** Combines every likely transfer of the period at once; the toast can undo it. */
+  /** Gives every split booking of the period its parts and combines every likely transfer, at
+   *  once; the toast can undo it. */
   async autoCombineTransfers() {
     try {
       const res = await api.autoTransfers(this.token, this.range());
-      if (!res.linked) {
+      if (!res.linked && !res.splits) {
         toast(t("finance.no_transfers_found"));
         return res;
       }
       this.changed();
-      toast(t("finance.linked_pairs", { n: res.linked }), {
+      toast(t("finance.auto_combined", { n: res.linked, splits: res.splits }), {
         action: {
           label: t("finance.undo"),
           onClick: () => this.undo(res.inverse),
@@ -319,6 +320,24 @@ export class FinanceStore {
       toast(t("finance.save_failed", { msg: (err as Error).message }));
       return null;
     }
+  }
+
+  // ------------------------------------------------------------- split bookings
+
+  /** Makes transactions parts of a booking (e.g. the items of an order paid at once): each part
+   *  counts with its own category, the booking only with what the parts leave of it. */
+  async split(bookingId: string, partIds: string[]) {
+    const ok = await this.change(
+      [{ action: "split", id: bookingId, ids: partIds }],
+      t("finance.split_done"),
+    );
+    if (ok) this.clearSelection();
+    return ok;
+  }
+
+  /** Makes a part a normal transaction again, or all parts of a booking. */
+  unsplit(id: string) {
+    return this.change([{ action: "unsplit", ids: [id] }], t("finance.unsplit_done"));
   }
 
   /** Transactions of the period that look like transfers between two accounts. */
@@ -340,7 +359,8 @@ export class FinanceStore {
     if (res.ids.length) {
       const imported = t("finance.imported", { n: res.added, skipped: res.duplicates.length });
       const linked = res.transfers ? t("finance.imported_transfers", { n: res.transfers }) : "";
-      toast(imported + linked, {
+      const splits = res.splits ? t("finance.imported_splits", { n: res.splits }) : "";
+      toast(imported + linked + splits, {
         action: {
           label: t("finance.undo"),
           onClick: () => this.undo([{ action: "delete", ids: res.ids }]),

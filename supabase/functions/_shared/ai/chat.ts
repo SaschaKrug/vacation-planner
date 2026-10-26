@@ -93,6 +93,10 @@ going out (-4599 = −45.99). Categories: ${cats}. Accounts: ${accounts}.
 Transactions on different accounts that are one transfer between the family's own accounts
 (500 out of checking, 500 into savings) are linked as a transfer (same transferId); totals count
 a transfer once by its net, so moving money between accounts counts nothing.
+Banks often list the order lines of a split booking (an Amazon "Splitbuchung", say) next to the
+booking itself. Don't delete either: make the order lines parts of the booking (the "split" op
+of change_transactions, or combine_transfers, which finds them too). Totals then count the parts
+with their categories plus what is left of the booking, and still match the statement.
 
 ## How to work
 - Use the tools to look things up; don't guess what's in the calendar or the finances.

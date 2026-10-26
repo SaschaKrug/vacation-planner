@@ -5,16 +5,15 @@
 import { dateRange, isValidDate, isWeekend } from "../dates.ts";
 import {
   applyTransactionOps,
+  autoCombine,
   changedCategory,
   financeSummary,
   findCategory,
   findTransactions,
-  linkTransferPairs,
   listAccounts,
   newCategory,
   publicCategory,
   publicTransaction,
-  transferPairs,
 } from "../finance.ts";
 import { cleanName, HttpError, objectOf, slug } from "../http.ts";
 import type { SearchProvider, Store, TypeRow } from "../store.ts";
@@ -79,7 +78,11 @@ const PHRASES = {
     categoryAdded: (name: string) => `Added the category “${name}”`,
     categoryChanged: (name: string) => `Changed the category “${name}”`,
     transactions: (n: number) => `${n} ${n === 1 ? "transaction" : "transactions"} changed`,
-    transfers: (n: number) => `${n} ${n === 1 ? "transfer" : "transfers"} combined`,
+    combined: (transfers: number, splits: number) =>
+      [
+        transfers && `${transfers} ${transfers === 1 ? "transfer" : "transfers"}`,
+        splits && `${splits} ${splits === 1 ? "split booking" : "split bookings"}`,
+      ].filter(Boolean).join(" and ") + " combined",
   },
   de: {
     days: (n: number) => `${n} ${n === 1 ? "Tag" : "Tage"} geändert`,
@@ -91,7 +94,11 @@ const PHRASES = {
     categoryAdded: (name: string) => `Kategorie „${name}“ hinzugefügt`,
     categoryChanged: (name: string) => `Kategorie „${name}“ geändert`,
     transactions: (n: number) => `${n} ${n === 1 ? "Buchung" : "Buchungen"} geändert`,
-    transfers: (n: number) => `${n} ${n === 1 ? "Umbuchung" : "Umbuchungen"} zusammengefasst`,
+    combined: (transfers: number, splits: number) =>
+      [
+        transfers && `${transfers} ${transfers === 1 ? "Umbuchung" : "Umbuchungen"}`,
+        splits && `${splits} ${splits === 1 ? "Aufteilung" : "Aufteilungen"}`,
+      ].filter(Boolean).join(" und ") + " zusammengefasst",
   },
 };
 
@@ -425,7 +432,7 @@ export const TOOLS: Record<string, Tool> = {
     spec: {
       name: "list_transactions",
       description:
-        'Lists transactions (newest first) with totals. Amounts are integer cents, negative = money out. Legs of a transfer between the family\'s accounts share a transferId; totals count a transfer once by its net (500 moved between two accounts counts 0). Filters: from/to (YYYY-MM-DD), account (id, name or "none"), category (id, name or "none"), kind (income | expense | transfer: legs of transfers), q (text in payee, description, note).',
+        'Lists transactions (newest first) with totals. Amounts are integer cents, negative = money out. Legs of a transfer between the family\'s accounts share a transferId; totals count a transfer once by its net (500 moved between two accounts counts 0). A part of a split booking (e.g. an order line of an Amazon "Splitbuchung") has splitOf = its booking\'s id; a booking with parts has split = {parts, remainderCents}: totals count the parts plus that remainder, so they match the bank statement. Filters: from/to (YYYY-MM-DD), account (id, name or "none"), category (id, name or "none"), kind (income | expense | transfer: legs of transfers), q (text in payee, description, note).',
       parameters: {
         type: "object",
         properties: {
@@ -444,7 +451,7 @@ export const TOOLS: Record<string, Tool> = {
       for (const k of ["from", "to", "account", "category", "kind", "q"]) {
         if (typeof args[k] === "string" && args[k]) query.set(k, args[k] as string);
       }
-      const { rows, groups, incomeCents, expenseCents } = await findTransactions(
+      const { rows, groups, splits, incomeCents, expenseCents } = await findTransactions(
         store,
         familyId,
         query,
@@ -455,7 +462,7 @@ export const TOOLS: Record<string, Tool> = {
           total: rows.length,
           incomeCents,
           expenseCents,
-          transactions: rows.slice(0, limit).map((t) => publicTransaction(t, groups)),
+          transactions: rows.slice(0, limit).map((t) => publicTransaction(t, groups, splits)),
         },
         summary: `${rows.length} transactions`,
       };
@@ -466,7 +473,7 @@ export const TOOLS: Record<string, Tool> = {
     spec: {
       name: "finance_summary",
       description:
-        "Income and expenses (integer cents) per month and per category between two days (a transfer between the family's accounts counts once by its net), plus the currency, the categories and the accounts with their current balances.",
+        "Income and expenses (integer cents) per month and per category between two days (a transfer between the family's accounts counts once by its net, a split booking by its parts), plus the currency, the categories and the accounts with their current balances.",
       parameters: {
         type: "object",
         properties: { from: { type: "string" }, to: { type: "string" } },
@@ -567,11 +574,14 @@ export const TOOLS: Record<string, Tool> = {
     spec: {
       name: "change_transactions",
       description:
-        'Adds, changes, deletes, links or unlinks transactions. Ops: {"action": "add", "date", "amountCents" (integer, negative = money out), "payee", "description", "categoryId" (id or name), "accountId" (id or name), "note"}, {"action": "update", "id", ...fields}, {"action": "delete", "ids": [...]}, {"action": "link", "ids": [at least 2]}: the transactions become the legs of one transfer between the family\'s accounts (e.g. 500 out of checking and 500 into savings), counted once by their net, {"action": "unlink", "ids": [...]}: dissolves the transfers these transactions belong to.',
+        'Adds, changes, deletes, links or unlinks transactions. Ops: {"action": "add", "date", "amountCents" (integer, negative = money out), "payee", "description", "categoryId" (id or name), "accountId" (id or name), "note"}, {"action": "update", "id", ...fields}, {"action": "delete", "ids": [...]}, {"action": "link", "ids": [at least 2]}: the transactions become the legs of one transfer between the family\'s accounts (e.g. 500 out of checking and 500 into savings), counted once by their net, {"action": "unlink", "ids": [...]}: dissolves the transfers these transactions belong to, {"action": "split", "id": booking, "ids": [parts]}: the transactions become parts of the booking (e.g. the order lines the bank lists next to an Amazon "Splitbuchung"): totals count the parts with their categories plus whatever is left of the booking, so nothing counts twice and totals still match the statement. Prefer this over deleting order lines or bookings. {"action": "unsplit", "ids": [...]}: parts become normal transactions again (a booking\'s id frees all of its parts).',
       parameters: opsSchema({
         type: "object",
         properties: {
-          action: { type: "string", enum: ["add", "update", "delete", "link", "unlink"] },
+          action: {
+            type: "string",
+            enum: ["add", "update", "delete", "link", "unlink", "split", "unsplit"],
+          },
           id: { type: "string" },
           ids: { type: "array", items: { type: "string" } },
           date: { type: "string" },
@@ -618,7 +628,7 @@ export const TOOLS: Record<string, Tool> = {
     spec: {
       name: "combine_transfers",
       description:
-        "Finds transfers between the family's accounts (money out of one account and the same amount into another within 4 days, not yet combined) and links each pair, so it counts once by its net (0). from/to (YYYY-MM-DD) limit the range; without them the whole history.",
+        'Combines what belongs together, like the app\'s "combine automatically": first split bookings (a booking whose payee or description says "split", like an Amazon "Splitbuchung", gets the transactions of its account and day that name the same merchant as parts), then transfers between the family\'s accounts (money out of one account and the same amount into another within 4 days, not yet combined): each pair is linked, so it counts once by its net (0). from/to (YYYY-MM-DD) limit the range; without them the whole history.',
       parameters: {
         type: "object",
         properties: {
@@ -637,23 +647,26 @@ export const TOOLS: Record<string, Tool> = {
           throw new HttpError(400, "from/to must be YYYY-MM-DD");
         }
       }
-      const pairs = await transferPairs(
+      const found = await autoCombine(
         store,
         familyId,
         args.from as string | undefined,
         args.to as string | undefined,
       );
-      if (pairs.length > CONFIRM_TRANSACTIONS / 2) {
-        needConfirm(args, `This combines ${pairs.length} transfers.`);
+      if (found.transfers + found.splits > CONFIRM_TRANSACTIONS / 2) {
+        needConfirm(
+          args,
+          `This combines ${found.transfers} transfers and ${found.splits} split bookings.`,
+        );
       }
-      const res = await linkTransferPairs(store, pairs);
+      const res = await found.apply();
       return {
-        result: { ok: true, linked: res.linked },
-        summary: `${res.linked} transfers combined`,
-        change: res.linked
+        result: { ok: true, linked: res.linked, splits: res.splits },
+        summary: `${res.linked} transfers and ${res.splits} split bookings combined`,
+        change: res.changed
           ? {
             kind: "transactions",
-            summary: PHRASES[lang].transfers(res.linked),
+            summary: PHRASES[lang].combined(res.linked, res.splits),
             undo: [{ method: "POST", path: "/finance/transactions", body: { ops: res.inverse } }],
           }
           : undefined,

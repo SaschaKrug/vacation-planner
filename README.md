@@ -57,12 +57,20 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   another is nothing, 500 out and 480 in is a 20 expense. *Find transfers* suggests pairs (the
   same amount out of one account and into another, at most 4 days apart); *Auto-combine*
   combines them all at once.
+- **Split bookings count once:** banks often list the order lines of one booking (an Amazon
+  *Splitbuchung*) next to the booking itself. Tick them and *Split booking*: the largest
+  becomes the booking, the others its parts. Totals then count the parts with their own
+  categories plus whatever is left of the booking (shipping, say), so they still match the
+  statement, and balances count only the booking. *Auto-combine* (and the import) finds them
+  too: a booking whose payee or description says "split" gets the other transactions of its
+  account and day that name the same merchant, when they add up to it within 25%.
 - **Import bank statements (CSV):** the import guesses the format (UTF-8 or Windows-1252,
   separator, lines before the table, which column is the date, amount or debit / credit,
   payee and description, German or English numbers and dates) and shows a preview to correct
   it. Rows that were imported before are skipped, so overlapping statements can be imported
   again; identical rows on one day (two coffees) stay apart. Pick the account the statement
-  belongs to; transfers to and from the family's other accounts can be combined right away.
+  belongs to; split bookings and transfers to and from the family's other accounts can be
+  combined right away.
   The format, account and that choice are remembered per bank.
 - **Overview:** income, expenses and the balance, a chart per month and the spending (or
   income) per category, also as a table.
@@ -258,11 +266,11 @@ changing the edit id.
 | `POST /families/{id}/finance/categories` | Add `{"name", "color", "icon", "kind": "income" \| "expense" \| "both"}` |
 | `PATCH` / `DELETE /families/{id}/finance/categories/{category}` | Change or delete (its transactions become uncategorized); by id or name |
 | `POST /families/{id}/finance/categories/defaults` | Add the default categories the family doesn't have: `{"lang": "de"}` |
-| `GET /families/{id}/finance/transactions` | `?from=&to=&category=<id or none>&account=<id or none>&kind=income\|expense\|transfer&q=&limit=&offset=` → `{"transactions": [{"id", "date", "amountCents", "payee", "description", "categoryId", "accountId", "transferId", "note", "imported"}], "total", "incomeCents", "expenseCents"}`, newest first. Transactions sharing a `transferId` (a transfer) count once in the totals, by their sum |
-| `POST /families/{id}/finance/transactions` | `{"ops": [...]}`: `{"action": "add", "date", "amountCents", "payee", "description", "categoryId", "note"}`, `{"action": "update", "id", ...fields}`, `{"action": "delete", "ids": [...]}`, `{"action": "link", "ids": [...]}` (combine into one transfer), `{"action": "unlink", "ids": [...]}`; add / update also take `accountId` and `transferId`. Returns `inverse`, the ops that undo the request |
-| `POST /families/{id}/finance/import` | `{"rows": [{"date", "amountCents", "payee", "description", "categoryId"}], "dryRun": true, "accountId", "autoTransfers": true}`: adds the rows that weren't imported before (to the account) and, with `autoTransfers`, combines them with matching bookings on other accounts; returns `added`, `duplicates` (row indexes), the new `ids` and `transfers` (pairs combined) |
+| `GET /families/{id}/finance/transactions` | `?from=&to=&category=<id or none>&account=<id or none>&kind=income\|expense\|transfer&q=&limit=&offset=` → `{"transactions": [{"id", "date", "amountCents", "payee", "description", "categoryId", "accountId", "transferId", "splitOf", "split", "note", "imported"}], "total", "incomeCents", "expenseCents"}`, newest first. Transactions sharing a `transferId` (a transfer) count once in the totals, by their sum. A part of a split booking has `splitOf` (the booking's id); a booking with parts has `split: {"parts", "remainderCents"}` and counts only that remainder |
+| `POST /families/{id}/finance/transactions` | `{"ops": [...]}`: `{"action": "add", "date", "amountCents", "payee", "description", "categoryId", "note"}`, `{"action": "update", "id", ...fields}`, `{"action": "delete", "ids": [...]}`, `{"action": "link", "ids": [...]}` (combine into one transfer), `{"action": "unlink", "ids": [...]}`, `{"action": "split", "id": booking, "ids": [parts]}`, `{"action": "unsplit", "ids": [...]}` (parts, or bookings to free all their parts); add / update also take `accountId`, `transferId` and `splitOf`. Returns `inverse`, the ops that undo the request |
+| `POST /families/{id}/finance/import` | `{"rows": [{"date", "amountCents", "payee", "description", "categoryId"}], "dryRun": true, "accountId", "autoTransfers": true}`: adds the rows that weren't imported before (to the account) and, with `autoTransfers`, finds split bookings among them and combines them with matching bookings on other accounts; returns `added`, `duplicates` (row indexes), the new `ids`, `splits` (bookings split) and `transfers` (pairs combined) |
 | `GET /families/{id}/finance/transfers/suggestions?from=&to=` | `{"pairs": [{"out", "in"}]}`: transactions that look like a transfer between two accounts (same amount out and in, at most 4 days apart, not combined yet) |
-| `POST /families/{id}/finance/transfers/auto` | `{"from", "to"}` (optional): combines all those pairs; returns `linked` and `inverse` like the transactions endpoint |
+| `POST /families/{id}/finance/transfers/auto` | `{"from", "to"}` (optional): gives split bookings their parts, then combines all those pairs; returns `splits`, `linked` and `inverse` like the transactions endpoint |
 | `GET /families/{id}/finance/summary?from=&to=` | `{"currency", "incomeCents", "expenseCents", "count", "months": [{"month", "incomeCents", "expenseCents"}], "categories": [{"categoryId", "incomeCents", "expenseCents", "count"}]}` |
 
 ### AI assistant
