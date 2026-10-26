@@ -21,7 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useFinance, usePlanner } from "@/features/family/context";
-import type { Account, Benchmark, Category, CategoryKind } from "@/lib/api";
+import type { Account, Benchmark, Category, CategoryKind, CentsRange } from "@/lib/api";
 import { nextColor } from "@/lib/core";
 import { getLang, t } from "@/lib/i18n";
 import { centsToInput, formatMoney, parseMoney } from "@/lib/money";
@@ -515,16 +515,69 @@ function AccountRow(
   );
 }
 
-/** An amount per month as typed: "" for none. */
-function amountInput(cents: number | null | undefined) {
-  return cents === null || cents === undefined ? "" : centsToInput(cents, getLang());
+/** A range per month as typed: "" for an end that isn't given. */
+interface RangeDraft {
+  low: string;
+  high: string;
+}
+
+function rangeDraft(r: CentsRange | null | undefined): RangeDraft {
+  const input = (cents: number) => centsToInput(cents, getLang());
+  return r ? { low: input(r.lowCents), high: input(r.highCents) } : { low: "", high: "" };
+}
+
+/** A typed range: null when empty, "invalid" when not numbers of at least 0 from low to high.
+ *  One end alone is a single value. */
+function parseRange(d: RangeDraft): CentsRange | null | "invalid" {
+  const parse = (v: string) => (v.trim() ? parseMoney(v) : undefined);
+  const low = parse(d.low), high = parse(d.high);
+  if (low === undefined && high === undefined) return null;
+  if (low === null || high === null || (low ?? 0) < 0 || (high ?? 0) < 0) {
+    return "invalid";
+  }
+  if (low !== undefined && high !== undefined && low > high) return "invalid";
+  return { lowCents: low ?? high!, highCents: high ?? low! };
+}
+
+/** Two amounts, from and to. */
+function RangeInput(
+  { label, value, placeholder, disabled, onChange }: {
+    label: string;
+    value: RangeDraft;
+    placeholder?: RangeDraft;
+    disabled: boolean;
+    onChange: (value: RangeDraft) => void;
+  },
+) {
+  const input = (end: "low" | "high") => (
+    <Input
+      className="w-24 text-right tabular-nums sm:w-28"
+      inputMode="decimal"
+      aria-label={`${label}: ${
+        t(end === "low" ? "finance.benchmark_from" : "finance.benchmark_to")
+      }`}
+      placeholder={placeholder?.[end] ??
+        t(end === "low" ? "finance.benchmark_from" : "finance.benchmark_to")}
+      value={value[end]}
+      disabled={disabled}
+      onChange={(e) => onChange({ ...value, [end]: e.target.value })}
+    />
+  );
+  return (
+    <div className="flex shrink-0 items-center gap-1">
+      {input("low")}
+      <span className="text-muted-foreground">–</span>
+      {input("high")}
+    </div>
+  );
 }
 
 /**
  * The statistic average the overview compares with (e.g. a statistics office's household
- * spending): a source, income and expenses, and amounts for the top-level categories, all per
- * month. Amounts the assistant set on subcategories stay as they are; a top-level category
- * without its own shows their sum. Saved with the button; without any amount it is removed.
+ * spending): a source, and ranges per month (from – to; one end alone is a single value) for
+ * income, expenses and the top-level categories. Ranges the assistant set on subcategories stay
+ * as they are; a top-level category without its own shows their sum. Saved with the button;
+ * without any amount it is removed.
  */
 function BenchmarkCard({ edit }: { edit: boolean }) {
   const finance = useFinance();
@@ -533,31 +586,34 @@ function BenchmarkCard({ edit }: { edit: boolean }) {
   const tree = finance.categoryTree;
   const fromSaved = () => ({
     label: saved?.label ?? "",
-    income: amountInput(saved?.incomeCents),
-    expense: amountInput(saved?.expenseCents),
+    income: rangeDraft(saved?.income),
+    expense: rangeDraft(saved?.expense),
     categories: Object.fromEntries(
-      (saved?.categories ?? []).map((c) => [c.categoryId, amountInput(c.cents)]),
-    ) as Record<string, string>,
+      (saved?.categories ?? []).map((c) => [c.categoryId, rangeDraft(c)]),
+    ) as Record<string, RangeDraft>,
   });
   const [draft, setDraft] = useState(fromSaved);
   const [saving, setSaving] = useState(false);
   const savedKey = JSON.stringify(saved);
   useEffect(() => setDraft(fromSaved()), [savedKey]);
 
-  const parse = (v: string) => (v.trim() ? parseMoney(v) : null);
-  const invalid = [draft.income, draft.expense, ...Object.values(draft.categories)]
-    .some((v) => v.trim() && (parse(v) === null || parse(v)! < 0));
-  const next: Benchmark = {
+  const income = parseRange(draft.income);
+  const expense = parseRange(draft.expense);
+  const categories = Object.entries(draft.categories)
+    .filter(([id]) => tree.byId.has(id))
+    .map(([categoryId, d]) => ({ categoryId, range: parseRange(d) }));
+  const invalid = [income, expense, ...categories.map((c) => c.range)]
+    .some((r) => r === "invalid");
+  const next: Benchmark | null = invalid ? null : {
     label: draft.label.trim(),
-    incomeCents: parse(draft.income),
-    expenseCents: parse(draft.expense),
-    categories: Object.entries(draft.categories)
-      .filter(([id, v]) => tree.byId.has(id) && parse(v) !== null)
-      .map(([categoryId, v]) => ({ categoryId, cents: parse(v)! })),
+    income: income as CentsRange | null,
+    expense: expense as CentsRange | null,
+    categories: categories.flatMap(({ categoryId, range }) =>
+      range ? [{ categoryId, ...(range as CentsRange) }] : []
+    ),
   };
   const dirty = JSON.stringify(draft) !== JSON.stringify(fromSaved());
-  const empty = next.incomeCents === null && next.expenseCents === null &&
-    !next.categories.length;
+  const empty = !next?.income && !next?.expense && !next?.categories.length;
 
   if (!edit && !saved) return null; // viewers see it only when it is set
 
@@ -567,26 +623,28 @@ function BenchmarkCard({ edit }: { edit: boolean }) {
     setSaving(false);
   }
 
-  /** What a top-level category without its own amount shows: its subcategories' sum. */
-  const rolledUp = (id: string) => {
-    const sum = [...tree.subtree(id)].reduce((n, k) => {
-      const v = k === id ? null : parse(draft.categories[k] ?? "");
-      return n + (v ?? 0);
-    }, 0);
-    return sum ? centsToInput(sum, lang) : "";
+  /** What a top-level category without its own range shows: its subcategories' sum. */
+  const rolledUp = (id: string): RangeDraft | undefined => {
+    const below = [...tree.subtree(id)].flatMap((k) => {
+      const r = k === id ? null : parseRange(draft.categories[k] ?? { low: "", high: "" });
+      return r && r !== "invalid" ? [r] : [];
+    });
+    if (!below.length) return undefined;
+    const sum = (end: "lowCents" | "highCents") =>
+      centsToInput(below.reduce((n, r) => n + r[end], 0), lang);
+    return { low: sum("lowCents"), high: sum("highCents") };
   };
 
-  const money = (field: "income" | "expense", label: string) => (
-    <label className="grid gap-1 text-sm">
+  const total = (field: "income" | "expense", label: string) => (
+    <div className="grid gap-1 text-sm">
       <span className="text-xs text-muted-foreground">{label}</span>
-      <Input
-        className="w-36 text-right tabular-nums"
-        inputMode="decimal"
+      <RangeInput
+        label={label}
         value={draft[field]}
         disabled={!edit}
-        onChange={(e) => setDraft({ ...draft, [field]: e.target.value })}
+        onChange={(v) => setDraft({ ...draft, [field]: v })}
       />
-    </label>
+    </div>
   );
 
   return (
@@ -606,9 +664,9 @@ function BenchmarkCard({ edit }: { edit: boolean }) {
             onChange={(e) => setDraft({ ...draft, label: e.target.value })}
           />
         </label>
-        <div className="flex flex-wrap gap-3">
-          {money("income", t("finance.benchmark_income"))}
-          {money("expense", t("finance.benchmark_expense"))}
+        <div className="flex flex-wrap gap-x-6 gap-y-3">
+          {total("income", t("finance.benchmark_income"))}
+          {total("expense", t("finance.benchmark_expense"))}
         </div>
         {tree.roots.length > 0 && (
           <details className="text-sm" open={!!saved?.categories.length}>
@@ -617,7 +675,7 @@ function BenchmarkCard({ edit }: { edit: boolean }) {
             </summary>
             <div className="mt-2 grid gap-1.5">
               {tree.roots.map(({ category: c }) => (
-                <label key={c.id} className="flex items-center gap-2">
+                <div key={c.id} className="flex items-center gap-2">
                   <span className="min-w-0 flex-1 truncate">
                     {c.icon ? `${c.icon} ` : ""}
                     {c.name}
@@ -627,20 +685,18 @@ function BenchmarkCard({ edit }: { edit: boolean }) {
                       </span>
                     )}
                   </span>
-                  <Input
-                    className="w-36 text-right tabular-nums"
-                    inputMode="decimal"
-                    aria-label={c.name}
+                  <RangeInput
+                    label={c.name}
+                    value={draft.categories[c.id] ?? { low: "", high: "" }}
                     placeholder={rolledUp(c.id)}
-                    value={draft.categories[c.id] ?? ""}
                     disabled={!edit}
-                    onChange={(e) =>
+                    onChange={(v) =>
                       setDraft({
                         ...draft,
-                        categories: { ...draft.categories, [c.id]: e.target.value },
+                        categories: { ...draft.categories, [c.id]: v },
                       })}
                   />
-                </label>
+                </div>
               ))}
             </div>
           </details>

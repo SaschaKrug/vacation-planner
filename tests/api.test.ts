@@ -1179,23 +1179,29 @@ Deno.test("stores a statistic average to compare with", async () => {
   const set = await call("PATCH", `${f}/settings`, {
     benchmark: {
       label: " Destatis 2024 ",
-      incomeCents: 520000,
-      expenseCents: 380000,
-      categories: [{ categoryId: "Groceries", cents: 70000 }, { categoryId: "salary", cents: 1 }],
+      income: { lowCents: 420000, highCents: 620000 },
+      expense: 380000, // a single value
+      categories: [
+        { categoryId: "Groceries", lowCents: 60000, highCents: 80000 },
+        { categoryId: "salary", highCents: 1 }, // one end is enough
+      ],
     },
   });
   assertEquals(set.status, 200, set.data);
   assertEquals(set.data.benchmark, {
     label: "Destatis 2024",
-    incomeCents: 520000,
-    expenseCents: 380000,
-    categories: [{ categoryId: "groceries", cents: 70000 }, { categoryId: "salary", cents: 1 }],
+    income: { lowCents: 420000, highCents: 620000 },
+    expense: { lowCents: 380000, highCents: 380000 },
+    categories: [
+      { categoryId: "groceries", lowCents: 60000, highCents: 80000 },
+      { categoryId: "salary", lowCents: 1, highCents: 1 },
+    ],
   });
   // Other settings leave it alone; a deleted category drops out of it.
   await call("PATCH", `${f}/settings`, { currency: "CHF" });
   await call("DELETE", `${f}/categories/salary`);
   assertEquals((await call("GET", f)).data.benchmark.categories, [
-    { categoryId: "groceries", cents: 70000 },
+    { categoryId: "groceries", lowCents: 60000, highCents: 80000 },
   ]);
   // Viewers see it, but can't change it.
   assertEquals(
@@ -1208,9 +1214,11 @@ Deno.test("stores a statistic average to compare with", async () => {
   );
   for (
     const bad of [
-      { incomeCents: -1 },
-      { expenseCents: 1.5 },
-      { label: 3, incomeCents: 1 },
+      { income: -1 },
+      { expense: 1.5 },
+      { income: { lowCents: 5, highCents: 4 } },
+      { expense: "much" },
+      { label: 3, income: 1 },
       { categories: [{ categoryId: "nope", cents: 1 }] },
       { categories: "groceries" },
       "x",
@@ -1222,7 +1230,7 @@ Deno.test("stores a statistic average to compare with", async () => {
   // Without any amount (or null) it is gone.
   const empty = await call("PATCH", `${f}/settings`, { benchmark: { label: "Only a label" } });
   assertEquals(empty.data.benchmark, null);
-  await call("PATCH", `${f}/settings`, { benchmark: { incomeCents: 1 } });
+  await call("PATCH", `${f}/settings`, { benchmark: { income: 1 } });
   assertEquals((await call("PATCH", `${f}/settings`, { benchmark: null })).data.benchmark, null);
 });
 

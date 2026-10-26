@@ -17,6 +17,7 @@ import {
   CATEGORY_KINDS,
   type CategoryKind,
   type CategoryRow,
+  type CentsRange,
   type FinanceContents,
   type FinanceSettingsRow,
   type Store,
@@ -384,43 +385,63 @@ function settingsOf(familyId: string, row: FinanceSettingsRow | null): FinanceSe
   return row ?? { family_id: familyId, currency: "EUR", csv_mappings: [], benchmark: null };
 }
 
+/** A range per month from a number (a single value) or {lowCents, highCents} (one of them is
+ *  enough for a single value); null when none is given. Not negative, low not above high. */
+function cleanCentsRange(v: unknown, field: string): CentsRange | null {
+  if (v === null || v === undefined || v === "") return null;
+  const cents = (n: unknown, name: string) => {
+    if (n === null || n === undefined) return null;
+    const c = cleanAmount(n, name);
+    if (c < 0) throw new HttpError(400, `${name} must not be negative`);
+    return c;
+  };
+  if (typeof v === "number") {
+    const n = cents(v, field)!;
+    return { lowCents: n, highCents: n };
+  }
+  const r = objectOf(v, field);
+  const low = cents(r.lowCents, `${field}.lowCents`);
+  const high = cents(r.highCents, `${field}.highCents`);
+  if (low === null && high === null) return null;
+  if (low !== null && high !== null && low > high) {
+    throw new HttpError(400, `${field}.lowCents must not be above highCents`);
+  }
+  return { lowCents: low ?? high!, highCents: high ?? low! };
+}
+
 /**
- * A statistic average from {label, incomeCents, expenseCents, categories: [{categoryId (id,
- * name or path), cents}]}, all per month and not negative; null (or one without any amount)
- * clears it. A category given twice keeps its last amount.
+ * A statistic average from {label, income, expense, categories: [{categoryId (id, name or
+ * path), lowCents, highCents}]}: amounts per month, each a range {lowCents, highCents} or a
+ * single value (a number, or a category's `cents`). Null (or one without any amount) clears it.
+ * A category given twice keeps its last range.
  */
 export function cleanBenchmark(raw: unknown, categories: CategoryRow[]): Benchmark | null {
   if (raw === null) return null;
   const b = objectOf(raw, "benchmark");
-  const cents = (v: unknown, field: string) => {
-    if (v === null || v === undefined || v === "") return null;
-    const n = cleanAmount(v, field);
-    if (n < 0) throw new HttpError(400, `${field} must not be negative`);
-    return n;
-  };
   if (b.label !== undefined && typeof b.label !== "string") {
     throw new HttpError(400, "benchmark.label must be a string");
   }
   if (b.categories !== undefined && b.categories !== null && !Array.isArray(b.categories)) {
     throw new HttpError(400, "benchmark.categories must be an array");
   }
-  const byCategory = new Map<string, number>();
+  const byCategory = new Map<string, CentsRange>();
   for (const raw of (b.categories ?? []) as unknown[]) {
     const c = objectOf(raw, "Each benchmark category");
     const id = findCategory(categories, c.categoryId ?? c.category).id;
-    const n = cents(c.cents, "benchmark.categories.cents");
-    if (n === null) byCategory.delete(id);
-    else byCategory.set(id, n);
+    const range = cleanCentsRange(
+      c.cents ?? { lowCents: c.lowCents, highCents: c.highCents },
+      "benchmark.categories",
+    );
+    if (range) byCategory.set(id, range);
+    else byCategory.delete(id);
   }
   const out: Benchmark = {
     label: ((b.label as string | undefined) ?? "").trim().slice(0, MAX_BENCHMARK_LABEL),
-    incomeCents: cents(b.incomeCents, "benchmark.incomeCents"),
-    expenseCents: cents(b.expenseCents, "benchmark.expenseCents"),
-    categories: [...byCategory].map(([categoryId, cents]) => ({ categoryId, cents })),
+    income: cleanCentsRange(b.income, "benchmark.income"),
+    expense: cleanCentsRange(b.expense, "benchmark.expense"),
+    categories: [...byCategory].map(([categoryId, range]) => ({ categoryId, ...range })),
   };
-  return out.incomeCents === null && out.expenseCents === null && !out.categories.length
-    ? null
-    : out;
+  return out.income || out.expense || out.categories.length ? out : null;
 }
 
 /** The statistic average without categories that are gone since. */

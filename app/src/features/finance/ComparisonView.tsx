@@ -1,24 +1,20 @@
 import { useFinance } from "@/features/family/context";
-import type { Benchmark } from "@/lib/api";
 import { getLang, t } from "@/lib/i18n";
 import { formatMoney } from "@/lib/money";
 import { cn } from "@/lib/utils";
 import type { CategoryTree } from "./categoryTree";
 import type { Comparison } from "./store";
 
-/** One column's amounts per month; null where it doesn't say (the statistic average may leave
- *  out income, expenses or categories). Categories by top-level category ("" = uncategorized),
- *  with their subcategories. */
-interface Values {
-  incomeCents: number | null;
-  expenseCents: number | null;
+/** One column's amounts per month; categories by top-level category ("" = uncategorized), with
+ *  their subcategories. */
+export interface Values {
+  incomeCents: number;
+  expenseCents: number;
   income: Map<string, number>;
   expense: Map<string, number>;
-  /** A category that isn't in the maps has nothing (else: isn't known). */
-  allCategories: boolean;
 }
 
-interface Column {
+export interface Column {
   key: string;
   title: string;
   detail: string;
@@ -27,7 +23,7 @@ interface Column {
 }
 
 /** The top-level category of a category ("" for none, or one that is gone). */
-function topOf(tree: CategoryTree, id: string | null): string {
+export function topOf(tree: CategoryTree, id: string | null): string {
   let node = id ? tree.byId.get(id) : undefined;
   if (!node) return "";
   for (let p = tree.parentOf(node.category.id); p; p = tree.parentOf(p.id)) {
@@ -47,32 +43,11 @@ function comparisonValues(c: Comparison, tree: CategoryTree): Values | null {
     expenseCents: c.expenseCents,
     income: new Map(),
     expense: new Map(),
-    allCategories: true,
   };
   for (const [id, cents] of c.categories) {
     const top = topOf(tree, id);
     add(v.income, top, cents.incomeCents);
     add(v.expense, top, cents.expenseCents);
-  }
-  return v;
-}
-
-/** The statistic average by top-level category: its own amount, or else the sum of those set
- *  on its subcategories. Income categories count as income, the others as expenses. */
-function benchmarkValues(b: Benchmark, tree: CategoryTree): Values {
-  const own = new Map(b.categories.map((c) => [c.categoryId, c.cents]));
-  const v: Values = {
-    incomeCents: b.incomeCents,
-    expenseCents: b.expenseCents,
-    income: new Map(),
-    expense: new Map(),
-    allCategories: false,
-  };
-  for (const root of tree.roots) {
-    const id = root.category.id;
-    const cents = own.get(id) ??
-      [...tree.subtree(id)].reduce((sum, k) => sum + (own.get(k) ?? 0), 0);
-    add(root.category.kind === "income" ? v.income : v.expense, id, cents);
   }
   return v;
 }
@@ -84,7 +59,7 @@ function monthSpan(first: string, last: string, lang: string) {
   return first === last ? f.format(d(first)) : f.formatRange(d(first), d(last));
 }
 
-function columnOf(c: Comparison, tree: CategoryTree, lang: string): Column {
+export function columnOf(c: Comparison, tree: CategoryTree, lang: string): Column {
   const values = comparisonValues(c, tree);
   let detail = t("finance.compare.nothing_yet");
   if (values && c.first && c.last) {
@@ -101,15 +76,14 @@ interface Row {
   label: string;
   /** Higher is better (income, the balance) or worse (expenses). */
   good: "higher" | "lower";
-  get: (v: Values) => number | null;
+  get: (v: Values) => number;
   strong?: boolean;
 }
 
 /**
- * The period next to others, all per month: a month with the month before, a year's and all
- * time's average completed month with the year before's, and the statistic average when the
- * family set one. Below the totals, the top-level categories; the other columns tell how the
- * first one differs from them.
+ * The period next to others, all per month: a month with the month before, a year's average
+ * completed month with the year before's, all time's average completed month. Below the
+ * totals, the top-level categories; the other columns tell how the first one differs from them.
  */
 export function ComparisonView() {
   const finance = useFinance();
@@ -119,15 +93,6 @@ export function ComparisonView() {
   const tree = finance.categoryTree;
   const currency = finance.currency;
   const columns = comparisons.map((c) => columnOf(c, tree, lang));
-  const benchmark = finance.overview?.benchmark;
-  if (benchmark) {
-    columns.push({
-      key: "statistic",
-      title: t("finance.compare.statistic"),
-      detail: benchmark.label,
-      values: benchmarkValues(benchmark, tree),
-    });
-  }
 
   const label = (id: string) => {
     const c = tree.byId.get(id)?.category;
@@ -148,11 +113,10 @@ export function ComparisonView() {
         key: `${side}:${k}`,
         label: label(k),
         good: side === "income" ? "higher" : "lower",
-        get: (v) => v[side].get(k) ?? (v.allCategories ? 0 : null),
+        get: (v) => v[side].get(k) ?? 0,
       }));
   };
-  const net = (v: Values) =>
-    v.incomeCents === null || v.expenseCents === null ? null : v.incomeCents - v.expenseCents;
+  const net = (v: Values) => v.incomeCents - v.expenseCents;
   const totals: Row[] = [
     { key: "income", label: t("finance.income"), good: "higher", get: (v) => v.incomeCents },
     { key: "expense", label: t("finance.expenses"), good: "lower", get: (v) => v.expenseCents },

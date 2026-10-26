@@ -131,11 +131,7 @@ export function systemPrompt(input: {
   const b = input.benchmark;
   const benchmark = b
     ? `${b.label ? `“${b.label}”: ` : ""}${
-      JSON.stringify({
-        incomeCents: b.incomeCents,
-        expenseCents: b.expenseCents,
-        categories: b.categories,
-      })
+      JSON.stringify({ income: b.income, expense: b.expense, categories: b.categories })
     }`
     : "not set";
   return `You are the assistant inside the Family Planner of the family “${family.name}”.
@@ -155,8 +151,9 @@ A transactions log in ${input.currency}. Amounts in tools are integer cents, neg
 going out (-4599 = −45.99). Categories: ${cats}. Accounts: ${accounts}.
 Categories nest to any depth (“Food > Groceries”): a transaction can be on any level, and a
 category's totals and filters include its subcategories.
-The overview compares the chosen month, year or all time (per month) with others and with a
-statistic average per month the family sets (set_statistic_average), currently: ${benchmark}.
+The overview compares the chosen month, year or all time (per month) with others, and shows
+where it is within the ranges of a statistic average per month the family sets
+(set_statistic_average), currently: ${benchmark}.
 Transactions on different accounts that are one transfer between the family's own accounts
 (500 out of checking, 500 into savings) are linked as a transfer (same transferId); totals count
 a transfer once by its net, so moving money between accounts counts nothing.

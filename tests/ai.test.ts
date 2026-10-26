@@ -644,8 +644,8 @@ Deno.test("the assistant sets the statistic average, with undo", async () => {
 
   const first = await set({
     label: "Destatis 2024",
-    expenseCents: 380000,
-    categories: [{ category: "Groceries", cents: 70000 }],
+    expense: { lowCents: 300000, highCents: 450000 },
+    categories: [{ category: "Groceries", lowCents: 60000, highCents: 80000 }],
   });
   assertEquals(first.ok, true, JSON.stringify(first.result));
   assertEquals([first.change!.kind, first.change!.summary], [
@@ -654,15 +654,15 @@ Deno.test("the assistant sets the statistic average, with undo", async () => {
   ]);
   assertEquals(await benchmark(), {
     label: "Destatis 2024",
-    incomeCents: null,
-    expenseCents: 380000,
-    categories: [{ categoryId: "groceries", cents: 70000 }],
+    income: null,
+    expense: { lowCents: 300000, highCents: 450000 },
+    categories: [{ categoryId: "groceries", lowCents: 60000, highCents: 80000 }],
   });
 
-  const second = await set({ incomeCents: 500000 });
-  assertEquals((await benchmark()).incomeCents, 500000);
+  const second = await set({ income: { lowCents: 500000, highCents: 500000 } });
+  assertEquals((await benchmark()).income, { lowCents: 500000, highCents: 500000 });
   await undo(second.change!.undo);
-  assertEquals((await benchmark()).expenseCents, 380000);
+  assertEquals((await benchmark()).expense, { lowCents: 300000, highCents: 450000 });
 
   const cleared = await set({ clear: true });
   assertEquals(cleared.change!.summary, "Removed the statistic average");
@@ -672,8 +672,9 @@ Deno.test("the assistant sets the statistic average, with undo", async () => {
   await undo(first.change!.undo);
   assertEquals(await benchmark(), null);
 
-  assertEquals((await set({ categories: [{ category: "Nope", cents: 1 }] })).ok, false);
-  assertEquals((await set({ expenseCents: -5 })).ok, false);
+  assertEquals((await set({ categories: [{ category: "Nope", lowCents: 1 }] })).ok, false);
+  assertEquals((await set({ expense: { lowCents: -5 } })).ok, false);
+  assertEquals((await set({ expense: { lowCents: 9, highCents: 3 } })).ok, false);
 });
 
 /** Adds transactions; returns their ids in order. */

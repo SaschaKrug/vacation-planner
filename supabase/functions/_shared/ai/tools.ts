@@ -273,6 +273,12 @@ async function entriesOn(store: Store, familyId: string, days: string[]) {
   return map;
 }
 
+/** An amount per month as a range (set both the same for a single value). */
+const RANGE_SCHEMA = {
+  type: "object",
+  properties: { lowCents: { type: "integer" }, highCents: { type: "integer" } },
+};
+
 const opsSchema = (item: Record<string, unknown>) => ({
   type: "object",
   properties: {
@@ -941,19 +947,19 @@ export const TOOLS: Record<string, Tool> = {
     spec: {
       name: "set_statistic_average",
       description:
-        "Sets the statistic average that the finance overview compares the family's months with, e.g. a statistics office's average household income and spending for a household like this one (search the web for current figures and name the source and year in label). All amounts are integer cents per month, not negative: incomeCents, expenseCents, and categories: [{category (id, name or path), cents}] for the family's categories (top-level ones show in the comparison; one without an own amount sums up those of its subcategories). Leave out what isn't known. It replaces the whole average; clear: true removes it (the overview then doesn't show it).",
+        "Sets the statistic average that the finance overview compares the family's months with, e.g. a statistics office's figures on household income and spending for a household like this one (search the web for current figures and name the source and year in label). Every amount is a range per month in integer cents, not negative: {lowCents, highCents}, e.g. the typical span between lower and upper households, or the same twice for a single average. income, expense, and categories: [{category (id, name or path), lowCents, highCents}] for the family's categories (top-level ones show in the overview; one without its own range sums up those of its subcategories). Leave out what isn't known. It replaces the whole average; clear: true removes it (the overview then doesn't show it).",
       parameters: {
         type: "object",
         properties: {
           label: { type: "string", description: "Where the numbers come from, e.g. the source" },
-          incomeCents: { type: "integer" },
-          expenseCents: { type: "integer" },
+          income: RANGE_SCHEMA,
+          expense: RANGE_SCHEMA,
           categories: {
             type: "array",
             items: {
               type: "object",
-              properties: { category: { type: "string" }, cents: { type: "integer" } },
-              required: ["category", "cents"],
+              properties: { category: { type: "string" }, ...RANGE_SCHEMA.properties },
+              required: ["category"],
             },
           },
           clear: { type: "boolean" },
@@ -968,8 +974,8 @@ export const TOOLS: Record<string, Tool> = {
       const benchmark = args.clear === true ? null : cleanBenchmark(
         {
           label: args.label,
-          incomeCents: args.incomeCents,
-          expenseCents: args.expenseCents,
+          income: args.income,
+          expense: args.expense,
           categories: args.categories,
         },
         categories,

@@ -7,11 +7,13 @@ import { getLang, t } from "@/lib/i18n";
 import { formatMoney } from "@/lib/money";
 import { cn } from "@/lib/utils";
 import type { CategoryNode } from "./categoryTree";
+import { BenchmarkView } from "./BenchmarkView";
 import { ComparisonView } from "./ComparisonView";
 import { StatTiles } from "./FinancePage";
 
-/** Income and expenses per month, how they compare with other periods, and where the money
- *  went, for the chosen period (a single month has no chart per month). */
+/** Income and expenses per month, how they compare with other periods and the statistic
+ *  average, and where the money went, for the chosen period (a single month has no chart per
+ *  month). */
 export function SummaryView() {
   const finance = useFinance();
   const summary = finance.summary;
@@ -26,6 +28,7 @@ export function SummaryView() {
           {t("finance.no_data")}
         </p>
         <ComparisonView />
+        <BenchmarkView />
       </div>
     );
   }
@@ -37,6 +40,7 @@ export function SummaryView() {
         currency={summary.currency}
       />
       <ComparisonView />
+      <BenchmarkView />
       {finance.period.mode !== "month" && <MonthlyChart summary={summary} />}
       <CategoryBreakdown summary={summary} />
     </div>

@@ -108,9 +108,13 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
   next to the month before; a year's average month (only completed months, from the first one
   with transactions) next to the year before's; all time's average completed month. Income,
   expenses, the balance and every top-level category, with how far the period is above or below
-  each of them. A **statistic average** (e.g. the household spending of a statistics office:
-  income, expenses and amounts per category, per month) shows as one more column once it is set
-  up in *Settings* → *Finance* or by the assistant; until then it is hidden.
+  each of them.
+- **Statistic average:** figures to measure your months against (e.g. the household spending of
+  a statistics office), each a **range** per month from the lower to the upper households (or a
+  single average): income, expenses and categories. Its own card shows each as a band with the
+  period's value (like the comparison's first column) on it, and whether that is below, in the
+  lower or upper half of, or above the range. Set it up in *Settings* → *Finance* or let the
+  assistant do it; until then the card is hidden.
 - Viewers see the finances read-only; the calendar feed never shows them.
 
 ### AI assistant
@@ -185,7 +189,7 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
 - **Vacation:** the entry types of each year, and the calendar options of this device.
 - **Finance:** the currency, the accounts (name, color, icon, opening balance), the categories
   (name, color, icon, income / expense / both), the statistic average to compare with (source,
-  income, expenses and amounts per top-level category, per month) and the remembered bank
+  and ranges per month for income, expenses and the top-level categories) and the remembered bank
   formats.
 - **AI assistant:** the model, web search and whether the assistant may change things.
 - **Data:** *Export (JSON)* downloads the whole family (all years, types, entries, notes and

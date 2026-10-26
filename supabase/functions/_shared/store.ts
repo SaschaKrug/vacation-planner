@@ -83,13 +83,19 @@ export interface TransactionRow {
   created_at: string;
 }
 
+/** An amount per month from lowCents to highCents (the same twice for a single value). */
+export interface CentsRange {
+  lowCents: number;
+  highCents: number;
+}
+
 /** A statistic average the overview compares the family's months with (e.g. a statistics
- *  office's household spending): income, expenses and amounts per category, all per month. */
+ *  office's household spending): ranges for income, expenses and categories, all per month. */
 export interface Benchmark {
   label: string;
-  incomeCents: number | null;
-  expenseCents: number | null;
-  categories: { categoryId: string; cents: number }[];
+  income: CentsRange | null;
+  expense: CentsRange | null;
+  categories: ({ categoryId: string } & CentsRange)[];
 }
 
 export interface FinanceSettingsRow {
