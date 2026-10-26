@@ -1,4 +1,4 @@
-import { BrowserRouter, Navigate, Route, Routes } from "react-router";
+import { HashRouter, Navigate, Route, Routes } from "react-router";
 import { ConfirmHost } from "@/components/confirm";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -16,7 +16,7 @@ import { VacationPage } from "@/features/vacation/VacationPage";
 export function App() {
   return (
     <TooltipProvider delayDuration={300}>
-      <BrowserRouter>
+      <HashRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/setup/:token" element={<SetupLinkPage />} />
@@ -34,7 +34,7 @@ export function App() {
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
-      </BrowserRouter>
+      </HashRouter>
       <Toaster position="bottom-center" />
       <ConfirmHost />
     </TooltipProvider>

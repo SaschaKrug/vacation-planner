@@ -115,7 +115,7 @@ async function newSetupToken(store: Store, userId: string): Promise<string> {
 }
 
 /** POST /admin/users {email, name, isAdmin}: the account and its setup link token (the app
- *  makes the link: /setup/{token}). */
+ *  makes the link: /#/setup/{token}). */
 async function createUser({ store, req }: AdminCtx): Promise<Response> {
   const body = await readBody(req);
   const email = cleanEmail(body.email);

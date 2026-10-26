@@ -41,7 +41,7 @@ export function FamilyLayout() {
           else store.load({ quiet: true });
         },
         () => ({
-          page: pageOf(location.pathname),
+          page: pageOf(location.hash),
           year: store.year,
         }),
       ),
