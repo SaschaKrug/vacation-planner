@@ -15,15 +15,17 @@ export async function refreshMe() {
 }
 
 /** Everything but the sign-in pages: without a session, off to sign in (and back here after
- *  it); an account that isn't set up yet goes to its account page first. */
+ *  it); an account that isn't set up yet goes to its account page first. The account kept on
+ *  the device shows right away and is loaded again in the background. */
 export function RequireAuth() {
-  const { token, me } = useAuth();
+  const { token, me, cached } = useAuth();
   const location = useLocation();
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
 
+  const load = !!token && (!me || cached);
   useEffect(() => {
-    if (!token || me) return;
+    if (!load) return;
     let stale = false;
     setError("");
     api.me().then((data) => !stale && setMe(data)).catch((err: ApiError) => {
@@ -32,7 +34,7 @@ export function RequireAuth() {
     return () => {
       stale = true;
     };
-  }, [token, me, attempt]);
+  }, [load, token, attempt]);
 
   // Families someone else added this user to show up when the app comes back to the front.
   useEffect(() => {
