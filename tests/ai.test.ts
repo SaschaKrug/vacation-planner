@@ -307,6 +307,19 @@ Deno.test("the assistant changes the calendar and the change can be undone", asy
   assertMatch(next.data, /Mock reply: thanks/);
 });
 
+Deno.test("the assistant is told which page the user is on and keeps to it", async () => {
+  const t = await configured();
+  await chat(t, "hello", { page: "finance" });
+  const system = aiBody.messages[0].content;
+  assertMatch(system, /## Current page\nThe user is on the finance page, which shows the finances/);
+  assertMatch(system, /don't suggest calendar entries/);
+  await chat(t, "hello");
+  assertMatch(
+    aiBody.messages[0].content,
+    /on the vacation page, which shows the vacation calendar/,
+  );
+});
+
 Deno.test("big changes need the user's confirmation first", async () => {
   const t = await configured();
   const ev = await chat(t, "vacation 2026-01-01 to 2026-03-31");
