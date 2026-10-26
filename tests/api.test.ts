@@ -1173,6 +1173,67 @@ Deno.test("manages finance categories and settings", async () => {
   assertEquals((await call("DELETE", `${f}/categories/pets`)).status, 404);
 });
 
+Deno.test("stores a statistic average to compare with", async () => {
+  const { call, s, f } = await financeFamily();
+  assertEquals((await call("GET", f)).data.benchmark, null);
+  const set = await call("PATCH", `${f}/settings`, {
+    benchmark: {
+      label: " Destatis 2024 ",
+      income: { lowCents: 420000, highCents: 620000 },
+      expense: 380000, // a single value
+      categories: [
+        { categoryId: "Groceries", lowCents: 60000, highCents: 80000 },
+        { categoryId: "salary", highCents: 1 }, // one end is enough
+      ],
+    },
+  });
+  assertEquals(set.status, 200, set.data);
+  assertEquals(set.data.benchmark, {
+    label: "Destatis 2024",
+    income: { lowCents: 420000, highCents: 620000 },
+    expense: { lowCents: 380000, highCents: 380000 },
+    categories: [
+      { categoryId: "groceries", lowCents: 60000, highCents: 80000 },
+      { categoryId: "salary", lowCents: 1, highCents: 1 },
+    ],
+  });
+  // Other settings leave it alone; a deleted category drops out of it.
+  await call("PATCH", `${f}/settings`, { currency: "CHF" });
+  await call("DELETE", `${f}/categories/salary`);
+  assertEquals((await call("GET", f)).data.benchmark.categories, [
+    { categoryId: "groceries", lowCents: 60000, highCents: 80000 },
+  ]);
+  // Viewers see it, but can't change it.
+  assertEquals(
+    (await s.view("GET", `/families/${s.id}/finance`)).data.benchmark.label,
+    "Destatis 2024",
+  );
+  assertEquals(
+    (await s.view("PATCH", `/families/${s.id}/finance/settings`, { benchmark: null })).status,
+    403,
+  );
+  for (
+    const bad of [
+      { income: -1 },
+      { expense: 1.5 },
+      { income: { lowCents: 5, highCents: 4 } },
+      { expense: "much" },
+      { label: 3, income: 1 },
+      { categories: [{ categoryId: "nope", cents: 1 }] },
+      { categories: "groceries" },
+      "x",
+    ]
+  ) {
+    const res = await call("PATCH", `${f}/settings`, { benchmark: bad });
+    assert([400, 404].includes(res.status), JSON.stringify(bad));
+  }
+  // Without any amount (or null) it is gone.
+  const empty = await call("PATCH", `${f}/settings`, { benchmark: { label: "Only a label" } });
+  assertEquals(empty.data.benchmark, null);
+  await call("PATCH", `${f}/settings`, { benchmark: { income: 1 } });
+  assertEquals((await call("PATCH", `${f}/settings`, { benchmark: null })).data.benchmark, null);
+});
+
 Deno.test("nests finance categories to any depth", async () => {
   const { call, s, f } = await financeFamily();
   const food = (await call("POST", `${f}/categories`, { name: "Food", color: "#ff0000" })).data;
@@ -1320,7 +1381,13 @@ Deno.test("deletes all finance data", async () => {
   assertEquals((await s.view("DELETE", `/families/${s.id}/finance`)).status, 403);
   const res = await call("DELETE", f);
   assertEquals(res.status, 200);
-  assertEquals(res.data, { currency: "EUR", csvMappings: [], accounts: [], categories: [] });
+  assertEquals(res.data, {
+    currency: "EUR",
+    csvMappings: [],
+    benchmark: null,
+    accounts: [],
+    categories: [],
+  });
   assertEquals((await call("GET", `${f}/transactions`)).data.total, 0);
   // Other families keep theirs.
   assertEquals((await call("GET", `${o}/transactions`)).data.total, 1);

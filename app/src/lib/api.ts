@@ -81,9 +81,26 @@ export interface TransferPair {
   in: Transaction;
 }
 
+/** An amount per month from lowCents to highCents (the same twice for a single value). */
+export interface CentsRange {
+  lowCents: number;
+  highCents: number;
+}
+
+/** A statistic average to compare with (e.g. a statistics office's household spending): ranges
+ *  for income, expenses and categories, all per month. */
+export interface Benchmark {
+  label: string;
+  income: CentsRange | null;
+  expense: CentsRange | null;
+  categories: ({ categoryId: string } & CentsRange)[];
+}
+
 export interface FinanceOverview {
   currency: string;
   csvMappings: unknown[];
+  /** Not set: null. */
+  benchmark: Benchmark | null;
   categories: Category[];
   accounts: Account[];
 }
@@ -516,7 +533,7 @@ export const api = {
   clearFinance: (token: string) => request<FinanceOverview>("DELETE", `${fam(token)}/finance`),
   financeSettings: (
     token: string,
-    patch: { currency?: string; csvMappings?: unknown[] },
+    patch: { currency?: string; csvMappings?: unknown[]; benchmark?: Benchmark | null },
   ) => request<FinanceOverview>("PATCH", `${fam(token)}/finance/settings`, patch),
   addCategory: (
     token: string,

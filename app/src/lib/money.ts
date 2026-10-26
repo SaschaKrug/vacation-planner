@@ -6,9 +6,9 @@ export function formatMoney(
   cents: number,
   currency: string,
   lang: string,
-  { sign = false, compact = false } = {},
+  { sign = false, compact = false, whole = false } = {},
 ): string {
-  const key = `${lang}|${currency}|${sign}|${compact}`;
+  const key = `${lang}|${currency}|${sign}|${compact}|${whole}`;
   let f = formatters.get(key);
   if (!f) {
     f = new Intl.NumberFormat(lang, {
@@ -16,6 +16,7 @@ export function formatMoney(
       currency,
       signDisplay: sign ? "exceptZero" : "auto",
       ...(compact ? { notation: "compact", maximumFractionDigits: 1 } : {}),
+      ...(whole ? { minimumFractionDigits: 0, maximumFractionDigits: 0 } : {}),
     });
     formatters.set(key, f);
   }

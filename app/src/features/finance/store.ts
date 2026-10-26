@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import {
   type Account,
   api,
+  type Benchmark,
   type CategorizeResult,
   type Category,
   type FinanceOverview,
@@ -33,6 +34,23 @@ export interface Filter {
   kind: "" | "income" | "expense" | "transfer";
 }
 
+/** What the overview compares the period with (besides the statistic average). */
+export type ComparisonKey = "month" | "last_month" | "year" | "last_year" | "all";
+
+/** One column of the comparison: income, expenses and per category, per month. An average is
+ *  over the range's completed months, from the first one with transactions on. */
+export interface Comparison {
+  key: ComparisonKey;
+  /** The months it covers (YYYY-MM); none when there is no completed month yet. */
+  first: string | null;
+  last: string | null;
+  months: number;
+  average: boolean;
+  incomeCents: number;
+  expenseCents: number;
+  categories: Map<string | null, { incomeCents: number; expenseCents: number }>;
+}
+
 const PAGE = 200;
 const CATEGORIZE_BATCH = 200; // the most the API sorts in one call
 const MAX_OPS = 2000; // the most ops POST /finance/transactions takes
@@ -45,16 +63,26 @@ function lastDay(year: number, month: number) {
   return new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
 }
 
+function isoDay(d: Date) {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 /** Today in local time, as YYYY-MM-DD. */
 export function today() {
-  const d = new Date();
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return isoDay(new Date());
+}
+
+/** The months from `a` to `b` (YYYY-MM), both counted. */
+function monthsBetween(a: string, b: string) {
+  return (+b.slice(0, 4) - +a.slice(0, 4)) * 12 + (+b.slice(5, 7) - +a.slice(5, 7)) + 1;
 }
 
 export class FinanceStore {
   overview: FinanceOverview | null = null;
   list: TransactionList | null = null;
   summary: FinanceSummary | null = null;
+  /** The columns the overview compares, for the period of `summary`. */
+  comparisons: Comparison[] | null = null;
   /** The accounts' balances (by id) at the end of the day `at`; null for all time. */
   balances: { at: string; cents: Record<string, number> } | null = null;
   loadingList = false;
@@ -72,6 +100,7 @@ export class FinanceStore {
   private opened = false;
   private listSeq = 0;
   private summarySeq = 0;
+  private comparisonSeq = 0;
   private balancesSeq = 0;
 
   constructor(readonly token: string) {
@@ -222,11 +251,90 @@ export class FinanceStore {
     const query: Record<string, string> = {};
     if (from) query.from = from;
     if (to) query.to = to;
+    this.loadComparisons();
     try {
       const summary = await api.financeSummary(this.token, query);
       if (seq === this.summarySeq) this.summary = summary;
     } catch (err) {
       this.error = (err as Error).message;
+    }
+    this.emit();
+  }
+
+  /** What the period is compared with: a month with itself and the month before; a year by
+   *  its average month with the year before's; all time by its average month. Averages count
+   *  only completed months (not the running one), from the first with transactions on. */
+  comparisonRanges(period = this.period) {
+    const { mode, year, month } = period;
+    const now = new Date();
+    const done = isoDay(new Date(now.getFullYear(), now.getMonth(), 0)); // last completed day
+    const average = (key: ComparisonKey, range: { from?: string; to?: string }) => ({
+      key,
+      average: true,
+      from: range.from,
+      to: range.to && range.to < done ? range.to : done,
+    });
+    if (mode === "month") {
+      const prev = month ? { year, month: month - 1 } : { year: year - 1, month: 11 };
+      return [
+        { key: "month" as const, average: false, ...this.range(period) },
+        { key: "last_month" as const, average: false, ...this.range({ mode, ...prev }) },
+      ];
+    }
+    if (mode === "year") {
+      return [
+        average("year", this.range(period)),
+        average("last_year", this.range({ ...period, year: year - 1 })),
+      ];
+    }
+    return [average("all", {})];
+  }
+
+  async loadComparisons() {
+    const seq = ++this.comparisonSeq;
+    const load = async (
+      { key, average, from, to }: ReturnType<FinanceStore["comparisonRanges"]>[number],
+    ): Promise<Comparison> => {
+      const none: Comparison = {
+        key,
+        average,
+        first: null,
+        last: null,
+        months: 0,
+        incomeCents: 0,
+        expenseCents: 0,
+        categories: new Map(),
+      };
+      if (from && to && to < from) return none; // no completed month yet
+      const query: Record<string, string> = {};
+      if (from) query.from = from;
+      if (to) query.to = to;
+      const s = await api.financeSummary(this.token, query);
+      const last = to!.slice(0, 7);
+      const first = average ? s.months[0]?.month : last;
+      if (!first) return { ...none, last };
+      const months = monthsBetween(first, last);
+      const per = (cents: number) => Math.round(cents / months);
+      return {
+        ...none,
+        first,
+        last,
+        months,
+        incomeCents: per(s.incomeCents),
+        expenseCents: per(s.expenseCents),
+        categories: new Map(
+          s.categories.map((c) => [c.categoryId, {
+            incomeCents: per(c.incomeCents),
+            expenseCents: per(c.expenseCents),
+          }]),
+        ),
+      };
+    };
+    try {
+      const comparisons = await Promise.all(this.comparisonRanges().map(load));
+      if (seq === this.comparisonSeq) this.comparisons = comparisons;
+    } catch (err) {
+      if (seq === this.comparisonSeq) this.error = (err as Error).message;
     }
     this.emit();
   }
@@ -259,6 +367,7 @@ export class FinanceStore {
 
   setPeriod(period: Partial<Period>) {
     this.period = { ...this.period, ...period };
+    this.comparisons = null; // they belong to the period before
     this.limit = PAGE;
     this.selected = new Set();
     this.reload();
@@ -634,6 +743,11 @@ export class FinanceStore {
     const out = await this.withOverview(() => api.clearFinance(this.token));
     this.reload();
     if (out) toast(t("finance.cleared"));
+  }
+
+  /** Sets the statistic average the overview compares with; null removes it. */
+  setBenchmark(benchmark: Benchmark | null) {
+    return this.withOverview(() => api.financeSettings(this.token, { benchmark }));
   }
 
   get mappings(): CsvMapping[] {

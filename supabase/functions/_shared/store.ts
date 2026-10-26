@@ -83,10 +83,27 @@ export interface TransactionRow {
   created_at: string;
 }
 
+/** An amount per month from lowCents to highCents (the same twice for a single value). */
+export interface CentsRange {
+  lowCents: number;
+  highCents: number;
+}
+
+/** A statistic average the overview compares the family's months with (e.g. a statistics
+ *  office's household spending): ranges for income, expenses and categories, all per month. */
+export interface Benchmark {
+  label: string;
+  income: CentsRange | null;
+  expense: CentsRange | null;
+  categories: ({ categoryId: string } & CentsRange)[];
+}
+
 export interface FinanceSettingsRow {
   family_id: string;
   currency: string; // ISO 4217, e.g. EUR
   csv_mappings: unknown[];
+  /** Not set: null (rows from before it have none). */
+  benchmark?: Benchmark | null;
 }
 
 export type SearchProvider = "none" | "tavily" | "brave";
@@ -716,6 +733,7 @@ export class MemoryStore implements Store {
       this.financeSettings.set(familyId, {
         family_id: familyId,
         csv_mappings: settings?.csv_mappings ?? [],
+        benchmark: settings?.benchmark ?? null,
         currency: finance.currency,
       });
     }

@@ -21,7 +21,13 @@ import {
 import { getLang, t } from "@/lib/i18n";
 import { read } from "@/lib/storage";
 
-export type ChangeKind = "entries" | "notes" | "types" | "categories" | "transactions";
+export type ChangeKind =
+  | "entries"
+  | "notes"
+  | "types"
+  | "categories"
+  | "transactions"
+  | "benchmark";
 
 /** An attachment as the chat shows it: images with their data URL. */
 export interface ItemAttachment {
