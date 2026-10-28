@@ -208,8 +208,9 @@ with a setup link (test); admin bootstrap tested against a real database as in Y
   Client address: Traefik **appends** to `X-Forwarded-For`, so the first entry is whatever the
   client sent; take the entry Traefik added (the right-most, with one proxy hop), configurable via
   `TRUSTED_PROXY_HOPS`. Keyed hash as today, with `BETTER_AUTH_SECRET` as key.
-- **Secrets:** `AI_CONFIG_KEY` env var, same `SecretBox` format, so encrypted AI and search keys
-  from Supabase decrypt unchanged — **the production value has to be carried over**.
+- **Secrets:** `AI_CONFIG_KEY` env var, same `SecretBox` format, but a **new** value
+  (`openssl rand -base64 32`): the one the Supabase function used is lost, so the stored AI and
+  search keys cannot be decrypted and are not imported (phase 8).
 - CORS stays (scripts and agents call cross-origin).
 
 **Done when:** `tests/api.test.ts`, `auth.test.ts` (rewritten for phase 3), `ai.test.ts`,
@@ -267,8 +268,10 @@ and `authenticator.ts` helpers port as-is. The in-memory store is then deleted.
 1. Reads every table from the Supabase Postgres (`SUPABASE_DB_URL`, the pooler connection string
    with the DB password) in one read-only transaction.
 2. Writes into an **empty** SQLite file (refuses a non-empty one) migrated by `applyMigrations()`,
-   in one `writeTransaction()`: families, members, vacation, finance, AI settings (ciphertexts
-   copied verbatim), chats with items/messages, users → Better Auth `users` + `accounts`
+   in one `writeTransaction()`: families, members, vacation, finance, AI settings (base URL, model,
+   search provider, _Allow changes_, context window; the encrypted API and search keys are left
+   empty, since the old `AI_CONFIG_KEY` is lost — editors enter them once in _Settings_ → _AI
+   assistant_), chats with items/messages, users → Better Auth `users` + `accounts`
    (`providerId = "credential"`, the PBKDF2 hash as `password`), passkeys → Better Auth `passkeys`,
    API tokens → `api_tokens`. Sessions, setup links, challenges and rate-limit rows are not imported
    (everyone signs in once more).
@@ -303,7 +306,7 @@ services:
       - BETTER_AUTH_URL=https://${FP_DOMAIN:-family-planner.fa-krug.de}
       - PUBLIC_URL=https://${FP_DOMAIN:-family-planner.fa-krug.de}
       - PASSKEY_RP_ID=${FP_DOMAIN:-family-planner.fa-krug.de}
-      - AI_CONFIG_KEY=${AI_CONFIG_KEY:?the value the Supabase function used}
+      - AI_CONFIG_KEY=${AI_CONFIG_KEY:?32 random bytes, base64 (openssl rand -base64 32)}
       - INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD:-}
       - TRUSTED_PROXY_HOPS=1
     volumes:
@@ -353,18 +356,18 @@ Delete `supabase/`, `dev/`, `app/`, `tests/`, `deno.json`, `CNAME`, `deploy.yml`
 Optionally publish an npm package with a `bin` like `@fa-krug/yana` — not needed for the production
 setup and left out unless asked for.
 
-## Risks and open questions
+## Risks and decisions
 
-| # | Item                                                                                | Plan                                                                                                                                            |
-| - | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1 | `AI_CONFIG_KEY` production value must be available (GitHub secrets are write-only). | If lost, families re-enter AI/search keys; everything else is unaffected. Check before phase 8.                                                 |
-| 2 | Plain-name accounts (`admin`) vs. Better Auth's email validation.                   | Rewrite to `@family-planner.local` on import (decision above); count them in the live data first.                                               |
-| 3 | Better Auth's passkey `publicKey` encoding vs. the stored base64url COSE key.       | Test with a real imported passkey on the rehearsal → cutover; fallback: affected users add a passkey again after a password/setup-link sign-in. |
-| 4 | Whether iCloud follows a 308 for a calendar subscription.                           | Verify in rehearsal; proxying the feed in the shim is the fallback.                                                                             |
-| 5 | Hash URLs (`/#/...`) in bookmarks and the home-screen app.                          | Client redirect on `/`; the old SPA's `404.html` fallback goes away with Pages.                                                                 |
-| 6 | Language moves from per device to per user.                                         | Matches Yana; first sign-in seeds it from the browser's `Accept-Language`. Say so if you prefer per device.                                     |
-| 7 | Long AI turns survive restarts only via lease takeover.                             | Same as today across invocations; a deploy mid-turn resumes when the chat is opened.                                                            |
-| 8 | Backups.                                                                            | Launch requirement (phase 9).                                                                                                                   |
+| # | Item                                                                          | Plan                                                                                                                                            |
+| - | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 | The old `AI_CONFIG_KEY` is lost.                                              | Decided: a new key; AI and search keys are not imported, editors enter them once (phase 8). Nothing else depends on it.                         |
+| 2 | Plain-name accounts (`admin`) vs. Better Auth's email validation.             | Rewrite to `@family-planner.local` on import (decision above); count them in the live data first.                                               |
+| 3 | Better Auth's passkey `publicKey` encoding vs. the stored base64url COSE key. | Test with a real imported passkey on the rehearsal → cutover; fallback: affected users add a passkey again after a password/setup-link sign-in. |
+| 4 | Whether iCloud follows a 308 for a calendar subscription.                     | Verify in rehearsal; proxying the feed in the shim is the fallback.                                                                             |
+| 5 | Hash URLs (`/#/...`) in bookmarks and the home-screen app.                    | Client redirect on `/`; the old SPA's `404.html` fallback goes away with Pages.                                                                 |
+| 6 | Language moves from per device to per user.                                   | Matches Yana; first sign-in seeds it from the browser's `Accept-Language`.                                                                      |
+| 7 | Long AI turns survive restarts only via lease takeover.                       | Same as today across invocations; a deploy mid-turn resumes when the chat is opened.                                                            |
+| 8 | Backups.                                                                      | Launch requirement (phase 9).                                                                                                                   |
 
 ## Order and size
 
