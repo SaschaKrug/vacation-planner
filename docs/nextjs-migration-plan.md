@@ -85,8 +85,8 @@ Deno-specific code is small: `npm:` specifiers (3 files), `Deno.serve`, `Deno.en
 └── .github/workflows/ci.yml
 ```
 
-`supabase/`, `dev/`, `app/`, `deno.json` and `tests/` are deleted at the end (phase 10), not before:
-until cutover they are the reference and the fallback.
+`supabase/`, `dev/`, `web/` (the old `app/`, moved in phase 1), `deno.json` and `tests/` are deleted
+at the end (phase 10), not before: until cutover they are the reference and the fallback.
 
 ## Phases
 
@@ -111,6 +111,14 @@ Copy, then strip Yana's feature code:
 - `CLAUDE.md` for this repository, starting from the subset of Yana's that applies (database,
   `connection()`, streaming pattern, Base UI, i18n, testing), so agents in this repo get the same
   rules.
+- **The Vite app moves from `app/` to `web/`.** Next.js prefers a root `app/` over `src/app/`, so
+  with the old frontend at `app/` the build finds no routes. `ci.yml`, `deploy.yml`, `deno.json`,
+  `dev/server.ts`, `tests/` and the README follow the move.
+- **`deno.json` gets `"nodeModulesDir": "none"`** and `fmt`/`lint` scoped with `include` to the old
+  trees: with a root `package.json`, Deno otherwise expects every `npm:` import of `supabase/` in
+  `node_modules` and `deno check` fails.
+- A `next.yml` workflow beside `ci.yml`: lint, format, typecheck, test, dev-boot smoke, and an image
+  build plus container smoke that pushes nothing (publishing arrives in phase 9).
 
 **Done when:** `rm -rf data && npm run build && ls data` reports no `data/`, `/health` answers on
 `npm run dev`, the image builds and starts.
@@ -351,7 +359,7 @@ Finance data makes this a launch requirement, not a follow-up.
 
 ### Phase 10 — Cleanup
 
-Delete `supabase/`, `dev/`, `app/`, `tests/`, `deno.json`, `CNAME`, `deploy.yml`; rewrite the README
+Delete `supabase/`, `dev/`, `web/`, `tests/`, `deno.json`, `CNAME`, `deploy.yml`; rewrite the README
 (setup is now: set the stack's env vars, push to `main`); the API section's base URL changes.
 Optionally publish an npm package with a `bin` like `@fa-krug/yana` — not needed for the production
 setup and left out unless asked for.
