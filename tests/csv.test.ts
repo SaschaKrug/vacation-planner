@@ -8,8 +8,8 @@ import {
   parseCsv,
   parseDate,
   tableOf,
-} from "../app/src/lib/csv.ts";
-import { centsToInput, parseMoney } from "../app/src/lib/money.ts";
+} from "../web/src/lib/csv.ts";
+import { centsToInput, parseMoney } from "../web/src/lib/money.ts";
 
 Deno.test("parses amounts as typed or exported", () => {
   const cases: [string, number | null][] = [

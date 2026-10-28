@@ -1,4 +1,5 @@
 {
+  "nodeModulesDir": "none",
   "tasks": {
     "dev": "deno run --allow-net --allow-read --allow-env --allow-write=.dev dev/server.ts",
     "test": "deno test --allow-read tests/",
@@ -6,28 +7,43 @@
   },
   "fmt": {
     "lineWidth": 100,
+    "include": [
+      "supabase/",
+      "dev/",
+      "tests/",
+      "web/",
+      "docs/",
+      ".github/",
+      "deno.json"
+    ],
     "exclude": [
       "README.md",
       "supabase/migrations/",
-      "app/node_modules/",
-      "app/dist/",
-      "app/src/components/ui/",
-      "app/src/hooks/",
-      "app/src/index.css",
-      "app/index.html",
-      "app/package.json",
-      "app/package-lock.json",
-      "app/components.json",
-      "app/tsconfig*.json"
+      "web/node_modules/",
+      "web/dist/",
+      "web/src/components/ui/",
+      "web/src/hooks/",
+      "web/src/index.css",
+      "web/index.html",
+      "web/package.json",
+      "web/package-lock.json",
+      "web/components.json",
+      "web/tsconfig*.json"
     ]
   },
   "lint": {
+    "include": [
+      "supabase/",
+      "dev/",
+      "tests/",
+      "web/"
+    ],
     "exclude": [
-      "app/node_modules/",
-      "app/dist/",
-      "app/src/components/ui/",
-      "app/src/hooks/",
-      "app/public/config.js"
+      "web/node_modules/",
+      "web/dist/",
+      "web/src/components/ui/",
+      "web/src/hooks/",
+      "web/public/config.js"
     ],
     "rules": {
       "exclude": [

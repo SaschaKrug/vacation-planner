@@ -1,5 +1,5 @@
-// Local development server: serves the built app (app/dist) and the API with an in-memory store.
-//   deno task dev                ->  http://localhost:8787 (run `npm run build` in app/ first,
+// Local development server: serves the built app (web/dist) and the API with an in-memory store.
+//   deno task dev                ->  http://localhost:8787 (run `npm run build` in web/ first,
 //                                    or `npm run dev` there for the app with hot reload)
 //   deno task dev --persist      keep the data in .dev/data.json across restarts
 //   deno task dev --seed         add a demo family if there is none yet
@@ -23,7 +23,7 @@ import { mockAi } from "./mock_ai.ts";
 const args = parseArgs(Deno.args, { boolean: ["persist", "seed", "rate-limit", "mock-ai"] });
 const port = Number(Deno.env.get("PORT") ?? 8787);
 const origin = `http://localhost:${port}`;
-const root = new URL("../app/dist/", import.meta.url);
+const root = new URL("../web/dist/", import.meta.url);
 const dataDir = new URL("../.dev/", import.meta.url);
 const dataFile = new URL("data.json", dataDir);
 const TYPES: Record<string, string> = {
@@ -271,7 +271,7 @@ Deno.serve({ port, onListen: () => listFamilies() }, async (req) => {
     });
   } catch {
     if (path === "index.html") {
-      return new Response("app/dist is missing: run `npm ci && npm run build` in app/", {
+      return new Response("web/dist is missing: run `npm ci && npm run build` in web/", {
         status: 503,
       });
     }
