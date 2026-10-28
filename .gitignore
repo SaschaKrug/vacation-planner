@@ -1,1 +1,14 @@
 .dev/
+
+# Next.js app (see docs/nextjs-migration-plan.md)
+node_modules/
+/.next/
+/out/
+*.tsbuildinfo
+next-env.d.ts
+/data/
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.local

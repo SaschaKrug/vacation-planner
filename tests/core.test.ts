@@ -15,7 +15,7 @@ import {
   toNoteOps,
   toOps,
   yearDays,
-} from "../app/src/lib/core.ts";
+} from "../web/src/lib/core.ts";
 
 const types: EntryType[] = [
   { id: "holiday", name: "Holiday", color: "#f59e0b", role: "day_off" },

@@ -1,0 +1,27 @@
+# The production image, run locally. For day-to-day work use `npm run dev`
+# instead -- this is a standalone build, so it does not reload.
+
+services:
+  family-planner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: family-planner-dev
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_PATH=/app/data/family-planner.db
+      - HOSTNAME=0.0.0.0
+    volumes:
+      # A bind mount, so the database survives `docker compose down` and can be
+      # inspected from the host. Docker does not chown it: run
+      # `chown -R 1001:1001 ./data` on the host before the first start.
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

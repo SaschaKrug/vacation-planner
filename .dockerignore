@@ -1,0 +1,19 @@
+node_modules
+.next
+.git
+*.md
+data
+docs
+.github
+.claude
+
+# The Supabase version of the app; no build stage reads it.
+web
+supabase
+dev
+tests
+*.png
+
+# NOTE: do not add `drizzle` or `drizzle/meta` here -- the runtime stage copies
+# the migrations folder, and its `meta/_journal.json` must reach the build
+# context (see the COPY comment in the Dockerfile).

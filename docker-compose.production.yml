@@ -1,0 +1,46 @@
+# The target production shape -- a single service behind Traefik with a named
+# volume, like Yana's stack. The live stack file is managed in Portainer; this
+# file documents what it should look like. Nothing deploys it yet: the deploy
+# job and the remaining environment (BETTER_AUTH_SECRET, PASSKEY_RP_ID,
+# AI_CONFIG_KEY, ...) arrive with the phases that need them, and the cutover is
+# phase 9 of docs/nextjs-migration-plan.md.
+#
+# One container only: AI chat turns and rate-limit windows live in this
+# process, so a second replica would split them.
+
+services:
+  family-planner:
+    image: ${DOCKER_USERNAME:-sascha384}/family-planner:latest
+    container_name: family-planner
+    restart: always
+    expose:
+      - "3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_PATH=/app/data/family-planner.db
+      - HOSTNAME=0.0.0.0
+    volumes:
+      # A named volume inherits the image's uid 1001 ownership, so SQLite can
+      # create its -wal/-shm siblings without a host-side chown.
+      - family-planner-data:/app/data
+    # /health runs a real SELECT against SQLite, so unhealthy means the database
+    # is unreachable, not just that Node is down. wget comes from busybox.
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    # TLS is required, not optional: from phase 3 on, session cookies are
+    # `secure` and passkeys need a secure context. The entrypoint and cert
+    # resolver names below must match the Traefik install (Yana's stack carries
+    # the same open question) -- settle both before the cutover.
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.family-planner.rule=Host(`${FP_DOMAIN:-family-planner.fa-krug.de}`)"
+      - "traefik.http.routers.family-planner.entrypoints=websecure"
+      - "traefik.http.routers.family-planner.tls=true"
+      - "traefik.http.services.family-planner.loadbalancer.server.port=3000"
+
+volumes:
+  family-planner-data:

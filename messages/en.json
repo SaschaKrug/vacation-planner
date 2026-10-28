@@ -1,0 +1,15 @@
+{
+  "app": {
+    "title": "Family Planner",
+    "description": "Plan the family's year: vacation, public holidays, day-care closures and finances."
+  },
+  "home": {
+    "heading": "Family Planner",
+    "building": "The new Family Planner is being built here. Until it is ready, the current app keeps running unchanged."
+  },
+  "error": {
+    "fatalTitle": "Something went wrong",
+    "fatalDescription": "The page could not be shown. Try again; if it keeps happening, the server may be restarting.",
+    "retry": "Try again"
+  }
+}

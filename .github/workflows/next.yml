@@ -1,0 +1,82 @@
+# CI for the Next.js app (docs/nextjs-migration-plan.md), beside ci.yml, which
+# keeps checking the Supabase version until it is deleted. Yana's test job and
+# dev-boot smoke, plus an image build that pushes nothing: publishing to Docker
+# Hub and redeploying the Portainer stack come with the cutover (phase 9).
+name: Next
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [main, gh-pages]
+
+jobs:
+  test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+      # Fails on a stale lockfile rather than resolving something untested.
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run typecheck
+      - run: npm test
+      # Nothing above ever *runs* the application. Booting `next dev` catches
+      # the bundler-class regressions only a running server shows (the edge
+      # compilation of the instrumentation hook, the startup migration):
+      #   /health  the startup hook ran and migrated a database that did not
+      #            exist -- it is a real SELECT against SQLite
+      #   /        a page renders end to end: root layout, next-intl, theme
+      - name: Dev boot smoke
+        run: |
+          set -euo pipefail
+          npm run dev > dev.log 2>&1 &
+          dev=$!
+          trap 'kill "$dev" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 60); do
+            if curl -fsS http://localhost:3000/health > /dev/null; then break; fi
+            kill -0 "$dev" 2>/dev/null || { echo "the dev server exited"; cat dev.log; exit 1; }
+            sleep 1
+          done
+          curl -fsS http://localhost:3000/health | tee /dev/stderr | grep -q '"status":"ok"'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/)" = 200
+          # A compilation that fails for one layer can leave the server serving
+          # every route while the log carries the error, so the log is a check.
+          ! grep -qiE 'Ecmascript file had an error|Module not found|Failed to compile|UnhandledSchemeError|Cannot find module' dev.log
+          cat dev.log
+
+  image:
+    name: Build image
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          load: true
+          tags: family-planner:ci
+          cache-from: type=gha,scope=next-amd64
+          cache-to: type=gha,mode=max,scope=next-amd64
+          platforms: linux/amd64
+          provenance: false
+      # The image's own startup path: migrations into an empty volume, then a
+      # real query through /health.
+      - name: Container smoke
+        run: |
+          set -euo pipefail
+          docker run -d --name fp -p 3000:3000 family-planner:ci
+          trap 'docker logs fp; docker rm -f fp' EXIT
+          for _ in $(seq 1 60); do
+            if curl -fsS http://localhost:3000/health > /dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://localhost:3000/health | grep -q '"status":"ok"'

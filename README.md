@@ -204,13 +204,13 @@ in both, and a REST API (see [the plan](docs/family-planner-plan.md) for how it 
 ## Architecture
 
 ```
-GitHub Pages (app/)  ──fetch──▶  Supabase Edge Function "api"  ──▶  Postgres (16 tables)
+GitHub Pages (web/)  ──fetch──▶  Supabase Edge Function "api"  ──▶  Postgres (16 tables)
 iCloud / Apple Calendar ──GET calendar.ics──┘
 ```
 
 | Path | What |
 | --- | --- |
-| `app/` | Frontend: Vite + React + TypeScript, Tailwind + shadcn/ui |
+| `web/` | Frontend: Vite + React + TypeScript, Tailwind + shadcn/ui |
 | `supabase/functions/api/` | Edge Function entry point |
 | `supabase/functions/_shared/` | API handler, iCalendar builder, storage (Supabase + in-memory), rate limits |
 | `supabase/migrations/` | Database schema |
@@ -275,15 +275,15 @@ few shared addresses. If counting fails, requests go through. The limits are in
 ## Local development
 
 ```sh
-(cd app && npm ci && npm run build)   # once, and after changing the app
+(cd web && npm ci && npm run build)   # once, and after changing the app
 deno task dev     # http://localhost:8787: the built app + the API (data is kept in memory)
 deno task test    # unit + API tests
-deno task check   # type-check, lint, format check (backend and app/src)
+deno task check   # type-check, lint, format check (backend and web/src)
 
-cd app && npm run dev   # the app with hot reload on http://localhost:5173 (needs `deno task dev`)
+cd web && npm run dev   # the app with hot reload on http://localhost:5173 (needs `deno task dev`)
 ```
 
-`npm run build` in `app/` also type-checks the app (`tsc -b`). The app uses Node 22.
+`npm run build` in `web/` also type-checks the app (`tsc -b`). The app uses Node 22.
 
 No database needed: the dev server runs the real API handler on an in-memory store. Options
 (combinable, e.g. `deno task dev --persist --seed`):

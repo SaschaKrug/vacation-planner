@@ -1,0 +1,16 @@
+.next
+node_modules
+drizzle/
+data/
+docs/
+.claude/
+*.md
+
+# The Supabase version of the app: formatted by `deno fmt` until it is deleted
+# at the end of the migration (docs/nextjs-migration-plan.md).
+web/
+supabase/
+dev/
+tests/
+deno.json
+.github/

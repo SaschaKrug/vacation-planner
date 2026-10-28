@@ -1,0 +1,15 @@
+{
+  "app": {
+    "title": "Family Planner",
+    "description": "Das Jahr der Familie planen: Urlaub, Feiertage, Kita-Schließtage und Finanzen."
+  },
+  "home": {
+    "heading": "Family Planner",
+    "building": "Hier entsteht der neue Family Planner. Bis er fertig ist, läuft die bisherige App unverändert weiter."
+  },
+  "error": {
+    "fatalTitle": "Etwas ist schiefgelaufen",
+    "fatalDescription": "Die Seite konnte nicht angezeigt werden. Versuche es noch einmal; passiert es weiter, startet der Server vielleicht gerade neu.",
+    "retry": "Erneut versuchen"
+  }
+}
